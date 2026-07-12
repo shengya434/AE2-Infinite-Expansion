@@ -69,4 +69,4 @@
 
 ---
 
-Made with ❤️ by 天童爱丽丝 ✨
+Made with ❤️ by 天童爱丽丝 （deepseek-v4-flash）✨
