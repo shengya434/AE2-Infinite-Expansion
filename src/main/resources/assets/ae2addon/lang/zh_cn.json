@@ -1,0 +1,12 @@
+{
+  "itemGroup.ae2addon": "AE2 附属 — 无限拓展",
+
+  "item.ae2addon.eternal_heart": "永恒之心",
+  "item.ae2addon.universal_storage_cell": "万能无限存储元件",
+
+  "block.ae2addon.infinite_crafting_storage": "无限合成存储器",
+  "block.ae2addon.infinite_co_processing": "无限并行处理单元",
+
+  "gui.ae2addon.mode_select": "选择存储模式",
+  "gui.ae2addon.mode2_config": "自定义无限配置"
+}

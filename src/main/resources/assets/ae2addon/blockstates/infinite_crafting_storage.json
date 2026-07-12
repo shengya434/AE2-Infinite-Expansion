@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "formed=false": {
+      "model": "ae2addon:block/infinite_crafting_storage"
+    },
+    "formed=true": {
+      "model": "ae2addon:block/infinite_crafting_storage_formed"
+    }
+  }
+}

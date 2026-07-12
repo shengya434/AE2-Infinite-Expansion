@@ -1,0 +1,23 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "group": "ae2addon",
+  "pattern": [
+    "FAF",
+    "ASA",
+    "FAF"
+  ],
+  "key": {
+    "F": {
+      "item": "minecraft:dragon_egg"
+    },
+    "A": {
+      "item": "ae2:fluix_block"
+    },
+    "S": {
+      "item": "minecraft:nether_star"
+    }
+  },
+  "result": {
+    "item": "ae2addon:eternal_heart"
+  }
+}

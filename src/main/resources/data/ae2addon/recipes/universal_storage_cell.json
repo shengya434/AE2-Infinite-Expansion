@@ -1,0 +1,26 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "group": "ae2addon",
+  "pattern": [
+    "SHS",
+    "CEC",
+    "SHS"
+  ],
+  "key": {
+    "S": {
+      "item": "ae2:singularity"
+    },
+    "H": {
+      "item": "minecraft:hopper"
+    },
+    "C": {
+      "item": "minecraft:chest"
+    },
+    "E": {
+      "item": "ae2addon:eternal_heart"
+    }
+  },
+  "result": {
+    "item": "ae2addon:universal_storage_cell"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "formed=false": {
+      "model": "ae2addon:block/infinite_co_processing"
+    },
+    "formed=true": {
+      "model": "ae2addon:block/infinite_co_processing_formed"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.ae2addon.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "CraftingCPUClusterMixin",
+    "GridMixin",
+    "TooltipsMixin"
+  ],
+  "client": [],
+  "server": []
+}

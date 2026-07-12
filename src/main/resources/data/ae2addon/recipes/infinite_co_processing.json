@@ -1,0 +1,23 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "group": "ae2addon",
+  "pattern": [
+    "FAF",
+    "AHA",
+    "FAF"
+  ],
+  "key": {
+    "F": {
+      "item": "ae2:fluix_crystal"
+    },
+    "A": {
+      "item": "ae2:crafting_accelerator"
+    },
+    "H": {
+      "item": "ae2addon:eternal_heart"
+    }
+  },
+  "result": {
+    "item": "ae2addon:infinite_co_processing"
+  }
+}

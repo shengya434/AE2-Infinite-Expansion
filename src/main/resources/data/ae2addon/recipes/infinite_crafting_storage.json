@@ -1,0 +1,23 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "group": "ae2addon",
+  "pattern": [
+    "FSF",
+    "SHS",
+    "FSF"
+  ],
+  "key": {
+    "F": {
+      "item": "ae2:fluix_crystal"
+    },
+    "S": {
+      "item": "ae2:1k_crafting_storage"
+    },
+    "H": {
+      "item": "ae2addon:eternal_heart"
+    }
+  },
+  "result": {
+    "item": "ae2addon:infinite_crafting_storage"
+  }
+}

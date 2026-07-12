@@ -1,0 +1,23 @@
+# Minecraft Forge / Gradle
+build/
+.gradle/
+run/
+src/generated/
+*.jar
+*.log
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local
+local.properties

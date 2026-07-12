@@ -1,0 +1,12 @@
+{
+  "itemGroup.ae2addon": "AE2 Addon — Infinite Expansion",
+
+  "item.ae2addon.eternal_heart": "Eternal Heart",
+  "item.ae2addon.universal_storage_cell": "Universal Infinite Storage Cell",
+
+  "block.ae2addon.infinite_crafting_storage": "Infinite Crafting Storage",
+  "block.ae2addon.infinite_co_processing": "Infinite Co-Processing Unit",
+
+  "gui.ae2addon.mode_select": "Select Storage Mode",
+  "gui.ae2addon.mode2_config": "Custom Infinite Configuration"
+}

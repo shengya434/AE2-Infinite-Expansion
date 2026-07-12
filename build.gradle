@@ -1,0 +1,138 @@
+plugins {
+    id 'net.minecraftforge.gradle' version '[6.0.16,6.2)'
+    id 'org.parchmentmc.librarian.forgegradle' version '1.+'
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+}
+
+minecraft {
+    mappings channel: 'parchment', version: '2023.09.03-1.20.1'
+
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            // Mixin refmap remapping
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${project.buildDir}/createSrgToMcp/output.srg"
+            mods {
+                ae2addon {
+                    source sourceSets.main
+                }
+            }
+        }
+
+        server {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            // Mixin refmap remapping
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${project.buildDir}/createSrgToMcp/output.srg"
+            mods {
+                ae2addon {
+                    source sourceSets.main
+                }
+            }
+        }
+
+        data {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            // Mixin refmap remapping
+            property 'mixin.env.remapRefMap', 'true'
+            property 'mixin.env.refMapRemappingFile', "${project.buildDir}/createSrgToMcp/output.srg"
+            args '--mod', 'ae2addon', '--all', '--output', file('src/generated/resources/'), '--existing', file('src/main/resources/')
+            mods {
+                ae2addon {
+                    source sourceSets.main
+                }
+            }
+        }
+    }
+}
+
+repositories {
+    // Modrinth Maven — 从这里获取AE2
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+        content {
+            includeGroup "maven.modrinth"
+        }
+    }
+    // JEI 官方 Maven（主 + 备用）
+    maven {
+        name = "JEI"
+        url = "https://maven.blamejared.com/"
+        content {
+            includeGroup "mezz.jei"
+        }
+    }
+    maven {
+        name = "JEI Backup"
+        url = "https://dvs1.progwml6.com/files/maven/"
+        content {
+            includeGroup "mezz.jei"
+        }
+    }
+    mavenCentral()
+}
+
+configurations {
+    embed
+    implementation.extendsFrom(embed)
+}
+
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.20.1-47.3.0'
+
+    // Mixin annotation processor（编译时生成 refmap）
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    // 拼音搜索支持 — 嵌入到mod jar中
+    embed 'com.belerweb:pinyin4j:2.5.1'
+
+    // AE2 15.4.10 for Forge 1.20.1 — 通过Modrinth Maven获取
+    implementation fg.deobf("maven.modrinth:ae2:15.4.10")
+    implementation fg.deobf("maven.modrinth:guideme:20.1.15")
+
+    // JEI 15.20.0.132 for 1.20.1 — 通过官方Maven获取（避免映射兼容问题）
+    // compileOnly + runtimeOnly 都用完整jar防止API artifact缺失
+    compileOnly fg.deobf("mezz.jei:jei-1.20.1-forge:15.20.0.132")
+    runtimeOnly fg.deobf("mezz.jei:jei-1.20.1-forge:15.20.0.132")
+
+    // AppliedE — 用于EMC通道注册（反射调用，无硬依赖）
+    runtimeOnly fg.deobf("maven.modrinth:appliede:0.14.3")
+
+    // AppliedE — EMC与AE2桥接（编译时需要，运行时可选）
+    compileOnly fg.deobf("maven.modrinth:SyKS54UY:0.14.3")  // AppliedE 0.14.3
+}
+
+jar {
+    from {
+        configurations.embed.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes([
+                "Specification-Title"     : "AE2 Addon — Infinite Expansion",
+                "Specification-Vendor"    : "Tendo Alice",
+                "Specification-Version"   : "1",
+                "Implementation-Title"    : project.name,
+                "Implementation-Version"  : project.jar.archiveVersion,
+                "Implementation-Vendor"   : "Tendo Alice",
+                "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+                "MixinConfigs"            : "ae2addon.mixins.json",
+                "MixinConnector"          : "com.ae2addon.mixin.Connector"
+        ])
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}

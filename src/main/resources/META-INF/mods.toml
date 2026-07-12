@@ -1,0 +1,50 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="LGPL-3.0"
+
+[[mods]]
+modId="ae2addon"
+version="1.1.0"
+displayName="AE2 Addon — Infinite Expansion"
+logoFile=""
+credits="Made with ❤️ by Tendo Alice and sensei ✨"
+authors="Tendo Alice"
+description='''
+§5AE2 Infinite Expansion§r — 为 AE2 带来真正的无限存储体验！
+
+§6✦ 万能无限存储元件§r
+  • 三种模式：无限存储 / 自定义无限 / 全类型无限
+  • 模式切换，满足不同场景需求
+  • 全类型无限模式自动覆盖所有注册物品与流体
+  • 内置拼音搜索的中文配置界面
+
+§6✦ 无限合成存储器§r
+  • 单个方块提供 §bLong.MAX_VALUE§r 字节的合成存储空间
+  • 搭配 §aGridMixin§r 让 AE2 正确识别子类合成方块
+
+§6✦ 无限并行处理单元§r
+  • 单个方块提供 §bInteger.MAX_VALUE§r 线程！
+  • 移除原版 16 线程上限
+  • 海量并行合成，秒级完成万亿配方
+'''
+
+[[dependencies.ae2addon]]
+    modId="forge"
+    mandatory=true
+    versionRange="[47,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.ae2addon]]
+    modId="ae2"
+    mandatory=true
+    versionRange="[15,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.ae2addon]]
+    modId="jei"
+    mandatory=false
+    versionRange="[15,)"
+    ordering="NONE"
+    side="BOTH"
