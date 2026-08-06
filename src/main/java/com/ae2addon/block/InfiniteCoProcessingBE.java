@@ -18,6 +18,7 @@ public class InfiniteCoProcessingBE extends CraftingBlockEntity {
 
     @Override
     public int getAcceleratorThreads() {
-        return Integer.MAX_VALUE;
+        // MAX_VALUE-1：避免 getCoProcessors()+1 溢出为负（MAX_VALUE+1 溢出）导致 CPU 永不执行
+        return Integer.MAX_VALUE - 1;
     }
 }
