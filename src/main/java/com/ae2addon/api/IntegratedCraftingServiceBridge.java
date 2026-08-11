@@ -1,4 +1,4 @@
-package com.ae2addon.mixin;
+package com.ae2addon.api;
 
 import appeng.me.cluster.implementations.CraftingCPUCluster;
 

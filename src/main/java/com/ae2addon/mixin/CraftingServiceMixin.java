@@ -8,6 +8,7 @@ import appeng.api.networking.crafting.ICraftingSubmitResult;
 import appeng.api.networking.security.IActionSource;
 import appeng.me.cluster.implementations.CraftingCPUCluster;
 import appeng.me.service.CraftingService;
+import com.ae2addon.api.IntegratedCraftingServiceBridge;
 import com.ae2addon.block.IntegratedCPURegistry;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
