@@ -290,7 +290,10 @@ public abstract class CraftingCpuLogicMixin {
     private Iterable<ICraftingProvider> ae2addon$appendDebugTrashProviders(
             CraftingService craftingService, IPatternDetails patternDetails,
             Operation<Iterable<ICraftingProvider>> original) {
-        var providers = original.call(craftingService, patternDetails);
+        // 我们 CPU：直接调原始方法绕开 Omni 链；非我们 CPU 走链
+        var providers = ae2addon$budgetActive
+                ? craftingService.getProviders(patternDetails)
+                : original.call(craftingService, patternDetails);
         var debugProviders = DebugTrashRegistry.collectFor(craftingService);
         if (debugProviders.isEmpty()) {
             return providers;
@@ -342,6 +345,7 @@ public abstract class CraftingCpuLogicMixin {
                     ae2addon$budgetActive);
         }
         if (!ae2addon$budgetActive || patternDetails == null || inventory == null) {
+            // 非我们 CPU（原版/Omni）：交给链上的其他 handler（Omni 的批量逻辑）
             return original.call(patternDetails, inventory, level,
                     expectedOutputs, expectedContainerItems);
         }
@@ -352,8 +356,10 @@ public abstract class CraftingCpuLogicMixin {
         }
         long n = Math.min(ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
         if (n <= 1) {
-            return original.call(patternDetails, inventory, level,
-                    expectedOutputs, expectedContainerItems);
+            // 我们 CPU：直接调原始静态方法，绕开 Omni 的 extractBatch handler
+            // （它会对 scaled 输出算 waitingFor 余量，N 大时 reinject+null → 批量被误判失败锁 1）
+            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
+                    level, expectedOutputs, expectedContainerItems);
         }
 
         ae2addon$diagBatchExtractAttempts++;
@@ -362,11 +368,11 @@ public abstract class CraftingCpuLogicMixin {
             scaled = new ScaledPattern(patternDetails, n);
         } catch (RuntimeException exception) {
             ae2addon$setBatchMultiplier(patternDetails, 1);
-            return original.call(patternDetails, inventory, level,
-                    expectedOutputs, expectedContainerItems);
+            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
+                    level, expectedOutputs, expectedContainerItems);
         }
 
-        var batchInputs = original.call(scaled, inventory,
+        var batchInputs = CraftingCpuHelper.extractPatternInputs(scaled, inventory,
                 level, expectedOutputs, expectedContainerItems);
         if (batchInputs != null) {
             ae2addon$batchActive = true;
@@ -388,8 +394,8 @@ public abstract class CraftingCpuLogicMixin {
         }
         expectedOutputs.reset();
         expectedContainerItems.reset();
-        return original.call(patternDetails, inventory, level,
-                expectedOutputs, expectedContainerItems);
+        return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
+                level, expectedOutputs, expectedContainerItems);
     }
 
     // ── 批量推送：push 阶段 ──
@@ -415,7 +421,10 @@ public abstract class CraftingCpuLogicMixin {
                 || ae2addon$batchBasePattern != patternDetails
                 || ae2addon$batchScaledPattern == null
                 || ae2addon$batchMultiplier <= 1) {
-            boolean accepted = original.call(provider, patternDetails, inputs);
+            // 非批量路径：非我们 CPU 走链（Omni 处理），我们 CPU 直接调接口方法
+            boolean accepted = ae2addon$budgetActive
+                    ? provider.pushPattern(patternDetails, inputs)
+                    : original.call(provider, patternDetails, inputs);
             // 1× 成功也是批量探测的成功：翻倍 N，让同一 tick 内后续提取
             // 直接尝试 2×/4×/8×... 指数暴涨，对无限消费型接收方瞬间全发
             if (ae2addon$budgetActive && accepted && patternDetails != null) {
@@ -429,7 +438,9 @@ public abstract class CraftingCpuLogicMixin {
                 provider, patternDetails, dispatchPattern);
         boolean accepted;
         try {
-            accepted = original.call(provider, dispatchPattern, inputs);
+            // 批量 push：直接调接口方法，绕开 Omni 的 pushBatch handler
+            // （它不认识我们的 ScaledPattern，可能走它的批量上下文导致误判）
+            accepted = provider.pushPattern(dispatchPattern, inputs);
         } finally {
             if (temporarilyAdded) {
                 ae2addon$removeTemporarilyAddedPattern(provider, dispatchPattern);
