@@ -32,6 +32,8 @@ description='''
   • 结构成型接入 AE 网络后拥有无限级 CPU 功能
   • 挖取保留成型状态，JEI 内置结构预览
   • Mode 2 支持 §atag / mod 批量无限§r（如 minecraft:logs、整个 mod）
+
+§8灵感来源: OmniSequence: Transfinite (MIT)§r — 量子分裂/时间片限流思路
 '''
 
 [[dependencies.ae2addon]]
