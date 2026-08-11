@@ -46,5 +46,5 @@ description='''
     modId="jei"
     mandatory=false
     versionRange="[15,)"
-    ordering="NONE"
+    ordering="AFTER"
     side="BOTH"

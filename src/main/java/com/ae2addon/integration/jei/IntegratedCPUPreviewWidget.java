@@ -78,7 +78,31 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
         } else {
             drawFullStructure(guiGraphics, cx, cy);
         }
+        drawControls(guiGraphics);
         drawLegend(guiGraphics);
+    }
+
+    /** 控制按钮：旋转 < >（第一排）+ 层切换 < >（第二排） */
+    private void drawControls(GuiGraphics guiGraphics) {
+        var font = net.minecraft.client.Minecraft.getInstance().font;
+        int bx = position.x();
+        int by = position.y();
+
+        // 第一排：旋转（< > 90° 步进，关闭自动旋转）
+        guiGraphics.fill(bx + 8, by + 8, bx + 32, by + 24, 0xAA333333);
+        guiGraphics.fill(bx + 32, by + 8, bx + 56, by + 24, 0xAA333333);
+        guiGraphics.drawString(font, "<", bx + 17, by + 10, 0xFFFFFFFF);
+        guiGraphics.drawString(font, ">", bx + 41, by + 10, 0xFFFFFFFF);
+        guiGraphics.drawString(font, "旋转", bx + 60, by + 10, 0xFFAAAAAA);
+
+        // 第二排：层切换（-1 全览 / 0-4 单层）
+        guiGraphics.fill(bx + 8, by + 26, bx + 32, by + 42, 0xAA333333);
+        guiGraphics.fill(bx + 32, by + 26, bx + 56, by + 42, 0xAA333333);
+        guiGraphics.drawString(font, "<", bx + 17, by + 28, 0xFFFFFFFF);
+        guiGraphics.drawString(font, ">", bx + 41, by + 28, 0xFFFFFFFF);
+        guiGraphics.drawString(font, currentLayer >= 0
+                ? "层 " + (currentLayer + 1) + "/5"
+                : "全览", bx + 60, by + 28, 0xFFFFD700);
     }
 
     // ── 全览模式 ──

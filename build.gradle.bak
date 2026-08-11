@@ -86,6 +86,8 @@ repositories {
 configurations {
     embed
     implementation.extendsFrom(embed)
+    localRuntime
+    runtimeClasspath.extendsFrom(localRuntime)
 }
 
 dependencies {
@@ -94,6 +96,12 @@ dependencies {
     // Mixin annotation processor（编译时生成 refmap）
     annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
 
+    // MixinExtras — 链式共存（与 OmniSequence 同风格，@WrapOperation/@ModifyExpressionValue 可多 mod 叠加）
+    compileOnly(annotationProcessor('io.github.llamalad7:mixinextras-common:0.5.3'))
+    localRuntime 'io.github.llamalad7:mixinextras-forge:0.5.3'
+    jarJar('io.github.llamalad7:mixinextras-forge:[0.5.3,)') {
+        jarJar.pin(it, '0.5.3')
+    }
 
     // 拼音搜索支持 — 嵌入到mod jar中
     embed 'com.belerweb:pinyin4j:2.5.1'
@@ -138,5 +146,28 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
+// MixinExtras jarJar 打包（与 OmniSequence 共存时需要）
+jarJar.enable()
 
+tasks.named('jarJar', Jar).configure {
+    // 与主 jar 一致：嵌入 pinyin4j（jarJar 任务不自动继承 jar 的 embed 配置）
+    from {
+        project.configurations.embed.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    // jarJar 任务没有 archiveVersion，manifest 需独立配置（不继承主 jar 的）
+    manifest {
+        attributes([
+                "Specification-Title"     : "AE2 Addon — Infinite Expansion",
+                "Specification-Vendor"    : "Tendo Alice",
+                "Specification-Version"   : "1",
+                "Implementation-Title"    : project.name,
+                "Implementation-Version"  : "1.2.0",
+                "Implementation-Vendor"   : "Tendo Alice",
+                "MixinConfigs"            : "ae2addon.mixins.json",
+                "MixinConnector"          : "com.ae2addon.mixin.Connector"
+        ])
+    }
+}
 
+// 构建后 jarJar 产物名：ae2-addon-jarjar.jar（含 MixinExtras）

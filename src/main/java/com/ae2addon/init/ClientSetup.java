@@ -22,6 +22,7 @@ public class ClientSetup {
             MenuScreens.register(ModMenuTypes.MODE_SELECT.get(), ModeSelectScreen::new);
             MenuScreens.register(ModMenuTypes.MODE2_CONFIG.get(), Mode2ConfigScreen::new);
             MenuScreens.register(ModMenuTypes.INTEGRATED_CPU.get(), IntegratedCPUScreen::new);
+
         });
     }
 }
