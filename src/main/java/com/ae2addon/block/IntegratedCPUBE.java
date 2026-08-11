@@ -6,6 +6,7 @@ import appeng.blockentity.crafting.CraftingBlockEntity;
 import appeng.me.cluster.implementations.CraftingCPUCluster;
 import com.ae2addon.init.ModBlockEntities;
 import com.ae2addon.mixin.CraftingCPUClusterAccessor;
+import com.ae2addon.mixin.IntegratedCraftingServiceBridge;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -43,10 +44,11 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
     private final List<CraftingCPUCluster> virtualCpus = new ArrayList<>();
 
     /**
-     * 常驻线程数（含主线程）：成型后始终保留这么多 lane，
-     * 界面线程列表一直可见，任务来了直接并行。
+     * 常驻线程数（含主线程）：1 = 只保底主簇，虚拟 lane 用完即收。
+     * 主簇忙时会自动补建 1 个空闲 lane 并行；任务完成后由
+     * CraftingCPUClusterMixin.done() 注入触发隐藏（removeVirtualCpu）。
      */
-    private static final int IDLE_LANE_TARGET = 3;
+    private static final int IDLE_LANE_TARGET = 1;
 
     public IntegratedCPUBE(BlockPos pos, BlockState state) {
         super(ModBlockEntities.INTEGRATED_CPU.get(), pos, state);
@@ -162,11 +164,15 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
         }
         // 回收多余空闲（保留 IDLE_LANE_TARGET 个）
         if (idleCount > IDLE_LANE_TARGET) {
+            var bridge = ae2addon$craftingBridge();
             Iterator<CraftingCPUCluster> iterator = virtualCpus.iterator();
             while (iterator.hasNext() && idleCount > IDLE_LANE_TARGET) {
                 var cpu = iterator.next();
                 if (!cpu.isBusy()) {
                     iterator.remove();
+                    if (bridge != null) {
+                        bridge.ae2addon$unregisterCpu(cpu);
+                    }
                     idleCount--;
                 }
             }
@@ -186,6 +192,42 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
             }
         }
         return createVirtualCpu();
+    }
+
+    /**
+     * 虚拟 CPU lane 任务完成后的隐藏回调（由 CraftingCPUClusterMixin 的
+     * done() 注入调用）：从 lane 列表移除，并从 CraftingService 的
+     * craftingCPUClusters 集合剔除，界面线程列表立即消失。
+     * <p>
+     * 主簇完成任务也会走到这里，但主簇不隐藏（cpu == getCluster() 直接返回）。
+     */
+    public void removeVirtualCpu(CraftingCPUCluster cpu) {
+        if (cpu == null || cpu == getCluster()) {
+            return;
+        }
+        virtualCpus.remove(cpu);
+        var bridge = ae2addon$craftingBridge();
+        if (bridge != null) {
+            bridge.ae2addon$unregisterCpu(cpu);
+        }
+    }
+
+    /**
+     * 从 AE 网格拿到 CraftingService 桥接（用于注册/注销虚拟 lane）。
+     * 网格不可用时返回 null（下次 refresh 会重建集合）。
+     */
+    private IntegratedCraftingServiceBridge ae2addon$craftingBridge() {
+        try {
+            var node = getMainNode().getNode();
+            if (node != null && node.getGrid() != null
+                    && node.getGrid().getCraftingService()
+                            instanceof IntegratedCraftingServiceBridge bridge) {
+                return bridge;
+            }
+        } catch (RuntimeException ignored) {
+            // 网格未就绪
+        }
+        return null;
     }
 
     public int getCpuLaneCount() {

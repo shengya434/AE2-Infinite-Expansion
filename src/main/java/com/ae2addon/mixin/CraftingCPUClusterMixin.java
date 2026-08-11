@@ -3,12 +3,14 @@ package com.ae2addon.mixin;
 import appeng.me.cluster.implementations.CraftingCPUCluster;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.block.IntegratedCPUBE;
+import com.ae2addon.block.IntegratedCPURegistry;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Constant;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyConstant;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
@@ -40,6 +42,22 @@ public class CraftingCPUClusterMixin {
         }
         if (ae2addon$isIntegratedCpu((CraftingCPUCluster) (Object) this)) {
             callback.setReturnValue(Long.MAX_VALUE);
+        }
+    }
+
+    /**
+     * 虚拟 CPU lane 任务完成后自动隐藏：从所属集成 CPU 的 lane 列表移除，
+     * 并把它从 CraftingService 的 craftingCPUClusters 集合剔除。
+     * <p>
+     * done() 是 AE2 合成任务完成后的收尾回调，主簇完成任务时也会走到这里，
+     * 但 owner.removeVirtualCpu 内部会判断「只移除虚拟 lane，主簇保留」。
+     */
+    @Inject(method = "done", at = @At("RETURN"), remap = false)
+    private void ae2addon$hideFinishedVirtualLane(CallbackInfo callback) {
+        var self = (CraftingCPUCluster) (Object) this;
+        var owner = IntegratedCPURegistry.ownerOf(self);
+        if (owner != null) {
+            owner.removeVirtualCpu(self);
         }
     }
 

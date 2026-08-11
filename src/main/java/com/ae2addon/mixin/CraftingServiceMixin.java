@@ -26,7 +26,7 @@ import java.util.Set;
  * 思路来自 OmniSequence-Transfinite 的 OmniCraftingServiceMixin。
  */
 @Mixin(value = CraftingService.class, remap = false)
-public abstract class CraftingServiceMixin {
+public abstract class CraftingServiceMixin implements IntegratedCraftingServiceBridge {
 
     @Shadow
     @Final
@@ -94,7 +94,7 @@ public abstract class CraftingServiceMixin {
             blockEntity.ensureOneIdleCpu();
             for (var cpu : blockEntity.allCpus()) {
                 if (!cpu.isDestroyed() && cpu.isActive()) {
-                    craftingCPUClusters.add(cpu);
+                    ae2addon$registerCpu(cpu);
                     registered++;
                 }
             }
@@ -109,4 +109,20 @@ public abstract class CraftingServiceMixin {
 
     @Unique
     private static int ae2addon$lastRegisteredCount = -1;
+
+    // ── IntegratedCraftingServiceBridge 实现 ──
+
+    @Override
+    public void ae2addon$unregisterCpu(CraftingCPUCluster cluster) {
+        if (cluster != null) {
+            craftingCPUClusters.remove(cluster);
+        }
+    }
+
+    @Override
+    public void ae2addon$registerCpu(CraftingCPUCluster cluster) {
+        if (cluster != null && !cluster.isDestroyed()) {
+            craftingCPUClusters.add(cluster);
+        }
+    }
 }
