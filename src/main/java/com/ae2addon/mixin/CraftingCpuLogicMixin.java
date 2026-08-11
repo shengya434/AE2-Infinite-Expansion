@@ -15,6 +15,9 @@ import com.ae2addon.AE2Addon;
 import com.ae2addon.block.DebugTrashRegistry;
 import com.ae2addon.block.IntegratedCPUBE;
 import com.ae2addon.crafting.ScaledPattern;
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import org.spongepowered.asm.mixin.Final;
@@ -47,7 +50,7 @@ import java.util.Map;
  * <p>
  * 仅对包含 {@link IntegratedCPUBE} 的 CPU 簇生效，不影响原版 AE2 CPU。
  */
-@Mixin(value = CraftingCpuLogic.class, remap = false)
+@Mixin(value = CraftingCpuLogic.class, priority = 1100, remap = false)
 public abstract class CraftingCpuLogicMixin {
 
     // ── 时间片预算 ──
@@ -239,47 +242,55 @@ public abstract class CraftingCpuLogicMixin {
 
     /**
      * 任务循环（job.tasks.entrySet() 的迭代）：超时即终止整个任务的遍历。
+     * <p>
+     * 用 @ModifyExpressionValue（而非 @Redirect）以便与 OmniSequence 的
+     * 同类注入链式共存：priority 1100 &gt; Omni 的默认 1000，我们的 handler
+     * 在链的最外层，最后决定返回值。
      */
-    @Redirect(method = "executeCrafting",
+    @ModifyExpressionValue(method = "executeCrafting",
             at = @At(value = "INVOKE", target = "Ljava/util/Iterator;hasNext()Z", ordinal = 0))
-    private boolean ae2addon$limitTaskIteration(Iterator<?> iterator) {
+    private boolean ae2addon$limitTaskIteration(boolean original) {
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
             if (System.nanoTime() >= ae2addon$deadlineNanos) {
                 return false;
             }
         }
-        return iterator.hasNext();
+        return original;
     }
 
     /**
      * provider 循环（craftingService.getProviders(details) 的迭代）：
      * 超时即停止向机器推送，本 tick 收工。
      */
-    @Redirect(method = "executeCrafting",
+    @ModifyExpressionValue(method = "executeCrafting",
             at = @At(value = "INVOKE", target = "Ljava/util/Iterator;hasNext()Z", ordinal = 1))
-    private boolean ae2addon$limitProviderIteration(Iterator<?> iterator) {
+    private boolean ae2addon$limitProviderIteration(boolean original) {
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
             if (System.nanoTime() >= ae2addon$deadlineNanos) {
                 return false;
             }
         }
-        return iterator.hasNext();
+        return original;
     }
 
     /**
      * getProviders 结果追加 Debug 销毁方块：DebugTrashBE 不注册任何 pattern，
      * 通过这里成为任意 pattern 的接收者（同一网络内），用于测试无限吞吐。
+     * <p>
+     * 用 @WrapOperation（链式）：priority 1100 在最外层，先调用原始链
+     * （Omni 的 provider 选择在其中执行），再把 DebugTrash 追加到结果尾部。
      */
-    @Redirect(method = "executeCrafting",
+    @WrapOperation(method = "executeCrafting",
             at = @At(value = "INVOKE",
                     target = "Lappeng/me/service/CraftingService;getProviders("
                             + "Lappeng/api/crafting/IPatternDetails;)"
                             + "Ljava/lang/Iterable;"))
     private Iterable<ICraftingProvider> ae2addon$appendDebugTrashProviders(
-            CraftingService craftingService, IPatternDetails patternDetails) {
-        var providers = craftingService.getProviders(patternDetails);
+            CraftingService craftingService, IPatternDetails patternDetails,
+            Operation<Iterable<ICraftingProvider>> original) {
+        var providers = original.call(craftingService, patternDetails);
         var debugProviders = DebugTrashRegistry.collectFor(craftingService);
         if (debugProviders.isEmpty()) {
             return providers;
@@ -295,8 +306,11 @@ public abstract class CraftingCpuLogicMixin {
     /**
      * 提取阶段：若当前 pattern 有批量 N（&gt;1），用 ScaledPattern 提取 N× 输入。
      * 提取失败（库存不足等）→ 批量 N 减半回退，并降级为 1× 提取。
+     * <p>
+     * @WrapOperation 链式：priority 1100 外层，先走原始链（Omni 的批量提取
+     * 在其中执行，对我们 CPU 簇它不会拦），再执行我们自己的 N× 提取。
      */
-    @Redirect(method = "executeCrafting",
+    @WrapOperation(method = "executeCrafting",
             at = @At(value = "INVOKE",
                     target = "Lappeng/crafting/execution/CraftingCpuHelper;extractPatternInputs("
                             + "Lappeng/api/crafting/IPatternDetails;"
@@ -307,7 +321,8 @@ public abstract class CraftingCpuLogicMixin {
                             + ")[Lappeng/api/stacks/KeyCounter;"))
     private KeyCounter[] ae2addon$extractBatch(IPatternDetails patternDetails,
             ICraftingInventory inventory, Level level, KeyCounter expectedOutputs,
-            KeyCounter expectedContainerItems) {
+            KeyCounter expectedContainerItems,
+            Operation<KeyCounter[]> original) {
         ae2addon$clearBatchContext();
         // 上次批量尝试没有任何 provider 接受 → 收敛批量 N
         if (ae2addon$batchPendingMultiplier > 1) {
@@ -327,8 +342,8 @@ public abstract class CraftingCpuLogicMixin {
                     ae2addon$budgetActive);
         }
         if (!ae2addon$budgetActive || patternDetails == null || inventory == null) {
-            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
-                    level, expectedOutputs, expectedContainerItems);
+            return original.call(patternDetails, inventory, level,
+                    expectedOutputs, expectedContainerItems);
         }
 
         long taskRemaining = ae2addon$getTaskValue(patternDetails);
@@ -337,8 +352,8 @@ public abstract class CraftingCpuLogicMixin {
         }
         long n = Math.min(ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
         if (n <= 1) {
-            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
-                    level, expectedOutputs, expectedContainerItems);
+            return original.call(patternDetails, inventory, level,
+                    expectedOutputs, expectedContainerItems);
         }
 
         ae2addon$diagBatchExtractAttempts++;
@@ -347,11 +362,11 @@ public abstract class CraftingCpuLogicMixin {
             scaled = new ScaledPattern(patternDetails, n);
         } catch (RuntimeException exception) {
             ae2addon$setBatchMultiplier(patternDetails, 1);
-            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
-                    level, expectedOutputs, expectedContainerItems);
+            return original.call(patternDetails, inventory, level,
+                    expectedOutputs, expectedContainerItems);
         }
 
-        var batchInputs = CraftingCpuHelper.extractPatternInputs(scaled, inventory,
+        var batchInputs = original.call(scaled, inventory,
                 level, expectedOutputs, expectedContainerItems);
         if (batchInputs != null) {
             ae2addon$batchActive = true;
@@ -373,8 +388,8 @@ public abstract class CraftingCpuLogicMixin {
         }
         expectedOutputs.reset();
         expectedContainerItems.reset();
-        return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
-                level, expectedOutputs, expectedContainerItems);
+        return original.call(patternDetails, inventory, level,
+                expectedOutputs, expectedContainerItems);
     }
 
     // ── 批量推送：push 阶段 ──
@@ -383,20 +398,24 @@ public abstract class CraftingCpuLogicMixin {
      * push 阶段：批量上下文时推 ScaledPattern（N× 输入）。
      * 成功 → 任务值额外减 N−1（AE2 自己会再减 1，共 −N），批量翻倍；
      * 失败 → 批量减半（1× 失败则锁定逐条）。
+     * <p>
+     * @WrapOperation 链式：外层先调原始链（Omni 的 pushBatch 在其中执行，
+     * 对我们 CPU 簇它不会拦），再执行我们自己的批量 push。
      */
-    @Redirect(method = "executeCrafting",
+    @WrapOperation(method = "executeCrafting",
             at = @At(value = "INVOKE",
                     target = "Lappeng/api/networking/crafting/ICraftingProvider;"
                             + "pushPattern(Lappeng/api/crafting/IPatternDetails;"
                             + "[Lappeng/api/stacks/KeyCounter;)Z"))
     private boolean ae2addon$pushBatch(ICraftingProvider provider,
-            IPatternDetails patternDetails, KeyCounter[] inputs) {
+            IPatternDetails patternDetails, KeyCounter[] inputs,
+            Operation<Boolean> original) {
         ae2addon$diagPushCalls++;
         if (!ae2addon$batchActive
                 || ae2addon$batchBasePattern != patternDetails
                 || ae2addon$batchScaledPattern == null
                 || ae2addon$batchMultiplier <= 1) {
-            boolean accepted = provider.pushPattern(patternDetails, inputs);
+            boolean accepted = original.call(provider, patternDetails, inputs);
             // 1× 成功也是批量探测的成功：翻倍 N，让同一 tick 内后续提取
             // 直接尝试 2×/4×/8×... 指数暴涨，对无限消费型接收方瞬间全发
             if (ae2addon$budgetActive && accepted && patternDetails != null) {
@@ -410,7 +429,7 @@ public abstract class CraftingCpuLogicMixin {
                 provider, patternDetails, dispatchPattern);
         boolean accepted;
         try {
-            accepted = provider.pushPattern(dispatchPattern, inputs);
+            accepted = original.call(provider, dispatchPattern, inputs);
         } finally {
             if (temporarilyAdded) {
                 ae2addon$removeTemporarilyAddedPattern(provider, dispatchPattern);
@@ -430,6 +449,28 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$diagBatchFailProvider = provider.getClass().getName();
         }
         return accepted;
+    }
+
+    // ── getCoProcessors 保护（与 OmniSequence 共存）──
+
+    /**
+     * OmniSequence 的 {@code limitUnboundedCraftingBurst} 对非自家 CPU 的簇
+     * 会把 getCoProcessors() 砍到 255（coProcessors &gt; 256 时），我们的集成 CPU
+     * 的 65536 线程就是这么被吃的。
+     * <p>
+     * 这里用 priority 1100（&gt; Omni 默认 1000）的 @ModifyExpressionValue 包在链的
+     * 最外层：先让 Omni 的 handler 执行，再对我们的 CPU 簇强制恢复 MAX_VALUE−1
+     * （与 Omni 自家 CPU 相同的哨兵值，显示 ∞ 时也兼容）。
+     */
+    @ModifyExpressionValue(method = "tickCraftingLogic",
+            at = @At(value = "INVOKE",
+                    target = "Lappeng/me/cluster/implementations/CraftingCPUCluster;"
+                            + "getCoProcessors()I"))
+    private int ae2addon$protectCoProcessors(int coProcessors) {
+        if (ae2addon$budgetActive && coProcessors != Integer.MAX_VALUE - 1) {
+            return Integer.MAX_VALUE - 1;
+        }
+        return coProcessors;
     }
 
     // ── 批量自适应控制器 ──
