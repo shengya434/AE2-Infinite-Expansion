@@ -44,6 +44,74 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
 
     // ── 右键：模式2→配置界面，其他→模式选择 ──
 
+    /**
+     * Mode 2 配置菜单的 MenuProvider（静态内部类，避免匿名类 $N 加载问题）。
+     * 注意：openScreen 的 buf 写入也必须用静态 Consumer 类（不能 lambda）。
+     */
+    private static class Mode2MenuProvider implements MenuProvider {
+        private final ItemStack stack;
+
+        Mode2MenuProvider(ItemStack stack) {
+            this.stack = stack;
+        }
+
+        @Override
+        public Component getDisplayName() {
+            return Component.translatable("gui.ae2addon.mode2_config");
+        }
+
+        @Override
+        public AbstractContainerMenu createMenu(int id, Inventory inv, Player p) {
+            return new com.ae2addon.gui.Mode2ConfigMenu(id, inv, stack);
+        }
+    }
+
+    /** Mode 1/3 模式选择菜单的 MenuProvider（静态内部类） */
+    private static class ModeSelectMenuProvider implements MenuProvider {
+        private final ItemStack stack;
+
+        ModeSelectMenuProvider(ItemStack stack) {
+            this.stack = stack;
+        }
+
+        @Override
+        public Component getDisplayName() {
+            return Component.translatable("gui.ae2addon.mode_select");
+        }
+
+        @Override
+        public AbstractContainerMenu createMenu(int id, Inventory inv, Player p) {
+            return new ModeSelectMenu(id, inv, stack);
+        }
+    }
+
+    /** openScreen 的 buf 写入器（静态内部类，避免 lambda 合成类问题） */
+    private static class LightStackWriter implements java.util.function.Consumer<net.minecraft.network.FriendlyByteBuf> {
+        private final ItemStack stack;
+        private final boolean dropModeData; // true=模式1/3（额外移除 a）
+
+        LightStackWriter(ItemStack stack, boolean dropModeData) {
+            this.stack = stack;
+            this.dropModeData = dropModeData;
+        }
+
+        @Override
+        public void accept(net.minecraft.network.FriendlyByteBuf buf) {
+            // 只传阈值，裁掉 s2/ul/wl 等重 NBT 数据以防止打开菜单时就炸包
+            ItemStack copy = stack.copy();
+            CompoundTag tag = copy.getOrCreateTag();
+            tag.remove("s1");
+            tag.remove("s2");
+            tag.remove("sa");
+            tag.remove("u");
+            tag.remove("w");
+            if (dropModeData) {
+                tag.remove("a");
+            }
+            buf.writeItem(copy);
+        }
+    }
+
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
@@ -54,44 +122,14 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
             if (mode < 1 || mode > 3) mode = 1;
 
             if (mode == MODE_CUSTOM) {
-                NetworkHooks.openScreen(serverPlayer, new MenuProvider() {
-                    @Override public Component getDisplayName() {
-                        return Component.translatable("gui.ae2addon.mode2_config");
-                    }
-                    @Override public AbstractContainerMenu createMenu(int id, Inventory inv, Player p) {
-                        return new com.ae2addon.gui.Mode2ConfigMenu(id, inv, stack);
-                    }
-                }, buf -> {
-                    // 只传阈值，裁掉 s2/ul/wl 等重 NBT 数据以防止打开菜单时就炸包
-                    ItemStack copy = stack.copy();
-                    CompoundTag tag = copy.getOrCreateTag();
-                    tag.remove("s1");
-                    tag.remove("s2");
-                    tag.remove("sa");
-                    tag.remove("u");
-                    tag.remove("w");
-                    buf.writeItem(copy);
-                });
+                NetworkHooks.openScreen(serverPlayer,
+                        new Mode2MenuProvider(stack),
+                        new LightStackWriter(stack, false));
             } else {
                 // Mode 1 / Mode 3：只传光副本，裁掉存储NBT防炸包
-                NetworkHooks.openScreen(serverPlayer, new MenuProvider() {
-                    @Override public Component getDisplayName() {
-                        return Component.translatable("gui.ae2addon.mode_select");
-                    }
-                    @Override public AbstractContainerMenu createMenu(int id, Inventory inv, Player p) {
-                        return new ModeSelectMenu(id, inv, stack);
-                    }
-                }, buf -> {
-                    ItemStack copy = stack.copy();
-                    CompoundTag tag = copy.getOrCreateTag();
-                    tag.remove("s1");
-                    tag.remove("s2");
-                    tag.remove("sa");
-                    tag.remove("u");
-                    tag.remove("w");
-                    tag.remove("a");
-                    buf.writeItem(copy);
-                });
+                NetworkHooks.openScreen(serverPlayer,
+                        new ModeSelectMenuProvider(stack),
+                        new LightStackWriter(stack, true));
             }
         }
         return InteractionResultHolder.success(stack);
