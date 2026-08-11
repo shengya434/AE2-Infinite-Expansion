@@ -11,17 +11,16 @@ import net.minecraft.world.level.material.MapColor;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * 无限合成存储器 — 已取消 CPU 功能（普通方块化）。
+ * Debug 销毁方块（测试用）：拥有无限输入能力，接受后瞬间销毁其中材料。
  * <p>
- * 不再继承 CraftingUnitBlock：不会参与 AE2 合成 CPU 结构、没有 formed 材质。
- * 仍保留网格节点（通过 BE），可以像普通方块一样接入 AE 网络（接智能线缆等）。
- * 现在的用途：作为 集成型CPU（IntegratedCPU）多方块的内部元件材料。
+ * 通过 ICraftingProvider.pushPattern 接收 CPU 推送的任意配方输入，
+ * 接受即销毁。比创造流体储罐更强：输入量不受 int 限制（KeyCounter 是 long）。
  */
-public class InfiniteCraftingStorageBlock extends BaseEntityBlock {
+public class DebugTrashBlock extends BaseEntityBlock {
 
-    public InfiniteCraftingStorageBlock() {
+    public DebugTrashBlock() {
         super(BlockBehaviour.Properties.of()
-                .mapColor(MapColor.COLOR_GRAY)
+                .mapColor(MapColor.COLOR_PURPLE)
                 .strength(3.0f)
                 .requiresCorrectToolForDrops());
     }
@@ -34,6 +33,6 @@ public class InfiniteCraftingStorageBlock extends BaseEntityBlock {
     @Nullable
     @Override
     public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
-        return new InfiniteCraftingStorageBE(pos, state);
+        return new DebugTrashBE(pos, state);
     }
 }

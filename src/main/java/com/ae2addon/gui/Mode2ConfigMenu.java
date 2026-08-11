@@ -4,6 +4,7 @@ import com.ae2addon.AE2Addon;
 import com.ae2addon.cell.UnlimitedCellInventory;
 import com.ae2addon.init.ModMenuTypes;
 import com.ae2addon.network.Mode2ConfigPacket;
+import appeng.api.stacks.AEKey;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.entity.player.Inventory;
@@ -24,6 +25,12 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
     private final ItemStack cellStack;
     /** 客户端缓存的面板数据 */
     private List<UnlimitedCellInventory.PanelItem> panelItems = new ArrayList<>();
+    /** 客户端缓存的 tag 规则 */
+    private List<String> tagRules = new ArrayList<>();
+    /** 客户端缓存的 mod 规则 */
+    private List<String> modRules = new ArrayList<>();
+    /** 客户端缓存的黑名单 AEKey */
+    private List<AEKey> blacklist = new ArrayList<>();
     /** 由屏幕控制：是否隐藏物品栏 */
     public boolean slotsHidden = false;
 
@@ -78,6 +85,63 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
     /** 客户端获取面板数据 */
     public List<UnlimitedCellInventory.PanelItem> getPanelItems() {
         return panelItems;
+    }
+
+    /** 客户端更新规则数据 */
+    public void setRuleData(boolean isTag, List<String> rules) {
+        if (isTag) {
+            tagRules = new ArrayList<>(rules);
+        } else {
+            modRules = new ArrayList<>(rules);
+        }
+    }
+
+    public List<String> getTagRules() {
+        return tagRules;
+    }
+
+    public List<String> getModRules() {
+        return modRules;
+    }
+
+    /** 添加 tag 规则 */
+    public void sendAddTagRule(String tag) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(7, tag, true));
+    }
+
+    /** 移除 tag 规则 */
+    public void sendRemoveTagRule(String tag) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(8, tag, true));
+    }
+
+    /** 添加 mod 规则 */
+    public void sendAddModRule(String mod) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(7, mod, false));
+    }
+
+    /** 移除 mod 规则 */
+    public void sendRemoveModRule(String mod) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(8, mod, false));
+    }
+
+    /** 设置规则生效模式（true=立即全量，false=触碰后） */
+    public void sendSetRuleInstant(boolean instant) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(instant));
+    }
+
+    /** 客户端更新黑名单缓存 */
+    public void setBlacklist(List<AEKey> keys) {
+        this.blacklist = new ArrayList<>(keys);
+    }
+
+    /** 客户端获取黑名单 */
+    public List<AEKey> getBlacklist() {
+        return blacklist;
+    }
+
+    /** 切换黑名单（传完整 AEKey NBT） */
+    public void sendToggleBlacklist(CompoundTag keyTag) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(keyTag, false));
     }
 
     /** 切换无限状态：发送完整 AEKey NBT 到服务端 */

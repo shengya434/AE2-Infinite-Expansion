@@ -28,6 +28,13 @@ public class UnlimitedCellHandler implements ICellHandler {
         return stack.getItem() instanceof UniversalStorageCell;
     }
 
+    /**
+     * 显式检测：是否为通用无限元件。
+     */
+    public static boolean isUnlimitedCell(ItemStack stack) {
+        return stack.getItem() instanceof UniversalStorageCell;
+    }
+
     @Override
     public @Nullable StorageCell getCellInventory(ItemStack stack, ISaveProvider saveProvider) {
         if (!isCell(stack)) return null;

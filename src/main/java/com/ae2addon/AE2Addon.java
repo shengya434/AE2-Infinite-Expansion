@@ -31,6 +31,15 @@ public class AE2Addon {
             PROTOCOL_VERSION::equals
     );
 
+    private void onCommonSetup(net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            // 注册集成 CPU 菜单 opener（AE2 locator 协议）
+            appeng.menu.MenuOpener.addOpener(
+                    ModMenuTypes.INTEGRATED_CPU.get(),
+                    com.ae2addon.gui.IntegratedCPUMenu::openMenu);
+        });
+    }
+
     public AE2Addon() {
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
 
@@ -47,6 +56,9 @@ public class AE2Addon {
         // 注册菜单类型
         ModMenuTypes.MENUS.register(modBus);
 
+        // 集成 CPU 菜单 opener 延迟到注册表就绪后注册（FMLCommonSetupEvent）
+        modBus.addListener(this::onCommonSetup);
+
         // 注册网络数据包
         NETWORK.registerMessage(0, SetCellModePacket.class,
                 SetCellModePacket::encode,
@@ -60,6 +72,7 @@ public class AE2Addon {
         );
 
         MinecraftForge.EVENT_BUS.register(this);
+        MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);
 
         LOGGER.info("✅ AE2 Addon loaded! Universal Storage Cells ready!");
     }

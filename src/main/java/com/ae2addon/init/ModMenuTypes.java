@@ -1,6 +1,7 @@
 package com.ae2addon.init;
 
 import com.ae2addon.AE2Addon;
+import com.ae2addon.gui.IntegratedCPUMenu;
 import com.ae2addon.gui.Mode2ConfigMenu;
 import com.ae2addon.gui.ModeSelectMenu;
 import net.minecraft.core.registries.Registries;
@@ -26,4 +27,10 @@ public class ModMenuTypes {
     public static final RegistryObject<MenuType<Mode2ConfigMenu>> MODE2_CONFIG =
             MENUS.register("mode2_config",
                     () -> IForgeMenuType.create(Mode2ConfigMenu::fromNetwork));
+
+    // 集成 CPU 状态界面（量子分裂线程列表）
+    public static final RegistryObject<MenuType<IntegratedCPUMenu>> INTEGRATED_CPU =
+            MENUS.register("integrated_cpu",
+                    () -> IForgeMenuType.create(IntegratedCPUMenu::fromNetwork));
+
 }

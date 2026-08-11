@@ -20,6 +20,8 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Rarity;
 import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.level.Level;
+
+import java.math.BigInteger;
 import net.minecraftforge.network.NetworkHooks;
 import org.jetbrains.annotations.Nullable;
 
@@ -143,7 +145,12 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
         }
 
         // Mode 1 / 2：从统计摘要标签读（轻量，不遍历几千条 NBT）
-        long totalBytes = tag.getLong("_b");
+        BigInteger totalBytes;
+        if (tag.contains("_b2", 7)) {
+            totalBytes = new BigInteger(tag.getByteArray("_b2"));
+        } else {
+            totalBytes = BigInteger.valueOf(tag.getLong("_b"));
+        }
         int typeCount = tag.getInt("_t");
 
         tooltip.add(Component.literal("§7字节: §b" + formatBytes(totalBytes)));
@@ -151,14 +158,26 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
         tooltip.add(Component.literal("§7右键切换模式"));
     }
 
-    private String formatBytes(long bytes) {
-        if (bytes >= 1_000_000_000_000_000_000L) return String.format("%.1fE", bytes / 1_000_000_000_000_000_000.0);
-        if (bytes >= 1_000_000_000_000_000L) return String.format("%.1fP", bytes / 1_000_000_000_000_000.0);
-        if (bytes >= 1_000_000_000_000L) return String.format("%.1fT", bytes / 1_000_000_000_000.0);
-        if (bytes >= 1_000_000_000) return String.format("%.1fG", bytes / 1_000_000_000.0);
-        if (bytes >= 1_000_000) return String.format("%.1fM", bytes / 1_000_000.0);
-        if (bytes >= 1_000) return (bytes / 1_000) + "K";
-        return bytes + "B";
+    /** BigInteger 版字节格式化：支持 B/K/M/G/T/P/E/Z/Y/R/Q 单位 */
+    private String formatBytes(BigInteger bytes) {
+        if (bytes.signum() < 0) return "0B";
+        String[] units = {"B", "K", "M", "G", "T", "P", "E", "Z", "Y", "R", "Q"};
+        BigInteger base = BigInteger.valueOf(1000);
+        BigInteger v = bytes;
+        int u = 0;
+        while (u < units.length - 1 && v.compareTo(base) >= 0) {
+            v = v.divide(base);
+            u++;
+        }
+        // 保留一位小数的近似（显示友好）
+        if (u > 0) {
+            // 用 BigDecimal 算一位小数
+            java.math.BigDecimal bd = new java.math.BigDecimal(bytes);
+            java.math.BigDecimal div = java.math.BigDecimal.valueOf(1000).pow(u);
+            bd = bd.divide(div, 1, java.math.RoundingMode.DOWN);
+            return bd.toPlainString() + units[u];
+        }
+        return v + units[u];
     }
 
 

@@ -104,6 +104,16 @@ public class CellDataSavedData extends SavedData {
         public final Map<AEKey, Long> ca = new HashMap<>();
         /** Mode 3 已插入的物品（含 NBT 变体），跨存档持久化 */
         public final Set<AEKey> m3 = new HashSet<>();
+        /** Mode 2 按 tag 批量无限（如 "minecraft:logs"） */
+        public final Set<String> tags = new HashSet<>();
+        /** Mode 2 按 mod 批量无限（如 "gtceu"） */
+        public final Set<String> mods = new HashSet<>();
+        /** 规则生效模式：true=立即全量无限，false=触碰（存入过）后无限 */
+        public boolean ruleInstant = true;
+        /** 触碰模式下记录过的匹配物品（存入过才显示无限） */
+        public final Set<AEKey> ruleTouched = new HashSet<>();
+        /** 黑名单：即使命中 tag/mod 规则也禁止无限 */
+        public final Set<AEKey> blacklist = new HashSet<>();
 
         public void save(CompoundTag tag) {
             putBigIntMap(tag, "s1", s1);
@@ -112,6 +122,11 @@ public class CellDataSavedData extends SavedData {
             putSet(tag, "ul", ul);
             putLongMap(tag, "ca", ca);
             putSet(tag, "m3", m3);
+            putStringSet(tag, "tags", tags);
+            putStringSet(tag, "mods", mods);
+            tag.putBoolean("ri", ruleInstant);
+            putSet(tag, "rt", ruleTouched);
+            putSet(tag, "bl", blacklist);
         }
 
         public static CellData load(CompoundTag tag) {
@@ -122,6 +137,11 @@ public class CellDataSavedData extends SavedData {
             getSet(tag, "ul", data.ul);
             getLongMap(tag, "ca", data.ca);
             getSet(tag, "m3", data.m3);
+            getStringSet(tag, "tags", data.tags);
+            getStringSet(tag, "mods", data.mods);
+            data.ruleInstant = tag.getBoolean("ri");
+            getSet(tag, "rt", data.ruleTouched);
+            getSet(tag, "bl", data.blacklist);
             return data;
         }
 
@@ -140,6 +160,9 @@ public class CellDataSavedData extends SavedData {
                 if (total < 0) { total = Long.MAX_VALUE; break; }
             }
             long infiniteCount = (long) wl.size() + (long) (ul.size() - countInBoth(wl, ul));
+            // 批量规则：按规则数粗略估算（tags + mods）
+            long ruleCount = (long) tags.size() + (long) mods.size();
+            infiniteCount += ruleCount;
             if (infiniteCount > 0) {
                 long add = infiniteCount * INFINITE_BYTES;
                 total += add;
@@ -150,7 +173,7 @@ public class CellDataSavedData extends SavedData {
 
         public int getTypeCount() {
             // wl ⊆ ul，所以 ul.size() 已经包含了 wl，不重复计数
-            return s1.size() + s2.size() + ul.size();
+            return s1.size() + s2.size() + ul.size() + tags.size() + mods.size();
         }
 
         private static int countInBoth(Set<?> a, Set<?> b) {
@@ -227,6 +250,29 @@ public class CellDataSavedData extends SavedData {
             for (Tag tag : t.getList(k, Tag.TAG_COMPOUND)) {
                 AEKey key = AEKey.fromTagGeneric((CompoundTag) tag);
                 if (key != null) s.add(key);
+            }
+        }
+
+        /** 写字符串集合（tags / mods 规则） */
+        private static void putStringSet(CompoundTag t, String k, Set<String> s) {
+            ListTag l = new ListTag();
+            for (String v : s) {
+                CompoundTag n = new CompoundTag();
+                n.putString("v", v);
+                l.add(n);
+            }
+            t.put(k, l);
+        }
+
+        /** 读字符串集合 */
+        private static void getStringSet(CompoundTag t, String k, Set<String> s) {
+            s.clear();
+            if (!t.contains(k)) return;
+            for (Tag tag : t.getList(k, Tag.TAG_COMPOUND)) {
+                CompoundTag e = (CompoundTag) tag;
+                if (e.contains("v", Tag.TAG_STRING)) {
+                    s.add(e.getString("v"));
+                }
             }
         }
     }

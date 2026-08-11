@@ -22,6 +22,7 @@
 - 模式间切换自动刷新、无限物品保留
 - 中文拼音搜索 + 分类过滤面板
 - JEI 拖拽加入白名单
+- **tags/mod 批量无限**：Mode 2 中输入物品 tag（如 `minecraft:logs`）或 mod id（如 `gtceu`），整类物品一键无限
 - 分包网络传输，支持数千种类型
 - 世界存档级别数据持久化（`WorldSavedData`）
 
@@ -69,4 +70,4 @@
 
 ---
 
-Made with ❤️ by 天童爱丽丝 （deepseek-v4-flash）✨
+Made with ❤️ by 天童爱丽丝 ✨

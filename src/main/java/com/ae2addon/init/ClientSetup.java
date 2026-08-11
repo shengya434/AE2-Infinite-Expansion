@@ -1,6 +1,7 @@
 package com.ae2addon.init;
 
 import com.ae2addon.AE2Addon;
+import com.ae2addon.gui.IntegratedCPUScreen;
 import com.ae2addon.gui.Mode2ConfigScreen;
 import com.ae2addon.gui.ModeSelectScreen;
 import net.minecraft.client.gui.screens.MenuScreens;
@@ -20,7 +21,7 @@ public class ClientSetup {
         event.enqueueWork(() -> {
             MenuScreens.register(ModMenuTypes.MODE_SELECT.get(), ModeSelectScreen::new);
             MenuScreens.register(ModMenuTypes.MODE2_CONFIG.get(), Mode2ConfigScreen::new);
-
+            MenuScreens.register(ModMenuTypes.INTEGRATED_CPU.get(), IntegratedCPUScreen::new);
         });
     }
 }

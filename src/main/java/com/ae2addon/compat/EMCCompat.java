@@ -1,21 +1,26 @@
 package com.ae2addon.compat;
 
 import com.ae2addon.AE2Addon;
-import com.ae2addon.cell.UnlimitedCellInventory;
-import com.ae2addon.item.UniversalStorageCell;
 import net.minecraft.world.item.ItemStack;
 import net.minecraftforge.fml.ModList;
+
+import java.lang.reflect.Method;
 
 /**
  * EMC兼容（等价交换 ProjectE）。
  * <p>
  * 使用反射避免硬依赖——只在运行时检测ProjectE。
  * 如果装了ProjectE，我们的元件在Mode 3下提供无限EMC。
+ * 千机的配方校验也用它做价值守恒检查。
  */
 public class EMCCompat {
 
     private static boolean projectELoaded = false;
     private static boolean checked = false;
+
+    private static Object emcProxy = null;
+    private static Method getValueMethod = null;
+    private static Method hasValueMethod = null;
 
     /** 尝试注册EMC钩子 */
     public static void init() {
@@ -29,47 +34,41 @@ public class EMCCompat {
         }
 
         try {
-            // 通过反射注册EMC提供者
-            // ProjectE的API在持续变化中，以下为参考实现
-            registerEMCProvider();
-            AE2Addon.LOGGER.info("⚡ EMC Integration active! Infinite EMC available!");
+            Class<?> apiClass = Class.forName("moze_intel.projecte.api.ProjectEAPI");
+            emcProxy = apiClass.getMethod("getEMCProxy").invoke(null);
+            getValueMethod = emcProxy.getClass().getMethod("getValue", ItemStack.class);
+            hasValueMethod = emcProxy.getClass().getMethod("hasValue", ItemStack.class);
+            AE2Addon.LOGGER.info("⚡ EMC Integration active! (proxy={})", emcProxy.getClass().getSimpleName());
         } catch (Exception e) {
-            AE2Addon.LOGGER.warn("Failed to register EMC provider: {}", e.getMessage());
+            AE2Addon.LOGGER.warn("Failed to init EMC proxy: {}", e.getMessage());
+            emcProxy = null;
         }
     }
 
-    private static void registerEMCProvider() throws Exception {
-        // ProjectE 1.20.1 的EMC注册API示例：
-        // 需要根据实际安装的ProjectE版本调整
-
-        // 方法1: 通过 IMC 注册 (如果ProjectE支持)
-        // net.minecraftforge.fml.InterModComms.sendTo(
-        //     "projecte", "register_emc_provider",
-        //     () -> (IEMCProvider) (item, emcMap) -> {
-        //         if (item.getItem() instanceof UniversalStorageCell) {
-        //             // 所有物品提供无限EMC
-        //             return Long.MAX_VALUE;
-        //         }
-        //         return null;
-        //     }
-        // );
-
-        // 方法2: 通过EMCAPI (如果ProjectE有这个类)
-        // Class<?> emcAPI = Class.forName("moze_intel.projecte.api.EMCAPI");
-        // emcAPI.getMethod("registerCustomEMC", ItemStack.class, long.class)
-        //        .invoke(null, stack, Long.MAX_VALUE);
-
-        AE2Addon.LOGGER.info("EMC provider registration stub (implement per ProjectE version)");
-    }
-
-    /** 检查ProjectE是否已加载 */
+    /** 检查ProjectE是否已加载且代理可用 */
     public static boolean isProjectELoaded() {
-        return projectELoaded;
+        return projectELoaded && emcProxy != null;
     }
 
-    /** 获取某个物品的虚拟EMC值（在Mode 3下为无限） */
-    public static long getVirtualEMC(ItemStack stack, int mode) {
-        if (mode == 2 || mode == 3) return Long.MAX_VALUE;
-        return 0;
+    /** 获取物品EMC值（无值返回 0） */
+    public static long getEmcValue(ItemStack stack) {
+        try {
+            if (stack == null || stack.isEmpty()) return 0;
+            Object v = getValueMethod.invoke(emcProxy, stack);
+            return v instanceof Long l ? l : 0;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** 物品是否有EMC值 */
+    public static boolean hasEmcValue(ItemStack stack) {
+        try {
+            if (stack == null || stack.isEmpty()) return false;
+            Object v = hasValueMethod.invoke(emcProxy, stack);
+            return v instanceof Boolean b && b;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

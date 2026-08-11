@@ -2,8 +2,10 @@ package com.ae2addon.mixin;
 
 import appeng.core.localization.Tooltips;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Overwrite;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * 修复 AE2 Tooltips.getByteAmount() 对 TB/PB/EB 级字节数值的越界问题。
@@ -18,49 +20,54 @@ import org.spongepowered.asm.mixin.Shadow;
 @Mixin(Tooltips.class)
 public abstract class TooltipsMixin {
 
-    @Shadow
+    @Shadow(remap = false)
     private static String[] units;
 
-    @Shadow
+    @Shadow(remap = false)
     private static String getAmount(double value, long divisor) {
         throw new AssertionError("Shadow method not implemented");
     }
 
     /**
-     * 覆写 getByteAmount 以正确支持 KB ~ EB 级别的字节格式化。
+     * 注入 getByteAmount：在原方法返回前，用正确的 6 级二进制单位覆盖返回值。
+     * 原版 BYTE_NUMS 数组只有 4 个元素，TB/PB/EB 缺失导致 ≥1TB 时数组越界。
      */
-    @Overwrite(remap = false)
-    public static Tooltips.Amount getByteAmount(long value) {
-        // 二进制字节单位阈值，与原 units 数组索引对应
-        final long[] BYTE_THRESHOLDS = {
-                1024L,                    // 0: KB (2^10)  → units[0] = "k"
-                1048576L,                 // 1: MB (2^20)  → units[1] = "M"
-                1073741824L,              // 2: GB (2^30)  → units[2] = "G"
-                1099511627776L,           // 3: TB (2^40)  → units[3] = "T"
-                1125899906842624L,        // 4: PB (2^50)  → units[4] = "P"
-                1152921504606846976L      // 5: EB (2^60)  → units[5] = "E"
-        };
-
-        // 原始字节（< 1024）：直接显示数值，无后缀
-        if (value < BYTE_THRESHOLDS[0]) {
-            return new Tooltips.Amount(Long.toString(value), "");
+    @Inject(method = "getByteAmount", at = @At("HEAD"), cancellable = true, remap = false)
+    private static void onGetByteAmount(long value, CallbackInfoReturnable<Tooltips.Amount> cir) {
+        // 无限存储哨兵：直接显示 ∞（集成 CPU 的 getStorageBytes 返回 Long.MAX_VALUE）
+        if (value == Long.MAX_VALUE) {
+            cir.setReturnValue(new Tooltips.Amount("∞", ""));
+            return;
         }
 
-        // 遍历阈值表，找到使 value / BYTES[i] < 1000 的最合适单位
+        final long[] BYTE_THRESHOLDS = {
+                1024L,                    // 0: KB (2^10)
+                1048576L,                 // 1: MB (2^20)
+                1073741824L,              // 2: GB (2^30)
+                1099511627776L,           // 3: TB (2^40)
+                1125899906842624L,        // 4: PB (2^50)
+                1152921504606846976L      // 5: EB (2^60)
+        };
+
+        if (value < BYTE_THRESHOLDS[0]) {
+            cir.setReturnValue(new Tooltips.Amount(Long.toString(value), ""));
+            return;
+        }
+
         for (int i = 0; i < BYTE_THRESHOLDS.length; i++) {
             if (value / BYTE_THRESHOLDS[i] < 1000) {
-                return new Tooltips.Amount(
+                cir.setReturnValue(new Tooltips.Amount(
                         getAmount((double) value, BYTE_THRESHOLDS[i]),
                         units[i]
-                );
+                ));
+                return;
             }
         }
 
-        // 极值兜底（例如 Long.MAX_VALUE）
         int last = BYTE_THRESHOLDS.length - 1;
-        return new Tooltips.Amount(
+        cir.setReturnValue(new Tooltips.Amount(
                 getAmount((double) value, BYTE_THRESHOLDS[last]),
                 units[last]
-        );
+        ));
     }
 }
