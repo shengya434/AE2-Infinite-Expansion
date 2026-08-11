@@ -32,7 +32,7 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
     /** 分层旋转速度：20s/圈 */
     private static final double ROTATE_SPEED_LAYER = 360.0 / 20.0;
     /** 全览缩放 */
-    private static final double SCALE_FULL = 5.2;
+    private static final double SCALE_FULL = 9.0;
     /** 单层俯视缩放 */
     private static final double SCALE_LAYER = 6.5;
     /** 单层俯视仰角（70° 俯视） */
@@ -80,6 +80,31 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
         }
         drawControls(guiGraphics);
         drawLegend(guiGraphics);
+        drawMaterials(guiGraphics);
+    }
+
+    /** 材料统计：显示所需方块数量 */
+    private void drawMaterials(GuiGraphics guiGraphics) {
+        var font = net.minecraft.client.Minecraft.getInstance().font;
+        var counts = IntegratedCPUStructure.materialCounts();
+        int purple = counts.getOrDefault(net.minecraft.world.level.block.Blocks.PURPLE_CONCRETE, 0);
+        int magenta = counts.getOrDefault(net.minecraft.world.level.block.Blocks.MAGENTA_CONCRETE, 0);
+        int bookshelf = counts.getOrDefault(net.minecraft.world.level.block.Blocks.BOOKSHELF, 0);
+
+        int x = position.x() + 8;
+        int y = position.y() + 46;
+        guiGraphics.drawString(font, "材料:", x, y, 0xFFDDDDDD);
+        // 色块 + 数量
+        materialEntry(guiGraphics, x, y + 10, 0xFF7B2FBE, "紫混凝土 ×" + purple);
+        materialEntry(guiGraphics, x + 88, y + 10, 0xFFC74EBD, "品红 ×" + magenta);
+        materialEntry(guiGraphics, x, y + 20, 0xFF96714C, "书架 ×" + bookshelf);
+        materialEntry(guiGraphics, x + 88, y + 20, 0xFF38BDF8, "核心 ×1");
+    }
+
+    private static void materialEntry(GuiGraphics guiGraphics, int x, int y, int color, String label) {
+        guiGraphics.fill(x, y + 2, x + 7, y + 9, color);
+        guiGraphics.drawString(net.minecraft.client.Minecraft.getInstance().font,
+                label, x + 11, y, 0xFFAAAAAA);
     }
 
     /** 控制按钮：旋转 < >（第一排）+ 层切换 < >（第二排） */
@@ -124,7 +149,8 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
                     double sz = (z - 1) * scale;
                     double rx = sx * cos - sz * sin;
                     double rz = sx * sin + sz * cos;
-                    double ry = (y - 2) * scale * 0.9;
+                    // y=0 是层1（核心地基）在底部，y=4 是层5（书架屋顶）在顶部
+                    double ry = (2 - y) * scale * 0.9;
 
                     // 轴测投影：等距视角（isometric）
                     int px = (int) (cx + rx - rz * 0.55);
@@ -172,23 +198,49 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
 
     // ── 渲染辅助 ──
 
+    /**
+     * 绘制一个 2.5D 等距立方体：顶面 + 左面 + 右面（三面不同明暗）。
+     * 方块顶部向上凸起 depth，形成立体感。
+     */
     private static void drawBlock(GuiGraphics guiGraphics, int x, int y, int w, int h, int color) {
-        // 阴影（底部深色边）
-        guiGraphics.fill(x - 1, y + h, x + w + 1, y + h + 2, 0x88000000);
-        // 主体
-        guiGraphics.fill(x, y, x + w, y + h, color);
-        // 顶部高光
-        guiGraphics.fill(x, y, x + w, y + 2, 0x66FFFFFF);
-        // 边框
-        guiGraphics.fill(x, y, x + 1, y + h, 0x99000000);
-        guiGraphics.fill(x + w - 1, y, x + w, y + h, 0x99000000);
+        int depth = Math.max(2, h / 3);
+        int faceW = w / 2;
+
+        // 底面阴影（让方块"浮"起来）
+        guiGraphics.fill(x - 1, y + h, x + w + 1, y + h + 2, 0x66000000);
+
+        // 左面（中间色）
+        int left = shade(color, 0.72f);
+        guiGraphics.fill(x, y + depth, x + faceW, y + h, left);
+        // 右面（暗色）
+        int right = shade(color, 0.50f);
+        guiGraphics.fill(x + faceW, y + depth, x + w, y + h, right);
+        // 顶面（亮色）
+        int top = shade(color, 1.10f);
+        guiGraphics.fill(x, y, x + w, y + depth, top);
+
+        // 轮廓线（增强边界）
+        guiGraphics.fill(x, y, x + w, y + 1, 0x33000000);
+        guiGraphics.fill(x, y + depth, x + w, y + depth + 1, 0x44000000);
+        guiGraphics.fill(x, y, x + 1, y + h, 0x44000000);
+        guiGraphics.fill(x + w - 1, y, x + w, y + h, 0x44000000);
+        // 顶面中线（左右面分界）
+        guiGraphics.fill(x + faceW, y, x + faceW + 1, y + depth, 0x33000000);
+    }
+
+    /** 颜色明暗调整：factor > 1 变亮，< 1 变暗 */
+    private static int shade(int color, float factor) {
+        int r = (int) Math.min(255, ((color >> 16) & 0xFF) * factor);
+        int g = (int) Math.min(255, ((color >> 8) & 0xFF) * factor);
+        int b = (int) Math.min(255, (color & 0xFF) * factor);
+        return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
     private static int colorFor(Role role) {
         return switch (role) {
-            case PURPLE -> 0xFF8B5CF6;    // 紫混凝土
-            case MAGENTA -> 0xFFD946EF;   // 品红混凝土
-            case BOOKSHELF -> 0xFFB45309; // 书架（棕）
+            case PURPLE -> 0xFF7B2FBE;    // 紫混凝土（真实色）
+            case MAGENTA -> 0xFFC74EBD;   // 品红混凝土（真实色）
+            case BOOKSHELF -> 0xFF96714C; // 书架（棕，木板色）
             case CORE -> 0xFF38BDF8;      // 集成 CPU 核心（亮蓝，醒目）
             case SLOT -> 0xFF22C55E;      // 元件槽（绿）
             case AIR -> 0x00000000;
@@ -198,9 +250,9 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
     private void drawLegend(GuiGraphics guiGraphics) {
         int x = position.x() + 8;
         int y = position.y() + 118;
-        legendEntry(guiGraphics, x, y, 0xFF8B5CF6, "紫混凝土");
-        legendEntry(guiGraphics, x + 65, y, 0xFFD946EF, "品红");
-        legendEntry(guiGraphics, x + 125, y, 0xFFB45309, "书架");
+        legendEntry(guiGraphics, x, y, 0xFF7B2FBE, "紫混凝土");
+        legendEntry(guiGraphics, x + 65, y, 0xFFC74EBD, "品红");
+        legendEntry(guiGraphics, x + 125, y, 0xFF96714C, "书架");
         legendEntry(guiGraphics, x + 175, y, 0xFF38BDF8, "核心");
         legendEntry(guiGraphics, x + 225, y, 0xFF22C55E, "槽");
     }
@@ -215,15 +267,15 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
 
     @Override
     public ScreenRectangle getArea() {
-        // 可交互区域：覆盖整个预览区（相对 position）
+        // 绝对屏幕坐标（JEI 的 isMouseOver 用绝对坐标判断）
         return new ScreenRectangle(position.x(), position.y(), 150, 116);
     }
 
     @Override
     public boolean handleInput(double mouseX, double mouseY, IJeiUserInput input) {
-        // 坐标是 widget 相对坐标
-        int x = (int) mouseX;
-        int y = (int) mouseY;
+        // JEI 传入的是屏幕绝对坐标，转换为 widget 相对坐标（按钮位置是相对 position 的）
+        int x = (int) (mouseX - position.x());
+        int y = (int) (mouseY - position.y());
 
         // < 按钮（左旋转 90°）
         if (isInside(x, y, 8, 8, 24, 16)) {
