@@ -124,6 +124,8 @@ public abstract class CraftingCpuLogicMixin {
     private long ae2addon$diagTaskValueFallback;
     @Unique
     private boolean ae2addon$diagExtractLogged;
+    private int ae2addon$diagExtractLogged2;
+    private int ae2addon$diagPushLogged;
     @Unique
     private long ae2addon$diagPushCalls;
     @Unique
@@ -148,6 +150,20 @@ public abstract class CraftingCpuLogicMixin {
     private ScaledPattern ae2addon$batchScaledPattern;
     @Unique
     private long ae2addon$batchMultiplier;
+
+    /**
+     * 批量提取结果缓存：AE2 同一 tick 会对同一任务调用两次 extractPatternInputs，
+     * 第二次直接返回缓存，避免重复提取/重复扣库存，也避免第二次调用开头
+     * clearBatchContext 清掉批量上下文导致 pending 收敛锁死。
+     */
+    @Unique
+    private KeyCounter[] ae2addon$batchCachedInputs;
+
+    /** 上次批量提取的 tick + pattern（用于识别同 tick 重复提取） */
+    @Unique
+    private long ae2addon$lastExtractTick = Long.MIN_VALUE;
+    @Unique
+    private IPatternDetails ae2addon$lastExtractPattern;
 
     /**
      * 待确认的批量倍数：>0 表示上一次批量提取成功但没有任何 provider 接受
@@ -326,16 +342,30 @@ public abstract class CraftingCpuLogicMixin {
             ICraftingInventory inventory, Level level, KeyCounter expectedOutputs,
             KeyCounter expectedContainerItems,
             Operation<KeyCounter[]> original) {
-        ae2addon$clearBatchContext();
-        // 上次批量尝试没有任何 provider 接受 → 收敛批量 N
-        if (ae2addon$batchPendingMultiplier > 1) {
-            long previous = ae2addon$batchPendingMultiplier;
-            ae2addon$batchPendingMultiplier = -1;
-            if (previous <= 2) {
-                ae2addon$batchLocked.put(patternDetails, Boolean.TRUE);
-                ae2addon$batchNext.put(patternDetails, 1L);
-            } else {
-                ae2addon$batchNext.put(patternDetails, Math.max(1L, previous / 2));
+        // ── 同 tick 同 pattern 重复提取：直接返回缓存，幂等 ──
+        // AE2 的 executeCrafting 同一 tick 会对同一任务调用两次 extractPatternInputs。
+        // 第二次若走完整逻辑，开头 clearBatchContext 会清掉第一次的批量上下文，
+        // 且 pending 收敛会把 batchNext 锁死为 1（历史教训：批量翻倍被吃）。
+        long currentTick = TickHandler.instance().getCurrentTick();
+        boolean sameTickSamePattern = ae2addon$lastExtractTick == currentTick
+                && ae2addon$lastExtractPattern == patternDetails;
+        if (sameTickSamePattern && ae2addon$batchCachedInputs != null) {
+            return ae2addon$batchCachedInputs;
+        }
+        if (!sameTickSamePattern) {
+            ae2addon$lastExtractTick = currentTick;
+            ae2addon$lastExtractPattern = patternDetails;
+            ae2addon$clearBatchContext();
+            // 上次批量尝试没有任何 provider 接受 → 收敛批量 N（仅新 tick 首次提取时）
+            if (ae2addon$batchPendingMultiplier > 1) {
+                long previous = ae2addon$batchPendingMultiplier;
+                ae2addon$batchPendingMultiplier = -1;
+                if (previous <= 2) {
+                    ae2addon$batchLocked.put(patternDetails, Boolean.TRUE);
+                    ae2addon$batchNext.put(patternDetails, 1L);
+                } else {
+                    ae2addon$batchNext.put(patternDetails, Math.max(1L, previous / 2));
+                }
             }
         }
         if (!ae2addon$diagExtractLogged) {
@@ -350,6 +380,17 @@ public abstract class CraftingCpuLogicMixin {
                     expectedOutputs, expectedContainerItems);
         }
 
+        // TEMP-DIAG: 批量提取状态
+        if (ae2addon$diagExtractLogged2 < 8 && ae2addon$budgetActive) {
+            ae2addon$diagExtractLogged2++;
+            long taskRemaining = ae2addon$getTaskValue(patternDetails);
+            AE2Addon.LOGGER.info("[ae2addon] DIAG extractBatch: pending={}, next={}, locked={}, taskRemaining={}, pattern={}",
+                    ae2addon$batchPendingMultiplier,
+                    ae2addon$getBatchMultiplier(patternDetails),
+                    Boolean.TRUE.equals(ae2addon$batchLocked.get(patternDetails)),
+                    taskRemaining,
+                    patternDetails == null ? "null" : patternDetails.getClass().getSimpleName());
+        }
         long taskRemaining = ae2addon$getTaskValue(patternDetails);
         if (taskRemaining <= 1) {
             ae2addon$diagTaskValueFallback++;
@@ -380,6 +421,7 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$batchScaledPattern = scaled;
             ae2addon$batchMultiplier = n;
             ae2addon$batchPendingMultiplier = n;
+            ae2addon$batchCachedInputs = batchInputs;
             return batchInputs;
         }
 
@@ -417,6 +459,16 @@ public abstract class CraftingCpuLogicMixin {
             IPatternDetails patternDetails, KeyCounter[] inputs,
             Operation<Boolean> original) {
         ae2addon$diagPushCalls++;
+        // TEMP-DIAG: 批量路径状态
+        if (ae2addon$diagPushLogged < 5 && ae2addon$budgetActive) {
+            ae2addon$diagPushLogged++;
+            AE2Addon.LOGGER.info("[ae2addon] DIAG pushBatch: batchActive={}, baseMatch={}, scaled={}, mult={}, provider={}",
+                    ae2addon$batchActive,
+                    ae2addon$batchBasePattern == patternDetails,
+                    ae2addon$batchScaledPattern != null,
+                    ae2addon$batchMultiplier,
+                    provider.getClass().getSimpleName());
+        }
         if (!ae2addon$batchActive
                 || ae2addon$batchBasePattern != patternDetails
                 || ae2addon$batchScaledPattern == null
@@ -532,6 +584,7 @@ public abstract class CraftingCpuLogicMixin {
         ae2addon$batchBasePattern = null;
         ae2addon$batchScaledPattern = null;
         ae2addon$batchMultiplier = 1;
+        ae2addon$batchCachedInputs = null;
     }
 
     // ── 临时注册 scaled pattern（某些 provider 会校验 pattern 必须在可用列表里）──
