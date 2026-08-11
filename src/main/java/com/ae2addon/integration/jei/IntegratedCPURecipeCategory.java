@@ -8,6 +8,7 @@ import mezz.jei.api.gui.drawable.IDrawable;
 import mezz.jei.api.gui.widgets.IRecipeExtrasBuilder;
 import mezz.jei.api.helpers.IGuiHelper;
 import mezz.jei.api.recipe.IFocusGroup;
+import mezz.jei.api.recipe.RecipeIngredientRole;
 import mezz.jei.api.recipe.RecipeType;
 import mezz.jei.api.recipe.category.IRecipeCategory;
 import net.minecraft.client.Minecraft;
@@ -59,7 +60,10 @@ public class IntegratedCPURecipeCategory implements IRecipeCategory<IntegratedCP
 
     @Override
     public void setRecipe(IRecipeLayoutBuilder builder, IntegratedCPURecipe recipe, IFocusGroup focuses) {
-        // 纯结构展示，无合成槽位
+        // 展示集成 CPU 物品作为"输出"，让 JEI 把分类与物品关联起来
+        // （按 U 查看集成 CPU 用途时能看到结构预览）
+        builder.addSlot(RecipeIngredientRole.OUTPUT, 140, 110)
+                .addItemStack(new ItemStack(ModItems.INTEGRATED_CPU_ITEM.get()));
     }
 
     @Override
