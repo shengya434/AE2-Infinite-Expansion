@@ -126,6 +126,7 @@ public abstract class CraftingCpuLogicMixin {
     private boolean ae2addon$diagExtractLogged;
     private int ae2addon$diagExtractLogged2;
     private int ae2addon$diagPushLogged;
+    private int ae2addon$diagProtectLogged;
     @Unique
     private long ae2addon$diagPushCalls;
     @Unique
@@ -530,6 +531,14 @@ public abstract class CraftingCpuLogicMixin {
                     target = "Lappeng/me/cluster/implementations/CraftingCPUCluster;"
                             + "getCoProcessors()I"))
     private int ae2addon$protectCoProcessors(int coProcessors) {
+        // TEMP-DIAG: 检查 Omni 簇的 getCoProcessors 值（budgetActive=false 时打印前 5 次）
+        if (ae2addon$diagProtectLogged < 5 && !ae2addon$budgetActive) {
+            ae2addon$diagProtectLogged++;
+            AE2Addon.LOGGER.info("[ae2addon] DIAG protectCoProcessors: budgetActive={}, coProcessors={} (0x{}), 是集成CPU={}",
+                    ae2addon$budgetActive, coProcessors,
+                    Integer.toHexString(coProcessors),
+                    ae2addon$isIntegratedCpu(cluster));
+        }
         if (ae2addon$budgetActive && coProcessors != Integer.MAX_VALUE - 1) {
             return Integer.MAX_VALUE - 1;
         }
