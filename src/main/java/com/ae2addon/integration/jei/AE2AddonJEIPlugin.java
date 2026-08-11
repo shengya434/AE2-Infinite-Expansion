@@ -7,10 +7,13 @@ import mezz.jei.api.IModPlugin;
 import mezz.jei.api.JeiPlugin;
 import mezz.jei.api.constants.VanillaTypes;
 import mezz.jei.api.registration.IGuiHandlerRegistration;
+import mezz.jei.api.registration.IRecipeCategoryRegistration;
 import mezz.jei.api.registration.IRecipeRegistration;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
+
+import java.util.List;
 
 /**
  * AE2 Addon JEI 集成主插件
@@ -28,7 +31,20 @@ public class AE2AddonJEIPlugin implements IModPlugin {
     }
 
     @Override
+    public void registerCategories(IRecipeCategoryRegistration registration) {
+        registration.addRecipeCategories(
+                new IntegratedCPURecipeCategory(registration.getJeiHelpers().getGuiHelper())
+        );
+    }
+
+    @Override
     public void registerRecipes(IRecipeRegistration registration) {
+        // 集成 CPU 结构预览页
+        registration.addRecipes(
+                IntegratedCPURecipeCategory.TYPE,
+                List.of(new IntegratedCPURecipeCategory.IntegratedCPURecipe())
+        );
+
         // 添加元件信息页
         ItemStack cellStack = new ItemStack(ModItems.UNIVERSAL_STORAGE_CELL.get());
 

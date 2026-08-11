@@ -9,6 +9,7 @@ import com.ae2addon.init.ModBlocks;
 import com.ae2addon.init.ModMenuTypes;
 import com.ae2addon.util.ChatLog;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
@@ -91,12 +92,15 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
      * 检测并成型 3×5×3 多方块
      */
     private boolean tryForm(ServerLevel level, BlockPos corePos, IntegratedCPUBE be, Player player) {
+        // 玩家朝向 = 结构正面（方向性结构，4 方向感知）
+        Direction facing = player.getDirection();
+
         // 检测外部结构 + 内部元件
         List<BlockPos> structureBlocks = checkStructure(level, corePos, player);
         if (structureBlocks == null) return false;
 
         // 检测内部元件
-        InternalComponents components = checkInternalComponents(level, corePos);
+        InternalComponents components = checkInternalComponents(level, corePos, facing);
         if (!components.hasStorage()) return false;
 
         // 生存模式消耗：外部结构 + 内部元件，防止刷材料
@@ -112,6 +116,8 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
     /**
      * 检测 3×5×3 外部结构。
      * 不包含内部两个 u 位置（它们保留用于无限CPU元件）。
+     * <p>
+     * 方向性结构：玩家朝向决定结构正面（NORTH 基准 4 方向 Y 旋转）。
      */
     @Nullable
     private List<BlockPos> checkStructure(ServerLevel level, BlockPos pos, Player player) {
@@ -119,15 +125,16 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
         Block magenta = Blocks.MAGENTA_CONCRETE;
         Block bookshelf = Blocks.BOOKSHELF;
 
-        // 核心在 (x=1, y=0, z=1)：结构在核心周围居中
-        BlockPos origin = pos.offset(-1, 0, -2);
-        spawnCornerParticles(level, origin, 3, 5, 3);
+        // 结构坐标系：核心在 (x=1, y=0, z=1)，整体 3(x)×5(y)×3(z)
+        // 玩家朝向 = 结构正面（facing 感知）
+        Direction facing = player.getDirection();
+        spawnCornerParticles(level, pos, facing);
         List<BlockPos> toConsume = new ArrayList<>();
 
         for (int y = 0; y < 5; y++) {
             for (int z = 0; z < 3; z++) {
                 for (int x = 0; x < 3; x++) {
-                    BlockPos checkPos = origin.offset(x, y, z);
+                    BlockPos checkPos = worldPos(pos, facing, x, y, z);
                     if (checkPos.equals(pos)) continue; // 核心自身
                     if (isInternalSlot(x, y, z)) continue; // u 位保留
 
@@ -154,6 +161,38 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
         return toConsume;
     }
 
+    /**
+     * 结构坐标 (x,y,z) → 世界坐标（facing 感知，4 方向 Y 旋转）。
+     * <p>
+     * 基准 NORTH：核心 (1,0,1) 在世界坐标 = corePos，结构整体偏移 (-1,0,-2)；
+     * dx = x-1, dz = z-2。其他朝向按 Y 旋转：
+     * SOUTH: (-dx, -dz)；WEST: (dz, -dx)；EAST: (-dz, dx)。
+     */
+    private static BlockPos worldPos(BlockPos corePos, Direction facing, int x, int y, int z) {
+        int dx = x - 1;
+        int dz = z - 2;
+        int wx, wz;
+        switch (facing) {
+            case SOUTH -> {
+                wx = -dx;
+                wz = -dz;
+            }
+            case WEST -> {
+                wx = dz;
+                wz = -dx;
+            }
+            case EAST -> {
+                wx = -dz;
+                wz = dx;
+            }
+            default -> { // NORTH
+                wx = dx;
+                wz = dz;
+            }
+        }
+        return corePos.offset(wx, y, wz);
+    }
+
     private static String formatPos(BlockPos p) {
         return "§e" + p.getX() + " " + p.getY() + " " + p.getZ() + "§r";
     }
@@ -168,14 +207,14 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
                 5, 0.3, 0.3, 0.3, 0.02);
     }
 
-    private static void spawnCornerParticles(ServerLevel level, BlockPos origin, int w, int h, int d) {
-        int[] xs = {0, w - 1};
-        int[] ys = {0, h - 1};
-        int[] zs = {0, d - 1};
+    private static void spawnCornerParticles(ServerLevel level, BlockPos corePos, Direction facing) {
+        int[] xs = {0, 2};
+        int[] ys = {0, 4};
+        int[] zs = {0, 2};
         for (int ix : xs) {
             for (int iy : ys) {
                 for (int iz : zs) {
-                    BlockPos corner = origin.offset(ix, iy, iz);
+                    BlockPos corner = worldPos(corePos, facing, ix, iy, iz);
                     level.sendParticles(net.minecraft.core.particles.ParticleTypes.DRAGON_BREATH,
                             corner.getX() + 0.5, corner.getY() + 0.5, corner.getZ() + 0.5,
                             2, 0, 0, 0, 0);
@@ -236,8 +275,7 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
      * 检查内部两个 u 槽是否包含正确的元件。
      * 必须至少有一个无限合成存储器。
      */
-    private InternalComponents checkInternalComponents(ServerLevel level, BlockPos corePos) {
-        BlockPos origin = corePos.offset(-1, 0, -2);
+    private InternalComponents checkInternalComponents(ServerLevel level, BlockPos corePos, Direction facing) {
         Block infiniteStorage = ModBlocks.INFINITE_CRAFTING_STORAGE.get();
         Block infiniteCo = ModBlocks.INFINITE_CO_PROCESSING.get();
         Block workbench = Blocks.CRAFTING_TABLE;
@@ -246,14 +284,14 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
         boolean hasCo = false;
 
         // u1: (y=1, x=1, z=1)
-        BlockPos u1 = origin.offset(1, 1, 1);
+        BlockPos u1 = worldPos(corePos, facing, 1, 1, 1);
         BlockState u1State = level.getBlockState(u1);
         if (u1State.getBlock() == infiniteStorage) hasStorage = true;
         if (u1State.getBlock() == infiniteCo) hasCo = true;
         boolean u1Valid = hasStorage || hasCo || u1State.getBlock() == workbench;
 
         // u2: (y=2, x=1, z=1)
-        BlockPos u2 = origin.offset(1, 2, 1);
+        BlockPos u2 = worldPos(corePos, facing, 1, 2, 1);
         BlockState u2State = level.getBlockState(u2);
         if (u2State.getBlock() == infiniteStorage) hasStorage = true;
         if (u2State.getBlock() == infiniteCo) hasCo = true;
