@@ -4,7 +4,7 @@ license="LGPL-3.0"
 
 [[mods]]
 modId="ae2addon"
-version="1.1.0"
+version="1.2.0"
 displayName="AE2 Addon — Infinite Expansion"
 logoFile=""
 credits="Made with ❤️ by Tendo Alice and sensei ✨"
@@ -26,6 +26,12 @@ description='''
   • 单个方块提供 §bInteger.MAX_VALUE§r 线程！
   • 移除原版 16 线程上限
   • 海量并行合成，秒级完成万亿配方
+
+§6✦ 集成型 CPU（无限级）§r
+  • 3×5×3 多方块结构：无限合成存储 + 无限并行
+  • 结构成型接入 AE 网络后拥有无限级 CPU 功能
+  • 挖取保留成型状态，JEI 内置结构预览
+  • Mode 2 支持 §atag / mod 批量无限§r（如 minecraft:logs、整个 mod）
 '''
 
 [[dependencies.ae2addon]]
@@ -36,10 +42,17 @@ description='''
     side="BOTH"
 
 [[dependencies.ae2addon]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,1.20.2)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.ae2addon]]
     modId="ae2"
     mandatory=true
-    versionRange="[15,)"
-    ordering="NONE"
+    versionRange="[15.4.10,16)"
+    ordering="AFTER"
     side="BOTH"
 
 [[dependencies.ae2addon]]
@@ -47,4 +60,4 @@ description='''
     mandatory=false
     versionRange="[15,)"
     ordering="AFTER"
-    side="BOTH"
+    side="CLIENT"
