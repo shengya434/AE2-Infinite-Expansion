@@ -499,8 +499,8 @@ public class UnlimitedCellInventory implements StorageCell {
     }
 
     public Component getDescription() {
-        String[] n = {"", "无限制", "自定义", "全类型"};
-        return Component.literal("§5万能无限 [" + n[mode] + "]");
+        String[] n = {"", "gui.ae2addon.mode.unlimited", "gui.ae2addon.mode.custom", "gui.ae2addon.mode.all"};
+        return Component.translatable("gui.ae2addon.cell.name", Component.translatable(n[mode]));
     }
 
     public CellState getStatus() {

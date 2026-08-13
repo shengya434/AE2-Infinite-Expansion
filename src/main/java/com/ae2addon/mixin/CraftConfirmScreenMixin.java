@@ -29,9 +29,6 @@ import java.lang.reflect.Method;
 public abstract class CraftConfirmScreenMixin {
 
     @Unique
-    private static final String AE2ADDON_INFINITE_STATUS_TEXT = "存储 ∞ · 并行 ∞";
-
-    @Unique
     private static boolean ae2addon$diagLogged;
     @Unique
     private static Method ae2addon$setTextContentMethod;
@@ -55,7 +52,7 @@ public abstract class CraftConfirmScreenMixin {
                             && processors == Integer.MAX_VALUE - 1);
         }
         if (infinite) {
-            return Component.literal(AE2ADDON_INFINITE_STATUS_TEXT);
+            return Component.translatable("gui.ae2addon.cpu.infinite_status");
         }
         return instance.text(args);
     }
@@ -80,7 +77,7 @@ public abstract class CraftConfirmScreenMixin {
                 ae2addon$setTextContentMethod = method;
             }
             method.invoke(screen, "cpu_status",
-                    Component.literal(AE2ADDON_INFINITE_STATUS_TEXT));
+                    Component.translatable("gui.ae2addon.cpu.infinite_status"));
         } catch (ReflectiveOperationException | RuntimeException exception) {
             AE2Addon.LOGGER.warn("[ae2addon] 强制覆盖 cpu_status 失败", exception);
         }

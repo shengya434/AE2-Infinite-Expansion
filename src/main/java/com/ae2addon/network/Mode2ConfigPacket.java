@@ -482,19 +482,19 @@ public class Mode2ConfigPacket {
                 boolean added;
                 if (p.isTag) {
                     if (!ruleExists(p.rule)) {
-                        player.sendSystemMessage(Component.literal("§c✗ tag 不存在: " + p.rule));
+                        player.sendSystemMessage(Component.translatable("gui.ae2addon.mode2.tag_not_found", p.rule));
                         return;
                     }
                     added = inv.addTagRule(p.rule);
                 } else {
                     if (!modExists(p.rule)) {
-                        player.sendSystemMessage(Component.literal("§c✗ mod 未加载: " + p.rule));
+                        player.sendSystemMessage(Component.translatable("gui.ae2addon.mode2.mod_not_found", p.rule));
                         return;
                     }
                     added = inv.addModRule(p.rule);
                 }
                 if (added) {
-                    player.sendSystemMessage(Component.literal("§a✔ 已添加 " + (p.isTag ? "tag" : "mod") + ": " + p.rule));
+                    player.sendSystemMessage(Component.translatable("gui.ae2addon.mode2.rule_added", p.isTag ? "tag" : "mod", p.rule));
                 }
                 sendRuleData(inv, player);
                 sendPanelRefresh(inv, player);
@@ -519,8 +519,9 @@ public class Mode2ConfigPacket {
                 AEKey key = AEKey.fromTagGeneric(p.blacklistKeyTag);
                 if (key != null) {
                     boolean nowBlacklisted = inv.toggleBlacklist(key);
-                    player.sendSystemMessage(Component.literal(
-                            (nowBlacklisted ? "§c✗ 已加入黑名单: " : "§a✔ 已移出黑名单: ") + key.getDisplayName().getString()));
+                    player.sendSystemMessage(Component.translatable(
+                            nowBlacklisted ? "gui.ae2addon.mode2.blacklist_added" : "gui.ae2addon.mode2.blacklist_removed",
+                            key.getDisplayName()));
                 }
                 sendRuleData(inv, player);
                 sendBlacklistData(inv, player);

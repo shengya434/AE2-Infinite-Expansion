@@ -9,6 +9,7 @@ import mezz.jei.api.gui.widgets.IRecipeWidget;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.navigation.ScreenPosition;
 import net.minecraft.client.gui.navigation.ScreenRectangle;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 
@@ -93,12 +94,12 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
 
         int x = position.x() + 8;
         int y = position.y() + 46;
-        guiGraphics.drawString(font, "材料:", x, y, 0xFFDDDDDD);
+        guiGraphics.drawString(font, I18n.get("gui.ae2addon.jei.materials"), x, y, 0xFFDDDDDD);
         // 色块 + 数量
-        materialEntry(guiGraphics, x, y + 10, 0xFF7B2FBE, "紫混凝土 ×" + purple);
-        materialEntry(guiGraphics, x + 88, y + 10, 0xFFC74EBD, "品红 ×" + magenta);
-        materialEntry(guiGraphics, x, y + 20, 0xFF96714C, "书架 ×" + bookshelf);
-        materialEntry(guiGraphics, x + 88, y + 20, 0xFF38BDF8, "核心 ×1");
+        materialEntry(guiGraphics, x, y + 10, 0xFF7B2FBE, I18n.get("gui.ae2addon.jei.mat.purple_concrete") + " ×" + purple);
+        materialEntry(guiGraphics, x + 88, y + 10, 0xFFC74EBD, I18n.get("gui.ae2addon.jei.mat.magenta") + " ×" + magenta);
+        materialEntry(guiGraphics, x, y + 20, 0xFF96714C, I18n.get("gui.ae2addon.jei.mat.bookshelf") + " ×" + bookshelf);
+        materialEntry(guiGraphics, x + 88, y + 20, 0xFF38BDF8, I18n.get("gui.ae2addon.jei.mat.core") + " ×1");
     }
 
     private static void materialEntry(GuiGraphics guiGraphics, int x, int y, int color, String label) {
@@ -118,7 +119,7 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
         guiGraphics.fill(bx + 32, by + 8, bx + 56, by + 24, 0xAA333333);
         guiGraphics.drawString(font, "<", bx + 17, by + 10, 0xFFFFFFFF);
         guiGraphics.drawString(font, ">", bx + 41, by + 10, 0xFFFFFFFF);
-        guiGraphics.drawString(font, "旋转", bx + 60, by + 10, 0xFFAAAAAA);
+        guiGraphics.drawString(font, I18n.get("gui.ae2addon.jei.rotate"), bx + 60, by + 10, 0xFFAAAAAA);
 
         // 第二排：层切换（-1 全览 / 0-4 单层）
         guiGraphics.fill(bx + 8, by + 26, bx + 32, by + 42, 0xAA333333);
@@ -126,8 +127,8 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
         guiGraphics.drawString(font, "<", bx + 17, by + 28, 0xFFFFFFFF);
         guiGraphics.drawString(font, ">", bx + 41, by + 28, 0xFFFFFFFF);
         guiGraphics.drawString(font, currentLayer >= 0
-                ? "层 " + (currentLayer + 1) + "/5"
-                : "全览", bx + 60, by + 28, 0xFFFFD700);
+                ? I18n.get("gui.ae2addon.jei.layer", currentLayer + 1, 5)
+                : I18n.get("gui.ae2addon.jei.overview"), bx + 60, by + 28, 0xFFFFD700);
     }
 
     // ── 全览模式 ──
@@ -250,11 +251,11 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
     private void drawLegend(GuiGraphics guiGraphics) {
         int x = position.x() + 8;
         int y = position.y() + 118;
-        legendEntry(guiGraphics, x, y, 0xFF7B2FBE, "紫混凝土");
-        legendEntry(guiGraphics, x + 65, y, 0xFFC74EBD, "品红");
-        legendEntry(guiGraphics, x + 125, y, 0xFF96714C, "书架");
-        legendEntry(guiGraphics, x + 175, y, 0xFF38BDF8, "核心");
-        legendEntry(guiGraphics, x + 225, y, 0xFF22C55E, "槽");
+        legendEntry(guiGraphics, x, y, 0xFF7B2FBE, I18n.get("gui.ae2addon.jei.mat.purple_concrete"));
+        legendEntry(guiGraphics, x + 65, y, 0xFFC74EBD, I18n.get("gui.ae2addon.jei.mat.magenta"));
+        legendEntry(guiGraphics, x + 125, y, 0xFF96714C, I18n.get("gui.ae2addon.jei.mat.bookshelf"));
+        legendEntry(guiGraphics, x + 175, y, 0xFF38BDF8, I18n.get("gui.ae2addon.jei.mat.core"));
+        legendEntry(guiGraphics, x + 225, y, 0xFF22C55E, I18n.get("gui.ae2addon.jei.legend.slot"));
     }
 
     private static void legendEntry(GuiGraphics guiGraphics, int x, int y, int color, String label) {

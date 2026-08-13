@@ -2,6 +2,7 @@ package com.ae2addon.gui;
 
 import appeng.client.gui.me.crafting.CraftingCPUScreen;
 import appeng.client.gui.style.StyleManager;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
@@ -58,15 +59,16 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         graphics.fill(panelX - 3, panelY - 3,
                 panelX + PANEL_WIDTH, panelY + 2, 0xFF666666);
 
-        graphics.drawString(font, Component.literal("§e⚡量子分裂线程"),
+        graphics.drawString(font, Component.translatable("gui.ae2addon.cpu.quantum_split"),
                 panelX, panelY, 0xFFFFFF, false);
         int y = panelY + 12;
 
-        String overview = "§f线程: " + laneCount
-                + "  忙: " + menu.activeJobs
-                + (menu.formed ? "  §a成型" : "  §c未成型")
-                + "  §7[点击切换]";
-        graphics.drawString(font, Component.literal(overview), panelX, y, 0xFFFFFF, false);
+        Component overview = Component.translatable("gui.ae2addon.cpu.overview",
+                laneCount, menu.activeJobs,
+                menu.formed
+                        ? Component.translatable("gui.ae2addon.cpu.formed")
+                        : Component.translatable("gui.ae2addon.cpu.unformed"));
+        graphics.drawString(font, overview, panelX, y, 0xFFFFFF, false);
         y += 13;
 
         // 滚动范围
@@ -82,20 +84,30 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             if (index >= end) {
                 continue;
             }
-            String lane = menu.lane(index);
-            if (lane == null || lane.isEmpty()) {
+            String raw = menu.lane(index);
+            if (raw == null || raw.isEmpty()) {
                 continue;
+            }
+            // lane 是服务端 JSON 序列化的 translatable Component，反序列化后本地化渲染
+            Component laneC;
+            try {
+                laneC = Component.Serializer.fromJson(raw);
+            } catch (Exception e) {
+                laneC = Component.literal(raw);
             }
             // 选中高亮
             if (index == menu.selectedLaneIndex) {
                 graphics.fill(panelX - 1, y - 1, panelX + PANEL_WIDTH - 7, y + ROW_HEIGHT - 2,
                         0x66FFFFFF);
             }
-            String line = lane.contains("空闲") ? "§7" + lane : "§a" + lane;
+            // 空闲灰色 / 忙碌绿色（按序列化 JSON 里的固定 key 判断）
+            boolean idle = raw.contains("gui.ae2addon.cpu.lane.idle");
+            Component line = laneC.copy()
+                    .withStyle(s -> s.withColor(idle ? ChatFormatting.GRAY : ChatFormatting.GREEN));
             if (index == menu.selectedLaneIndex) {
-                line = "§f▶ " + line;
+                line = Component.literal("§f▶ ").append(line);
             }
-            graphics.drawString(font, Component.literal(line), panelX + 2, y, 0xFFFFFF, false);
+            graphics.drawString(font, line, panelX + 2, y, 0xFFFFFF, false);
             y += ROW_HEIGHT;
         }
 

@@ -52,39 +52,39 @@ public class AE2AddonJEIPlugin implements IModPlugin {
         ItemStack m1 = cellStack.copy();
         m1.getOrCreateTag().putInt("umode", 1);
         registration.addIngredientInfo(m1, VanillaTypes.ITEM_STACK,
-                Component.literal("§a无限制存储模式"),
-                Component.literal("§7无限容量 · 全AE类型 · 正常存取"),
+                Component.translatable("gui.ae2addon.jei.m1.title"),
+                Component.translatable("gui.ae2addon.jei.m1.desc1"),
                 Component.literal(""),
-                Component.literal("§7像普通存储元件一样使用，但容量和类型数均无上限。"),
-                Component.literal("§7右键切换模式")
+                Component.translatable("gui.ae2addon.jei.m1.desc2"),
+                Component.translatable("gui.ae2addon.jei.switch_hint")
         );
 
         // Mode 2 — 自定义无限
         ItemStack m2 = cellStack.copy();
         m2.getOrCreateTag().putInt("umode", 2);
         registration.addIngredientInfo(m2, VanillaTypes.ITEM_STACK,
-                Component.literal("§e自定义无限模式"),
-                Component.literal("§7白名单无限 + 通用阈值"),
+                Component.translatable("gui.ae2addon.jei.m2.title"),
+                Component.translatable("gui.ae2addon.jei.m2.desc1"),
                 Component.literal(""),
-                Component.literal("§71. 设置通用阈值 — 达到阈值后该类型自动变为无限"),
-                Component.literal("§7   阈值需手动配置"),
-                Component.literal("§72. 添加白名单 — 指定物品自动获得无限"),
-                Component.literal("§7   在配置界面右键背包物品 / 从JEI拖拽"),
-                Component.literal("§73. Shift+右键面板条目可切换无限状态"),
-                Component.literal("§7右键切换模式")
+                Component.translatable("gui.ae2addon.jei.m2.step1"),
+                Component.translatable("gui.ae2addon.jei.m2.step1b"),
+                Component.translatable("gui.ae2addon.jei.m2.step2"),
+                Component.translatable("gui.ae2addon.jei.m2.step2b"),
+                Component.translatable("gui.ae2addon.jei.m2.step3"),
+                Component.translatable("gui.ae2addon.jei.switch_hint")
         );
 
         // Mode 3 — 全类型无限
         ItemStack m3 = cellStack.copy();
         m3.getOrCreateTag().putInt("umode", 3);
         registration.addIngredientInfo(m3, VanillaTypes.ITEM_STACK,
-                Component.literal("§d全类型无限模式"),
-                Component.literal("§7仅物品/流体 · 存入即无限"),
+                Component.translatable("gui.ae2addon.jei.m3.title"),
+                Component.translatable("gui.ae2addon.jei.m3.desc1"),
                 Component.literal(""),
-                Component.literal("§7存进去的任何物品和流体都会自动获得无限状态。"),
-                Component.literal("§7注意：仅支持物品和流体类型，"),
-                Component.literal("§7FE能量、EMC、气体等其他AE类型暂不支持。"),
-                Component.literal("§7右键切换模式")
+                Component.translatable("gui.ae2addon.jei.m3.desc2"),
+                Component.translatable("gui.ae2addon.jei.m3.desc3"),
+                Component.translatable("gui.ae2addon.jei.m3.desc4"),
+                Component.translatable("gui.ae2addon.jei.switch_hint")
         );
     }
 

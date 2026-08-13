@@ -70,10 +70,10 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
         // 木棍右键 && 未成型 → 尝试成型
         if (player.getItemInHand(hand).getItem() == Items.STICK && !cpuBE.isFormed()) {
             if (tryForm((ServerLevel) level, pos, cpuBE, player)) {
-                ChatLog.ok(level, pos, "CPU 成型成功！");
+                ChatLog.ok(level, pos, Component.translatable("gui.ae2addon.cpu.form_ok"));
                 return InteractionResult.SUCCESS;
             }
-            ChatLog.err(level, pos, "CPU 结构不匹配，无法成型");
+            ChatLog.err(level, pos, Component.translatable("gui.ae2addon.cpu.form_fail"));
             return InteractionResult.FAIL;
         }
 
@@ -143,14 +143,16 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
                     if (expected == null) {
                         if (!stateAt.isAir()) {
                             spawnParticles(level, checkPos);
-                            player.sendSystemMessage(Component.literal("§b✗ " + formatPos(checkPos) + " 应为空气，但找到了 " + blockName(stateAt)));
+                            player.sendSystemMessage(Component.translatable("gui.ae2addon.cpu.air_expected",
+                                    formatPos(checkPos), blockName(stateAt)));
                             return null;
                         }
                         continue;
                     }
                     if (stateAt.getBlock() != expected) {
                         spawnParticles(level, checkPos);
-                        ChatLog.err(level, checkPos, "应为 " + expected.getName().getString() + "，但找到了 " + blockName(stateAt));
+                        ChatLog.err(level, checkPos, Component.translatable("gui.ae2addon.cpu.block_mismatch",
+                                expected.getName(), blockName(stateAt)));
                         return null;
                     }
                     spawnParticles(level, checkPos);

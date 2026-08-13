@@ -44,34 +44,34 @@ public class AE2InfoCommand {
         try {
             player = source.getPlayerOrException();
         } catch (Exception e) {
-            source.sendFailure(Component.literal("§c该指令只能由玩家执行"));
+            source.sendFailure(Component.translatable("gui.ae2addon.cmd.player_only"));
             return 0;
         }
         ItemStack stack = player.getMainHandItem();
 
         if (stack.isEmpty()) {
-            player.sendSystemMessage(Component.literal("§c✗ 请手持一个物品"));
+            player.sendSystemMessage(Component.translatable("gui.ae2addon.cmd.hold_item"));
             return 0;
         }
 
         Item item = stack.getItem();
         ResourceLocation id = BuiltInRegistries.ITEM.getKey(item);
 
-        player.sendSystemMessage(Component.literal("§e§l═══ 物品信息 ═══"));
+        player.sendSystemMessage(Component.translatable("gui.ae2addon.cmd.title"));
 
         // 注册名（id）
         player.sendSystemMessage(copyable(
-                "§bID: §f" + id,
+                Component.translatable("gui.ae2addon.cmd.id_line", id),
                 id.toString(),
-                "§7点击复制: " + id
+                id
         ));
 
         // 所属 mod
         String mod = id.getNamespace();
         player.sendSystemMessage(copyable(
-                "§dMOD: §f" + mod,
+                Component.translatable("gui.ae2addon.cmd.mod_line", mod),
                 mod,
-                "§7点击复制: " + mod
+                mod
         ));
 
         // 全部 tags
@@ -81,14 +81,14 @@ public class AE2InfoCommand {
         tags.sort(String::compareTo);
 
         if (tags.isEmpty()) {
-            player.sendSystemMessage(Component.literal("§7Tags: §8(无)"));
+            player.sendSystemMessage(Component.translatable("gui.ae2addon.cmd.tags_none"));
         } else {
-            player.sendSystemMessage(Component.literal("§aTags: §7共 " + tags.size() + " 个，点击复制 ↓"));
+            player.sendSystemMessage(Component.translatable("gui.ae2addon.cmd.tags_count", tags.size()));
             for (String tag : tags) {
                 player.sendSystemMessage(copyable(
-                        "§7  - §f" + tag,
+                        Component.translatable("gui.ae2addon.cmd.tag_line", tag),
                         tag,
-                        "§7点击复制: " + tag
+                        tag
                 ));
             }
         }
@@ -96,17 +96,18 @@ public class AE2InfoCommand {
         // 流体支持：如果是流体桶则显示流体信息
         // (可选扩展：检测物品的流体能力)
 
-        player.sendSystemMessage(Component.literal("§8────────────────"));
+        player.sendSystemMessage(Component.translatable("gui.ae2addon.cmd.divider"));
         return 1;
     }
 
-    /** 生成可点击复制的消息 */
-    private static Component copyable(String text, String copyValue, String hover) {
-        return Component.literal(text)
+    /** 生成可点击复制的消息（服务端构建 translatable，客户端本地化） */
+    private static Component copyable(Component text, String copyValue, Object hoverArg) {
+        return text.copy()
                 .setStyle(Style.EMPTY
                         .withColor(ChatFormatting.WHITE)
                         .withClickEvent(new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, copyValue))
                         .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                                Component.literal(hover + "\n§7(点击复制)"))));
+                                Component.translatable("gui.ae2addon.cmd.copy_hover", hoverArg)
+                                        .append(Component.translatable("gui.ae2addon.cmd.copy_suffix")))));
     }
 }

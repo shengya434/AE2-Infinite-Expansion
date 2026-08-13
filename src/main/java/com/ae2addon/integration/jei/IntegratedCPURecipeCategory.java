@@ -45,7 +45,7 @@ public class IntegratedCPURecipeCategory implements IRecipeCategory<IntegratedCP
 
     @Override
     public Component getTitle() {
-        return Component.literal("集成 CPU 结构");
+        return Component.translatable("gui.ae2addon.jei.cpu_structure");
     }
 
     @Override

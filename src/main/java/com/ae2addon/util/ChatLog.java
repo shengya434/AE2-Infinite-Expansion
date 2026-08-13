@@ -26,36 +26,48 @@ public final class ChatLog {
 
     private ChatLog() {}
 
-    /** 成功（绿色 ✔） */
+    /** 成功（绿色 ✔）——String 版（不本地化） */
     public static void ok(Level level, BlockPos pos, String msg) {
-        log(level, pos, ChatFormatting.GREEN + "✔ " + msg);
+        log(level, pos, Component.literal(ChatFormatting.GREEN + "✔ " + msg));
+    }
+
+    /** 成功（绿色 ✔）——Component 版（客户端本地化） */
+    public static void ok(Level level, BlockPos pos, Component msg) {
+        log(level, pos, Component.translatable("gui.ae2addon.chat.ok", msg));
     }
 
     /** 警告（黄色 ⚠） */
     public static void warn(Level level, BlockPos pos, String msg) {
-        log(level, pos, ChatFormatting.YELLOW + "⚠ " + msg);
+        log(level, pos, Component.literal(ChatFormatting.YELLOW + "⚠ " + msg));
     }
 
-    /** 错误（红色 ✗） */
+    /** 错误（红色 ✗）——String 版（不本地化） */
     public static void err(Level level, BlockPos pos, String msg) {
-        log(level, pos, ChatFormatting.RED + "✗ " + msg);
+        log(level, pos, Component.literal(ChatFormatting.RED + "✗ " + msg));
+    }
+
+    /** 错误（红色 ✗）——Component 版（客户端本地化） */
+    public static void err(Level level, BlockPos pos, Component msg) {
+        log(level, pos, Component.translatable("gui.ae2addon.chat.err", msg));
     }
 
     /** 信息（青色 ℹ） */
     public static void info(Level level, BlockPos pos, String msg) {
-        log(level, pos, ChatFormatting.AQUA + "ℹ " + msg);
+        log(level, pos, Component.literal(ChatFormatting.AQUA + "ℹ " + msg));
     }
 
     /** 原始消息（不带前缀格式） */
     public static void raw(Level level, BlockPos pos, String msg) {
-        log(level, pos, msg);
+        log(level, pos, Component.literal(msg));
     }
 
-    private static void log(Level level, BlockPos pos, String msg) {
+    private static void log(Level level, BlockPos pos, Component msg) {
         if (level == null || level.isClientSide) return;
 
         // 限频：同前缀消息 2 秒内只广播一次（高频合成时防止刷屏/卡顿）
-        String key = msg.length() > 20 ? msg.substring(0, 20) : msg;
+        // 用未格式化的字符串做 key（Component.getString 服务端是 en_us，稳定）
+        String flat = msg.getString();
+        String key = flat.length() > 20 ? flat.substring(0, 20) : flat;
         long now = System.currentTimeMillis();
         Long last = lastBroadcast.get(key);
         if (last != null && now - last < COOLDOWN_MS) return;
@@ -65,7 +77,7 @@ public final class ChatLog {
         String location = pos != null
                 ? " §7(" + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ")§r"
                 : "";
-        Component component = Component.literal(PREFIX + msg + location);
+        Component component = Component.literal(PREFIX).append(msg).append(Component.literal(location));
         for (var player : level.players()) {
             if (player instanceof ServerPlayer sp) {
                 sp.sendSystemMessage(component, false);

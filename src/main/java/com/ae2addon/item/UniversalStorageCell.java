@@ -152,9 +152,9 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
     @Override
     public Component getName(ItemStack stack) {
         int m = stack.getOrCreateTag().getInt("umode");
-        String[] n = {"", "§a无限制", "§e自定义", "§d全类型"};
+        String[] n = {"", "gui.ae2addon.mode.unlimited", "gui.ae2addon.mode.custom", "gui.ae2addon.mode.all"};
         if (m < 1 || m > 3) m = 1;
-        return Component.literal("§5万能无限 [" + n[m] + "]");
+        return Component.translatable("gui.ae2addon.cell.name", Component.translatable(n[m]));
     }
 
     @Override
@@ -166,19 +166,19 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
 
         String[][] info = {
                 {},
-                {"§a无限制存储", "§7无限容量·全AE类型·正常存取"},
-                {"§e自定义无限", "§7白名单无限 + 通用阈值"},
-                {"§d全类型无限", "§7仅物品/流体·存入即无限"}
+                {"gui.ae2addon.cell.mode1.name", "gui.ae2addon.cell.mode1.desc"},
+                {"gui.ae2addon.cell.mode2.name", "gui.ae2addon.cell.mode2.desc"},
+                {"gui.ae2addon.cell.mode3.name", "gui.ae2addon.cell.mode3.desc"}
         };
-        tooltip.add(Component.literal("模式: " + info[m][0]));
-        tooltip.add(Component.literal(info[m][1]));
+        tooltip.add(Component.translatable("gui.ae2addon.cell.mode", Component.translatable(info[m][0])));
+        tooltip.add(Component.translatable(info[m][1]));
 
         // Mode 3 直接显示 ∞
         if (m == 3) {
-            tooltip.add(Component.literal("§7字节: §b∞"));
-            tooltip.add(Component.literal("§7类型: §b∞"));
-            tooltip.add(Component.literal("§7限制: §e仅物品和流体类型"));
-            tooltip.add(Component.literal("§7右键切换模式"));
+            tooltip.add(Component.translatable("gui.ae2addon.cell.bytes", "∞"));
+            tooltip.add(Component.translatable("gui.ae2addon.cell.types", "∞"));
+            tooltip.add(Component.translatable("gui.ae2addon.cell.limit"));
+            tooltip.add(Component.translatable("gui.ae2addon.cell.switch_hint"));
             return;
         }
 
@@ -191,9 +191,9 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
         }
         int typeCount = tag.getInt("_t");
 
-        tooltip.add(Component.literal("§7字节: §b" + formatBytes(totalBytes)));
-        tooltip.add(Component.literal("§7类型: §b" + typeCount));
-        tooltip.add(Component.literal("§7右键切换模式"));
+        tooltip.add(Component.translatable("gui.ae2addon.cell.bytes", formatBytes(totalBytes)));
+        tooltip.add(Component.translatable("gui.ae2addon.cell.types", typeCount));
+        tooltip.add(Component.translatable("gui.ae2addon.cell.switch_hint"));
     }
 
     /** BigInteger 版字节格式化：支持 B/K/M/G/T/P/E/Z/Y/R/Q 单位 */

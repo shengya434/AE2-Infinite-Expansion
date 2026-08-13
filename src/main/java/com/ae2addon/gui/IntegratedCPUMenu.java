@@ -89,7 +89,7 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
             var menu = new IntegratedCPUMenu(containerId, inventory, host);
             menu.setLocator(locator);
             return menu;
-        }, Component.literal("集成CPU"));
+        }, Component.translatable("gui.ae2addon.cpu.title"));
         NetworkHooks.openScreen(serverPlayer, provider, buffer -> {
             MenuLocators.writeToPacket(buffer, locator);
             buffer.writeBoolean(returnedFromSubScreen);
@@ -195,29 +195,39 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
         };
     }
 
+    /**
+     * 生成 lane 状态描述：服务端构建 translatable Component 并 JSON 序列化，
+     * 客户端 Screen 反序列化后按玩家语言本地化渲染。
+     * 状态词通过固定 key 标记（"gui.ae2addon.cpu.lane.idle"），客户端据此判断空闲/忙碌配色。
+     */
     private static String describeLane(int index, CraftingCPUCluster lane) {
-        String name = index == 0 ? "主线程" : "线程" + index;
+        Component name = index == 0
+                ? Component.translatable("gui.ae2addon.cpu.lane.main")
+                : Component.translatable("gui.ae2addon.cpu.lane.thread", index);
+        Component desc;
         if (lane == null || lane.isDestroyed()) {
-            return name + "：已销毁";
-        }
-        if (!lane.isBusy()) {
-            return name + "：空闲";
-        }
-        var status = lane.getJobStatus();
-        if (status == null) {
-            return name + "：工作中";
-        }
-        String itemName = "?";
-        if (status.crafting() != null && status.crafting().what() != null) {
-            try {
-                itemName = status.crafting().what().getDisplayName().getString();
-            } catch (RuntimeException ignored) {
-                // 显示兜底
+            desc = Component.translatable("gui.ae2addon.cpu.lane.destroyed", name);
+        } else if (!lane.isBusy()) {
+            desc = Component.translatable("gui.ae2addon.cpu.lane.idle", name);
+        } else {
+            var status = lane.getJobStatus();
+            if (status == null) {
+                desc = Component.translatable("gui.ae2addon.cpu.lane.working", name);
+            } else {
+                String itemName = "?";
+                if (status.crafting() != null && status.crafting().what() != null) {
+                    try {
+                        itemName = status.crafting().what().getDisplayName().getString();
+                    } catch (RuntimeException ignored) {
+                        // 显示兜底
+                    }
+                }
+                long total = status.totalItems();
+                long done = status.progress();
+                int percent = total <= 0 ? 0 : (int) Math.min(100, done * 100 / total);
+                desc = Component.translatable("gui.ae2addon.cpu.lane.progress", name, itemName, percent);
             }
         }
-        long total = status.totalItems();
-        long done = status.progress();
-        int percent = total <= 0 ? 0 : (int) Math.min(100, done * 100 / total);
-        return name + "：" + itemName + " " + percent + "%";
+        return Component.Serializer.toJson(desc);
     }
 }
