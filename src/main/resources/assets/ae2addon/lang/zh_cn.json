@@ -120,7 +120,7 @@
   "gui.ae2addon.jei.rotate": "旋转",
   "gui.ae2addon.jei.layer": "层 %s/%s",
   "gui.ae2addon.jei.overview": "全览",
-  "gui.ae2addon.jei.legend.slot": "槽",
+  "gui.ae2addon.jei.legend.slot": "槽（无限存储/并行CPU）",
   "gui.ae2addon.jei.switch_hint": "§7右键切换模式",
   "gui.ae2addon.jei.m1.title": "§a无限制存储模式",
   "gui.ae2addon.jei.m1.desc1": "§7无限容量 · 全AE类型 · 正常存取",

@@ -120,7 +120,7 @@
   "gui.ae2addon.jei.rotate": "Rotate",
   "gui.ae2addon.jei.layer": "Layer %s/%s",
   "gui.ae2addon.jei.overview": "Overview",
-  "gui.ae2addon.jei.legend.slot": "Slot",
+  "gui.ae2addon.jei.legend.slot": "Slot (Infinite Storage / Co-Proc CPU)",
   "gui.ae2addon.jei.switch_hint": "§7Right-click to switch mode",
   "gui.ae2addon.jei.m1.title": "§aUnlimited Storage Mode",
   "gui.ae2addon.jei.m1.desc1": "§7Infinite capacity · all AE types · normal access",
