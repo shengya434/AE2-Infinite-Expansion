@@ -72,7 +72,8 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
     @Override
     public void drawWidget(GuiGraphics guiGraphics, double mouseX, double mouseY) {
         int cx = position.x() + 70;
-        int cy = position.y() + 60;
+        // 结构中心下移到 y=66：顶部控制条(8~42) + 结构(34~100) + 底部材料清单(104~152) 垂直分离
+        int cy = position.y() + 66;
 
         if (currentLayer >= 0) {
             drawLayer(guiGraphics, cx, cy, currentLayer);
@@ -80,11 +81,10 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
             drawFullStructure(guiGraphics, cx, cy);
         }
         drawControls(guiGraphics);
-        drawLegend(guiGraphics);
         drawMaterials(guiGraphics);
     }
 
-    /** 材料统计：显示所需方块数量 */
+    /** 材料清单（单列，位于结构下方）：色块 + 名称 + 数量，兼作图例 */
     private void drawMaterials(GuiGraphics guiGraphics) {
         var font = net.minecraft.client.Minecraft.getInstance().font;
         var counts = IntegratedCPUStructure.materialCounts();
@@ -93,13 +93,14 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
         int bookshelf = counts.getOrDefault(net.minecraft.world.level.block.Blocks.BOOKSHELF, 0);
 
         int x = position.x() + 8;
-        int y = position.y() + 46;
+        int y = position.y() + 104;
         guiGraphics.drawString(font, I18n.get("gui.ae2addon.jei.materials"), x, y, 0xFFDDDDDD);
-        // 色块 + 数量
-        materialEntry(guiGraphics, x, y + 10, 0xFF7B2FBE, I18n.get("gui.ae2addon.jei.mat.purple_concrete") + " ×" + purple);
-        materialEntry(guiGraphics, x + 88, y + 10, 0xFFC74EBD, I18n.get("gui.ae2addon.jei.mat.magenta") + " ×" + magenta);
-        materialEntry(guiGraphics, x, y + 20, 0xFF96714C, I18n.get("gui.ae2addon.jei.mat.bookshelf") + " ×" + bookshelf);
-        materialEntry(guiGraphics, x + 88, y + 20, 0xFF38BDF8, I18n.get("gui.ae2addon.jei.mat.core") + " ×1");
+        // 色块 + 数量（每行 8px 行距）
+        materialEntry(guiGraphics, x, y + 8, 0xFF7B2FBE, I18n.get("gui.ae2addon.jei.mat.purple_concrete") + " ×" + purple);
+        materialEntry(guiGraphics, x, y + 16, 0xFFC74EBD, I18n.get("gui.ae2addon.jei.mat.magenta") + " ×" + magenta);
+        materialEntry(guiGraphics, x, y + 24, 0xFF96714C, I18n.get("gui.ae2addon.jei.mat.bookshelf") + " ×" + bookshelf);
+        materialEntry(guiGraphics, x, y + 32, 0xFF38BDF8, I18n.get("gui.ae2addon.jei.mat.core") + " ×1");
+        materialEntry(guiGraphics, x, y + 40, 0xFF22C55E, I18n.get("gui.ae2addon.jei.legend.slot"));
     }
 
     private static void materialEntry(GuiGraphics guiGraphics, int x, int y, int color, String label) {
@@ -248,28 +249,13 @@ public class IntegratedCPUPreviewWidget implements IRecipeWidget, IJeiInputHandl
         };
     }
 
-    private void drawLegend(GuiGraphics guiGraphics) {
-        int x = position.x() + 8;
-        int y = position.y() + 118;
-        legendEntry(guiGraphics, x, y, 0xFF7B2FBE, I18n.get("gui.ae2addon.jei.mat.purple_concrete"));
-        legendEntry(guiGraphics, x + 65, y, 0xFFC74EBD, I18n.get("gui.ae2addon.jei.mat.magenta"));
-        legendEntry(guiGraphics, x + 125, y, 0xFF96714C, I18n.get("gui.ae2addon.jei.mat.bookshelf"));
-        legendEntry(guiGraphics, x + 175, y, 0xFF38BDF8, I18n.get("gui.ae2addon.jei.mat.core"));
-        legendEntry(guiGraphics, x + 225, y, 0xFF22C55E, I18n.get("gui.ae2addon.jei.legend.slot"));
-    }
-
-    private static void legendEntry(GuiGraphics guiGraphics, int x, int y, int color, String label) {
-        guiGraphics.fill(x, y, x + 8, y + 8, color);
-        guiGraphics.drawString(net.minecraft.client.Minecraft.getInstance().font,
-                label, x + 12, y, 0xFFAAAAAA);
-    }
-
     // ── 输入处理 ──
 
     @Override
     public ScreenRectangle getArea() {
         // 绝对屏幕坐标（JEI 的 isMouseOver 用绝对坐标判断）
-        return new ScreenRectangle(position.x(), position.y(), 150, 116);
+        // 垂直布局：控制条(8~42) + 结构(43~100) + 底部材料清单(104~152)
+        return new ScreenRectangle(position.x(), position.y(), 150, 154);
     }
 
     @Override

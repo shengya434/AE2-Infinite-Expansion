@@ -33,7 +33,8 @@ public class IntegratedCPURecipeCategory implements IRecipeCategory<IntegratedCP
     private final IDrawable icon;
 
     public IntegratedCPURecipeCategory(IGuiHelper helper) {
-        this.background = helper.createBlankDrawable(176, 128);
+        // 背景高度 156：上方是 3D 结构预览（y≈34~100），下方是材料清单（y≈104~152）
+        this.background = helper.createBlankDrawable(176, 156);
         this.icon = helper.createDrawableIngredient(
                 VanillaTypes.ITEM_STACK, new ItemStack(ModItems.INTEGRATED_CPU_ITEM.get()));
     }
