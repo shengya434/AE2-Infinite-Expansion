@@ -19,12 +19,17 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
     private static final int PANEL_WIDTH = 150;
     private static final int VISIBLE_LANES = 6;
     private static final int ROW_HEIGHT = 12;
+    private static final int ORDER_PANEL_WIDTH = 150;
+    private static final int VISIBLE_ORDERS = 8;
 
     private int panelX;
     private int panelY;
     private int scrollOffset;
     private boolean draggingScrollbar = false;
+    private int orderScrollOffset;
+    private boolean draggingOrderScrollbar = false;
     private final int[] laneRowY = new int[8];
+    private final int[] orderRowY = new int[64];
 
     private static boolean DIAG_CLICK_LOGGED;
 
@@ -46,6 +51,71 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         panelX = screenWidth / 2 - PANEL_WIDTH / 2 - 300;
         panelY = 170;
         drawLanePanel(graphics);
+        drawOrderPanel(graphics);
+    }
+
+    /** 巨型订单管理面板（线程面板左侧）：滚动窗口 + 滑条，点击行取消整个订单 */
+    private void drawOrderPanel(GuiGraphics graphics) {
+        var orders = menu.fullOrders;
+        if (orders == null || orders.isEmpty()) {
+            return;
+        }
+        int orderPanelX = panelX - ORDER_PANEL_WIDTH - 10;
+        int visible = Math.min(VISIBLE_ORDERS, orders.size());
+        int height = 12 + ROW_HEIGHT * visible + 4;
+
+        graphics.fill(orderPanelX - 3, panelY - 3,
+                orderPanelX + ORDER_PANEL_WIDTH, panelY + height, 0xCC000000);
+        graphics.fill(orderPanelX - 3, panelY - 3,
+                orderPanelX + ORDER_PANEL_WIDTH, panelY + 2, 0xFF666666);
+        graphics.drawString(font,
+                Component.translatable("gui.ae2addon.order.title"),
+                orderPanelX, panelY, 0xFFFFAA, false);
+
+        int maxScroll = Math.max(0, orders.size() - VISIBLE_ORDERS);
+        orderScrollOffset = Math.max(0, Math.min(orderScrollOffset, maxScroll));
+
+        int start = orderScrollOffset;
+        int end = Math.min(start + VISIBLE_ORDERS, orders.size());
+        int y = panelY + 12;
+        for (int row = 0; row < VISIBLE_ORDERS; row++) {
+            orderRowY[row] = y;
+            int index = start + row;
+            if (index >= end) {
+                y += ROW_HEIGHT;
+                continue;
+            }
+            String raw = orders.get(index);
+            if (raw == null || raw.isEmpty()) {
+                y += ROW_HEIGHT;
+                continue;
+            }
+            Component line;
+            try {
+                line = Component.Serializer.fromJson(raw);
+            } catch (Exception e) {
+                line = Component.literal(raw);
+            }
+            graphics.drawString(font, line, orderPanelX + 2, y, 0xFFFFFF, false);
+            // 右侧取消按钮
+            Component cancel = Component.translatable("gui.ae2addon.order.cancel");
+            graphics.drawString(font, cancel,
+                    orderPanelX + ORDER_PANEL_WIDTH - font.width(cancel) - 6, y, 0xFF5555, false);
+            y += ROW_HEIGHT;
+        }
+
+        // 竖向滚动条
+        if (orders.size() > VISIBLE_ORDERS) {
+            int trackTop = panelY + 16;
+            int trackBottom = panelY + height - 4;
+            int trackH = trackBottom - trackTop;
+            graphics.fill(orderPanelX + ORDER_PANEL_WIDTH - 6, trackTop,
+                    orderPanelX + ORDER_PANEL_WIDTH - 3, trackBottom, 0xFF444444);
+            int thumbH = Math.max(12, trackH * VISIBLE_ORDERS / orders.size());
+            int thumbY = trackTop + (trackH - thumbH) * orderScrollOffset / maxScroll;
+            graphics.fill(orderPanelX + ORDER_PANEL_WIDTH - 6, thumbY,
+                    orderPanelX + ORDER_PANEL_WIDTH - 3, thumbY + thumbH, 0xFFAAAAAA);
+        }
     }
 
     private void drawLanePanel(GuiGraphics graphics) {
@@ -150,6 +220,23 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
                 menu.selectLane(scrollOffset + row);
                 return true;
             }
+            // 巨型订单面板（线程面板左侧）：Shift+点击行 = 取消整个订单（防误触）
+            var orders = menu.fullOrders;
+            if (orders != null && !orders.isEmpty()) {
+                if (isOnOrderScrollbar(lx, ly)) {
+                    draggingOrderScrollbar = true;
+                    updateOrderScroll(ly);
+                    return true;
+                }
+                if (isInOrderPanel(lx, ly) && hasShiftDown()) {
+                    for (int r = 0; r < VISIBLE_ORDERS; r++) {
+                        if (ly >= orderRowY[r] - 1 && ly < orderRowY[r] + ROW_HEIGHT - 1) {
+                            menu.cancelOrder(orderScrollOffset + r);
+                            return true;
+                        }
+                    }
+                }
+            }
         }
         return super.mouseClicked(mouseX, mouseY, button);
     }
@@ -161,6 +248,10 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             updateScrollFromDrag(mouseY - topPos);
             return true;
         }
+        if (button == 0 && draggingOrderScrollbar) {
+            updateOrderScroll(mouseY - topPos);
+            return true;
+        }
         return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
     }
 
@@ -170,7 +261,55 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             draggingScrollbar = false;
             return true;
         }
+        if (button == 0 && draggingOrderScrollbar) {
+            draggingOrderScrollbar = false;
+            return true;
+        }
         return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    /** 鼠标是否在订单面板内 */
+    private boolean isInOrderPanel(double mx, double my) {
+        var orders = menu.fullOrders;
+        if (orders == null || orders.isEmpty()) {
+            return false;
+        }
+        int orderPanelX = panelX - ORDER_PANEL_WIDTH - 10;
+        int visible = Math.min(VISIBLE_ORDERS, orders.size());
+        int height = 12 + ROW_HEIGHT * visible + 4;
+        return mx >= orderPanelX - 3 && mx <= orderPanelX + ORDER_PANEL_WIDTH
+                && my >= panelY - 3 && my <= panelY + height;
+    }
+
+    /** 鼠标是否在订单滑条轨道上 */
+    private boolean isOnOrderScrollbar(double mx, double my) {
+        var orders = menu.fullOrders;
+        if (orders == null || orders.size() <= VISIBLE_ORDERS) {
+            return false;
+        }
+        int orderPanelX = panelX - ORDER_PANEL_WIDTH - 10;
+        int height = 12 + ROW_HEIGHT * VISIBLE_ORDERS + 4;
+        int trackTop = panelY + 16;
+        int trackBottom = panelY + height - 4;
+        return mx >= orderPanelX + ORDER_PANEL_WIDTH - 7 && mx <= orderPanelX + ORDER_PANEL_WIDTH - 2
+                && my >= trackTop - 1 && my <= trackBottom + 1;
+    }
+
+    /** 按滑块位置（鼠标 Y）更新订单滚动偏移 */
+    private void updateOrderScroll(double my) {
+        var orders = menu.fullOrders;
+        if (orders == null || orders.size() <= VISIBLE_ORDERS) {
+            return;
+        }
+        int height = 12 + ROW_HEIGHT * VISIBLE_ORDERS + 4;
+        int trackTop = panelY + 16;
+        int trackBottom = panelY + height - 4;
+        int trackH = trackBottom - trackTop;
+        int maxScroll = Math.max(0, orders.size() - VISIBLE_ORDERS);
+        int thumbH = Math.max(12, trackH * VISIBLE_ORDERS / orders.size());
+        double ratio = (my - trackTop - thumbH / 2.0) / Math.max(1, trackH - thumbH);
+        orderScrollOffset = (int) Math.round(ratio * maxScroll);
+        orderScrollOffset = Math.max(0, Math.min(orderScrollOffset, maxScroll));
     }
 
     /** 鼠标是否在滑条轨道上（含滑块） */
@@ -223,6 +362,13 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             scrollOffset -= (int) Math.signum(delta);
             int maxScroll = Math.max(0, menu.laneCount - VISIBLE_LANES);
             scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
+            return true;
+        }
+        // 巨型订单面板滚轮
+        if (isInOrderPanel(lx, ly) && menu.fullOrders.size() > VISIBLE_ORDERS) {
+            orderScrollOffset -= (int) Math.signum(delta);
+            int maxScroll = Math.max(0, menu.fullOrders.size() - VISIBLE_ORDERS);
+            orderScrollOffset = Math.max(0, Math.min(orderScrollOffset, maxScroll));
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, delta);

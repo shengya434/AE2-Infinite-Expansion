@@ -146,5 +146,13 @@
   "gui.ae2addon.jei.m3.desc1": "§7Items/fluids only · infinite on insert",
   "gui.ae2addon.jei.m3.desc2": "§7Anything stored becomes infinite automatically.",
   "gui.ae2addon.jei.m3.desc3": "§7Note: only items and fluids are supported;",
-  "gui.ae2addon.jei.m3.desc4": "§7FE, EMC, gases and other AE types are not."
+  "gui.ae2addon.jei.m3.desc4": "§7FE, EMC, gases and other AE types are not.",
+  "gui.ae2addon.order.title": "§e⚙ Mega Orders",
+  "gui.ae2addon.order.line": "§7%s §f%s/%s batches §e%s",
+  "gui.ae2addon.order.queued": "Queued",
+  "gui.ae2addon.order.running": "Running",
+  "gui.ae2addon.order.done": "Done",
+  "gui.ae2addon.order.failed": "Failed",
+  "gui.ae2addon.order.cancelled": "Cancelled",
+  "gui.ae2addon.order.cancel": "Shift+Cancel"
 }

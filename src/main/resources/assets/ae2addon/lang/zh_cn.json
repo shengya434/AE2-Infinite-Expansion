@@ -146,5 +146,13 @@
   "gui.ae2addon.jei.m3.desc1": "§7仅物品/流体 · 存入即无限",
   "gui.ae2addon.jei.m3.desc2": "§7存进去的任何物品和流体都会自动获得无限状态。",
   "gui.ae2addon.jei.m3.desc3": "§7注意：仅支持物品和流体类型，",
-  "gui.ae2addon.jei.m3.desc4": "§7FE能量、EMC、气体等其他AE类型暂不支持。"
+  "gui.ae2addon.jei.m3.desc4": "§7FE能量、EMC、气体等其他AE类型暂不支持。",
+  "gui.ae2addon.order.title": "§e⚙ 巨型订单",
+  "gui.ae2addon.order.line": "§7%s §f%s/%s批 §e%s",
+  "gui.ae2addon.order.queued": "排队中",
+  "gui.ae2addon.order.running": "进行中",
+  "gui.ae2addon.order.done": "已完成",
+  "gui.ae2addon.order.failed": "失败",
+  "gui.ae2addon.order.cancelled": "已取消",
+  "gui.ae2addon.order.cancel": "Shift+取消"
 }

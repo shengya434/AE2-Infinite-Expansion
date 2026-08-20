@@ -44,14 +44,17 @@ public final class BatchedCraftingOrder {
     public static final int MAX_CONCURRENT = Integer.MAX_VALUE;
 
     private final ServerLevel level;
-    private final IGrid grid;
-    private final IGridNode simNode;
+    private IGrid grid;
+    private IGridNode simNode;
     private final AEKey what;
     private final long totalAmount;
     private final ICraftingRequester requester;
     private final IActionSource source;
     private final List<Long> batchAmounts;
     private final List<BatchProgress> running = new ArrayList<>();
+
+    /** 恢复锚点：订单所属网格的集成 CPU 方块位置（重进后重新绑定网格） */
+    private net.minecraft.core.BlockPos anchorPos;
 
     private int nextBatchIndex = 0;
     private int completedCount = 0;
@@ -91,6 +94,33 @@ public final class BatchedCraftingOrder {
             remaining -= batch;
         }
         return batches;
+    }
+
+    /**
+     * 从存档快照恢复订单：网格/节点延迟绑定（锚点 CPU 方块加载后），
+     * 从断点（nextBatchIndex）继续，进行中的批次（重启后已丢失）跳过。
+     */
+    public static BatchedCraftingOrder restore(
+            com.ae2addon.data.MegaOrderSavedData.OrderSnapshot snapshot,
+            ServerLevel level) {
+        List<Long> batches = splitBatches(snapshot.totalAmount, snapshot.perBatch);
+        if (batches.isEmpty()) {
+            return null;
+        }
+        var order = new BatchedCraftingOrder(level, null, null,
+                snapshot.what, snapshot.totalAmount, null,
+                appeng.api.networking.security.IActionSource.empty(), batches);
+        order.nextBatchIndex = Math.max(0, Math.min(snapshot.nextBatchIndex, batches.size()));
+        order.completedCount = Math.max(0, Math.min(snapshot.completedCount, batches.size()));
+        order.anchorPos = snapshot.anchor;
+        return order;
+    }
+
+    /** 导出存档快照（锚点取所属集成 CPU 方块位置）。 */
+    public com.ae2addon.data.MegaOrderSavedData.OrderSnapshot snapshot() {
+        return new com.ae2addon.data.MegaOrderSavedData.OrderSnapshot(
+                what, totalAmount, batchAmounts.get(0),
+                completedCount, nextBatchIndex, anchorPos, level.dimension());
     }
 
     /**
@@ -197,6 +227,10 @@ public final class BatchedCraftingOrder {
     public boolean tick() {
         switch (status) {
             case QUEUED -> {
+                // 恢复的订单：等待锚点 CPU 方块加载并绑定网格
+                if (grid == null && !tryBindGrid()) {
+                    return true;
+                }
                 status = Status.RUNNING;
                 fillWindow();
                 return status == Status.RUNNING;
@@ -257,6 +291,9 @@ public final class BatchedCraftingOrder {
                         continue;
                     }
                     if (batch.link.isCanceled()) {
+                        com.ae2addon.AE2Addon.LOGGER.warn(
+                                "[ae2addon][debug] 批次link被取消触发订单取消 craftId={} what={}",
+                                batch.link.getCraftingID(), what);
                         cancelAll();
                         return false;
                     }
@@ -300,6 +337,51 @@ public final class BatchedCraftingOrder {
         }
     }
 
+    /** 恢复锚点绑定：锚点 CPU 方块优先，否则扫描已加载的集成 CPU（单网格场景）。 */
+    private boolean tryBindGrid() {
+        if (anchorPos != null) {
+            try {
+                if (level.getBlockEntity(anchorPos)
+                        instanceof com.ae2addon.block.IntegratedCPUBE be && be.isFormed()) {
+                    var mainNode = be.getMainNode();
+                    var node = mainNode == null ? null : mainNode.getNode();
+                    if (node != null && node.getGrid() != null) {
+                        this.grid = node.getGrid();
+                        this.simNode = node;
+                        com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ae2addon] 巨型订单恢复绑定网格成功 what={} 进度={}/{}",
+                                what, completedCount, batchAmounts.size());
+                        return true;
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // 方块未加载/结构未成型，下个 tick 重试
+            }
+        }
+        // 兜底：扫描已加载的集成 CPU（单网格测试环境直接命中）
+        for (var be : com.ae2addon.block.IntegratedCPURegistry.all()) {
+            try {
+                if (be.isRemoved() || !be.isFormed()) {
+                    continue;
+                }
+                var mainNode = be.getMainNode();
+                var node = mainNode == null ? null : mainNode.getNode();
+                if (node != null && node.getGrid() != null) {
+                    this.grid = node.getGrid();
+                    this.simNode = node;
+                    this.anchorPos = be.getBlockPos();
+                    com.ae2addon.AE2Addon.LOGGER.info(
+                            "[ae2addon] 巨型订单恢复绑定网格成功(扫描) what={} 进度={}/{}",
+                            what, completedCount, batchAmounts.size());
+                    return true;
+                }
+            } catch (RuntimeException ignored) {
+                // 继续尝试下一个
+            }
+        }
+        return false;
+    }
+
     /** 发起批次模拟（异步）。返回 false 表示发起失败。 */
     private boolean startSimulation(BatchProgress batch) {
         IGridNode node = simNode;
@@ -339,6 +421,17 @@ public final class BatchedCraftingOrder {
                 what, completedCount, batchAmounts.size());
     }
 
+    /** 外部（订单面板）取消整个订单：取消所有进行中批次并终止后续批次 */
+    public void cancelOrder() {
+        com.ae2addon.AE2Addon.LOGGER.info(
+                "[ae2addon][debug] 订单面板取消请求 what={} 进度={}/{}",
+                what, completedCount, batchAmounts.size());
+        cancelAll();
+        ChatLog.warn(level, null,
+                "巨型订单已取消（" + what + " " + completedCount
+                        + "/" + batchAmounts.size() + " 批）");
+    }
+
     private void cancelRunning() {
         for (BatchProgress batch : running) {
             if (batch.link != null && !batch.link.isDone() && !batch.link.isCanceled()) {
@@ -369,6 +462,10 @@ public final class BatchedCraftingOrder {
 
     public int getCurrentBatchIndex() {
         return Math.min(completedCount + 1, batchAmounts.size());
+    }
+
+    public int getCompletedCount() {
+        return completedCount;
     }
 
     public AEKey getWhat() {

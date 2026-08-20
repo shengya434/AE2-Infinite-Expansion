@@ -25,6 +25,7 @@ import net.minecraftforge.network.NetworkHooks;
 public class IntegratedCPUMenu extends CraftingCPUMenu {
 
     private static final String ACTION_SELECT_LANE = "select_lane";
+    private static final String ACTION_CANCEL_ORDER = "cancel_order";
 
     @GuiSync(50)
     public boolean formed;
@@ -54,8 +55,14 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
     /** 客户端：完整 lane 列表（LaneListPacket 同步，突破 8 槽位限制） */
     public volatile java.util.List<String> fullLanes = java.util.List.of();
 
+    /** 客户端：巨型订单列表（OrderListPacket 同步） */
+    public volatile java.util.List<String> fullOrders = java.util.List.of();
+
     /** 服务端：上次发送的 lane 列表指纹（变化检测，防高频刷包） */
     private String lastLanesKey = "";
+
+    /** 服务端：上次发送的订单列表指纹 */
+    private String lastOrdersKey = "";
 
     private final IntegratedCPUBE core;
 
@@ -66,6 +73,7 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
         super(ModMenuTypes.INTEGRATED_CPU.get(), id, playerInventory, core);
         this.core = core;
         registerClientAction(ACTION_SELECT_LANE, Integer.class, this::selectLaneServer);
+        registerClientAction(ACTION_CANCEL_ORDER, Integer.class, this::cancelOrderServer);
     }
 
     // 客户端构造（IForgeMenuType 工厂）：从网络包读 locator 定位 host
@@ -117,6 +125,15 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
     }
 
     /**
+     * 客户端请求：取消指定索引的巨型订单（整个订单，含所有批次）。
+     */
+    public void cancelOrder(int index) {
+        if (isClientSide()) {
+            sendClientAction(ACTION_CANCEL_ORDER, index);
+        }
+    }
+
+    /**
      * 服务端处理：setCPU 到目标 lane，原版状态同步机制会自动刷新任务列表。
      */
     private void selectLaneServer(int index) {
@@ -129,6 +146,13 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
             setCPU(cpus.get(index));
             selectedLaneIndex = index;
         }
+    }
+
+    /**
+     * 服务端处理：取消巨型订单（按订单面板索引）。
+     */
+    private void cancelOrderServer(int index) {
+        com.ae2addon.crafting.BatchedCraftingQueue.cancelOrder(index);
     }
 
     @Override
@@ -180,7 +204,50 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
             setLaneField(6, lanes.size() > 6 ? lanes.get(6) : "");
             setLaneField(7, lanes.size() > 7 ? lanes.get(7) : "");
         }
+
+        // 巨型订单列表同步（变化检测：订单数/进度/状态变化才发）
+        syncOrders();
         super.broadcastChanges();
+    }
+
+    /** 构建订单描述列表并发送（变化检测节流）。 */
+    private void syncOrders() {
+        var orderList = com.ae2addon.crafting.BatchedCraftingQueue.getOrders();
+        var descs = new java.util.ArrayList<String>(orderList.size());
+        for (var order : orderList) {
+            descs.add(describeOrder(order));
+        }
+        String key = String.join("\u0000", descs);
+        if (!key.equals(lastOrdersKey)) {
+            lastOrdersKey = key;
+            if (getPlayer() instanceof net.minecraft.server.level.ServerPlayer sp) {
+                com.ae2addon.AE2Addon.NETWORK.send(
+                        net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> sp),
+                        new com.ae2addon.network.OrderListPacket(descs));
+            }
+        }
+    }
+
+    /** 订单面板行描述：物品 + 进度 + 状态（JSON 序列化 Component，客户端本地化）。 */
+    private static String describeOrder(com.ae2addon.crafting.BatchedCraftingOrder order) {
+        String itemName = "?";
+        try {
+            itemName = order.getWhat().getDisplayName().getString();
+        } catch (RuntimeException ignored) {
+            // 显示兜底
+        }
+        var statusKey = switch (order.getStatus()) {
+            case QUEUED -> "gui.ae2addon.order.queued";
+            case RUNNING -> "gui.ae2addon.order.running";
+            case DONE -> "gui.ae2addon.order.done";
+            case FAILED -> "gui.ae2addon.order.failed";
+            case CANCELLED -> "gui.ae2addon.order.cancelled";
+        };
+        Component desc = Component.translatable("gui.ae2addon.order.line",
+                Component.literal(itemName),
+                order.getCompletedCount(), order.getBatchCount(),
+                Component.translatable(statusKey));
+        return Component.Serializer.toJson(desc);
     }
 
     private void setLaneField(int index, String value) {
