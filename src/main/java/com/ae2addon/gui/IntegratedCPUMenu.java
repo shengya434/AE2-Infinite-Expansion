@@ -51,6 +51,12 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
     @GuiSync(67)
     public String lane7 = "";
 
+    /** 客户端：完整 lane 列表（LaneListPacket 同步，突破 8 槽位限制） */
+    public volatile java.util.List<String> fullLanes = java.util.List.of();
+
+    /** 服务端：上次发送的 lane 列表指纹（变化检测，防高频刷包） */
+    private String lastLanesKey = "";
+
     private final IntegratedCPUBE core;
 
     private static boolean DIAG_LOGGED;
@@ -142,29 +148,37 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
         if (owner != null) {
             var cpus = owner.allCpus();
             int active = 0;
-            var lanes = new String[8];
-            for (int index = 0; index < 8; index++) {
-                if (index < cpus.size()) {
-                    var lane = cpus.get(index);
-                    if (lane.isBusy()) {
-                        active++;
-                    }
-                    lanes[index] = describeLane(index, lane);
-                } else {
-                    lanes[index] = "";
+            var lanes = new java.util.ArrayList<String>(cpus.size());
+            for (int index = 0; index < cpus.size(); index++) {
+                var lane = cpus.get(index);
+                if (lane.isBusy()) {
+                    active++;
                 }
+                lanes.add(describeLane(index, lane));
             }
             formed = owner.isFormed();
             laneCount = cpus.size();
             activeJobs = active;
-            setLaneField(0, lanes[0]);
-            setLaneField(1, lanes[1]);
-            setLaneField(2, lanes[2]);
-            setLaneField(3, lanes[3]);
-            setLaneField(4, lanes[4]);
-            setLaneField(5, lanes[5]);
-            setLaneField(6, lanes[6]);
-            setLaneField(7, lanes[7]);
+            // 完整列表变化检测：状态类型变化（空闲/忙碌/销毁）才发，避免每 tick 刷包
+            String key = String.join("\u0000", lanes);
+            if (!key.equals(lastLanesKey)) {
+                lastLanesKey = key;
+                if (getPlayer() instanceof net.minecraft.server.level.ServerPlayer sp) {
+                    com.ae2addon.AE2Addon.NETWORK.send(
+                            net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> sp),
+                            new com.ae2addon.network.LaneListPacket(
+                                    lanes, laneCount, active, formed, selectedLaneIndex));
+                }
+            }
+            // 兼容：同步前 8 个到 @GuiSync 字段（旧字段保留，客户端优先用 fullLanes）
+            setLaneField(0, lanes.size() > 0 ? lanes.get(0) : "");
+            setLaneField(1, lanes.size() > 1 ? lanes.get(1) : "");
+            setLaneField(2, lanes.size() > 2 ? lanes.get(2) : "");
+            setLaneField(3, lanes.size() > 3 ? lanes.get(3) : "");
+            setLaneField(4, lanes.size() > 4 ? lanes.get(4) : "");
+            setLaneField(5, lanes.size() > 5 ? lanes.get(5) : "");
+            setLaneField(6, lanes.size() > 6 ? lanes.get(6) : "");
+            setLaneField(7, lanes.size() > 7 ? lanes.get(7) : "");
         }
         super.broadcastChanges();
     }
@@ -183,6 +197,10 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
     }
 
     public String lane(int index) {
+        // 优先完整列表（LaneListPacket 同步）；兜底 @GuiSync 字段
+        if (index >= 0 && index < fullLanes.size()) {
+            return fullLanes.get(index);
+        }
         return switch (index) {
             case 0 -> lane0;
             case 1 -> lane1;
@@ -222,10 +240,8 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
                         // 显示兜底
                     }
                 }
-                long total = status.totalItems();
-                long done = status.progress();
-                int percent = total <= 0 ? 0 : (int) Math.min(100, done * 100 / total);
-                desc = Component.translatable("gui.ae2addon.cpu.lane.progress", name, itemName, percent);
+                // 注意：不带百分比——进度每 tick 变化会导致 LaneListPacket 节流失效
+                desc = Component.translatable("gui.ae2addon.cpu.lane.working", name, itemName);
             }
         }
         return Component.Serializer.toJson(desc);

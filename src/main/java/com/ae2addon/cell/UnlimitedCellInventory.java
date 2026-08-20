@@ -441,16 +441,27 @@ public class UnlimitedCellInventory implements StorageCell {
         ALL_KEYS_SET = set;
     }
 
+    /**
+     * 安全报告无限库存：多个无限盘/普通存储聚合到同一 KeyCounter 时，
+     * add(Long.MAX) 累加会溢出成负数（模拟看到负库存 → 提取失败 → 缺料）。
+     * 改用 set 取最大值：多盘叠加仍为 Long.MAX，不会溢出。
+     */
+    private static void addInfinite(KeyCounter out, AEKey k) {
+        if (out.get(k) < INFINITE) {
+            out.set(k, INFINITE);
+        }
+    }
+
     public void getAvailableStacks(KeyCounter out) {
         if (mode == 3) {
             ensureAllKeysCache();
             for (AEKey k : ALL_KEYS_CACHE) {
-                out.add(k, INFINITE);
+                addInfinite(out, k);
             }
             for (AEKey k : m3) {
                 // m3 中的 NBT 变体可能不在注册表缓存里；已在缓存中的不重复报告（防溢出）
                 if (!ALL_KEYS_SET.contains(k)) {
-                    out.add(k, INFINITE);
+                    addInfinite(out, k);
                 }
             }
             return;
@@ -465,7 +476,7 @@ public class UnlimitedCellInventory implements StorageCell {
                     for (AEKey k : ALL_KEYS_CACHE) {
                         if (!wl.contains(k) && !ul.contains(k)
                                 && matchesRule(k) && !blacklist.contains(k)) {
-                            out.add(k, INFINITE);
+                            addInfinite(out, k);
                         }
                     }
                 } else {
@@ -473,7 +484,7 @@ public class UnlimitedCellInventory implements StorageCell {
                     for (AEKey k : ruleTouched) {
                         if (!wl.contains(k) && !ul.contains(k)
                                 && matchesRule(k) && !blacklist.contains(k)) {
-                            out.add(k, INFINITE);
+                            addInfinite(out, k);
                         }
                     }
                 }
@@ -481,11 +492,11 @@ public class UnlimitedCellInventory implements StorageCell {
 
             if (workMode == 3) {
                 for (AEKey k : wl) {
-                    out.add(k, INFINITE);
+                    addInfinite(out, k);
                 }
                 for (AEKey k : ul) {
                     if (!wl.contains(k)) {
-                        out.add(k, INFINITE);
+                        addInfinite(out, k);
                     }
                 }
                 for (Map.Entry<AEKey, BigInteger> e : s2.entrySet()) {
@@ -498,11 +509,11 @@ public class UnlimitedCellInventory implements StorageCell {
             }
 
             for (AEKey k : wl) {
-                out.add(k, INFINITE);
+                addInfinite(out, k);
             }
             for (AEKey k : ul) {
                 if (!wl.contains(k)) {
-                    out.add(k, INFINITE);
+                    addInfinite(out, k);
                 }
             }
 

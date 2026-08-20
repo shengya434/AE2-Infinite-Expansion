@@ -79,6 +79,8 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     private int tabScrollOffset = 0;
     /** 批量无限规则条横向滚动偏移（px） */
     private int ruleBarScrollOffset = 0;
+    /** 拖拽中的滑条：0=无 1=主列表 2=规则条 3=标签 */
+    private int draggingScrollbar = 0;
     private int maxVisibleRows;
     private String lastSearch = "";
     private int currentWorkMode = 1;
@@ -955,6 +957,25 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     public boolean mouseClicked(double mx, double my, int button) {
         if (uiState == 0) return super.mouseClicked(mx, my, button);
 
+        // 滑条命中（优先于行/标签点击；Shift 时保留原删除/切换语义）
+        if (button == 0 && !hasShiftDown()) {
+            if (hitMainScrollbar(mx, my)) {
+                draggingScrollbar = 1;
+                dragMainScrollbar(my);
+                return true;
+            }
+            if (hitRuleScrollbar(mx, my)) {
+                draggingScrollbar = 2;
+                dragRuleScrollbar(mx);
+                return true;
+            }
+            if (hitTabScrollbar(mx, my)) {
+                draggingScrollbar = 3;
+                dragTabScrollbar(mx);
+                return true;
+            }
+        }
+
         // 规则条点击删除（y=62~72）—— 需要 Shift+左键，防误触
         if (my >= topPos + 62 && my < topPos + 72 && hasShiftDown()) {
             String modeStr = ruleInstant ? I18n.get("gui.ae2addon.mode2.instant_short") : I18n.get("gui.ae2addon.mode2.touch_short");
@@ -1120,18 +1141,147 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (uiState == 0) return super.keyPressed(keyCode, scanCode, modifiers);
-        // 搜索框/阈值/规则输入框获得焦点时，E键不应关闭界面（让'e'正常输入）
-        if ((searchBox.isFocused() || ruleInput.isFocused()
-                || (thresholdInput != null && thresholdInput.isFocused()))
-                && this.minecraft.options.keyInventory.matches(keyCode, scanCode)) {
+        // 搜索框/阈值/规则输入框获得焦点时：优先输入，并吞掉所有按键——
+        // 防止其他 mod 快捷键（如 Curios 饰品栏 G 键）在输入时触发并关闭界面
+        //（Forge 在 Screen.keyPressed 返回 false 时会 fallthrough 给 KeyMapping）
+        if (searchBox.isFocused() || ruleInput.isFocused()
+                || (thresholdInput != null && thresholdInput.isFocused())) {
+            // Esc：保留关闭界面能力
+            if (keyCode == 256) {
+                return super.keyPressed(keyCode, scanCode, modifiers);
+            }
             for (var child : children()) {
                 if (child.keyPressed(keyCode, scanCode, modifiers)) {
                     return true;
                 }
             }
-            return false;
+            // 文本框未消费的键也吞掉（含 E/G 等），避免 KeyMapping 被触发
+            return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean mouseDragged(double mx, double my, int button, double dragX, double dragY) {
+        if (uiState == 0) return super.mouseDragged(mx, my, button, dragX, dragY);
+        if (button == 0) {
+            if (draggingScrollbar == 1) {
+                dragMainScrollbar(my);
+                return true;
+            }
+            if (draggingScrollbar == 2) {
+                dragRuleScrollbar(mx);
+                return true;
+            }
+            if (draggingScrollbar == 3) {
+                dragTabScrollbar(mx);
+                return true;
+            }
+        }
+        return super.mouseDragged(mx, my, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mx, double my, int button) {
+        if (button == 0 && draggingScrollbar != 0) {
+            draggingScrollbar = 0;
+            return true;
+        }
+        return super.mouseReleased(mx, my, button);
+    }
+
+    // ── 三个滑条的拖拽支持（几何与渲染一致；命中区域适当放大） ──
+
+    /** 主列表垂直滑条命中（右侧 4px 轨道） */
+    private boolean hitMainScrollbar(double mx, double my) {
+        if (filteredItems.size() <= maxVisibleRows) return false;
+        int x = leftPos + PANEL_X;
+        int y = topPos + PANEL_Y + 16;
+        return mx >= x + PANEL_W - 4 && mx <= x + PANEL_W + 1
+                && my >= y && my <= y + PANEL_H;
+    }
+
+    private void dragMainScrollbar(double my) {
+        int totalRows = filteredItems.size();
+        if (totalRows <= maxVisibleRows) return;
+        int y = topPos + PANEL_Y + 16;
+        int maxScroll = Math.max(0, totalRows - maxVisibleRows);
+        int barH = Math.max(maxVisibleRows * PANEL_H / totalRows, 8);
+        double ratio = (my - y - barH / 2.0) / Math.max(1, PANEL_H - barH);
+        scrollOffset = (int) Math.round(ratio * maxScroll);
+        scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
+    }
+
+    /** 规则条横向滑条命中（barY 起向下 4px） */
+    private boolean hitRuleScrollbar(double mx, double my) {
+        int totalW = computeRuleBarWidth();
+        int viewW = PANEL_W - 14;
+        if (totalW <= viewW) return false;
+        int x = leftPos + 10;
+        int headerW = ruleBarHeaderWidth();
+        int barX = x + headerW;
+        int barY = topPos + 62 + 11;
+        int barW = viewW - 8;
+        return my >= barY && my <= barY + 4
+                && mx >= barX - 2 && mx <= barX + barW + 2;
+    }
+
+    private void dragRuleScrollbar(double mx) {
+        int totalW = computeRuleBarWidth();
+        int viewW = PANEL_W - 14;
+        int maxScroll = Math.max(0, totalW - viewW);
+        if (maxScroll <= 0) return;
+        int x = leftPos + 10;
+        int headerW = ruleBarHeaderWidth();
+        int barX = x + headerW;
+        int barW = viewW - 8;
+        int sliderW = Math.max(12, (int) (barW * (double) viewW / totalW));
+        double ratio = (mx - barX - sliderW / 2.0) / Math.max(1, barW - sliderW);
+        ruleBarScrollOffset = (int) Math.round(ratio * maxScroll);
+        ruleBarScrollOffset = Math.max(0, Math.min(ruleBarScrollOffset, maxScroll));
+    }
+
+    private int ruleBarHeaderWidth() {
+        String modeStr = ruleInstant
+                ? I18n.get("gui.ae2addon.mode2.instant_short")
+                : I18n.get("gui.ae2addon.mode2.touch_short");
+        return font.width(I18n.get("gui.ae2addon.mode2.batch_header", modeStr)) + 4;
+    }
+
+    private int computeRuleBarWidth() {
+        int total = ruleBarHeaderWidth();
+        for (String tag : tagRules) {
+            total += font.width("[tag:" + tag + "]") + 18;
+        }
+        for (String mod : modRules) {
+            total += font.width("[mod:" + mod + "]") + 18;
+        }
+        return total;
+    }
+
+    /** 标签行横向滑条命中（barY 起向下 4px，避开标签文字） */
+    private boolean hitTabScrollbar(double mx, double my) {
+        int totalW = computeTabsWidth();
+        int viewW = PANEL_W - 12;
+        if (totalW <= viewW) return false;
+        int barX = leftPos + PANEL_X + 2;
+        int barY = topPos + PANEL_Y + 2 + 13;
+        int barW = viewW;
+        return my >= barY && my <= barY + 4
+                && mx >= barX - 2 && mx <= barX + barW + 2;
+    }
+
+    private void dragTabScrollbar(double mx) {
+        int totalW = computeTabsWidth();
+        int viewW = PANEL_W - 12;
+        int maxScroll = Math.max(0, totalW - viewW);
+        if (maxScroll <= 0) return;
+        int barX = leftPos + PANEL_X + 2;
+        int barW = viewW;
+        int sliderW = Math.max(10, (int) (barW * (double) viewW / totalW));
+        double ratio = (mx - barX - sliderW / 2.0) / Math.max(1, barW - sliderW);
+        tabScrollOffset = (int) Math.round(ratio * maxScroll);
+        tabScrollOffset = Math.max(0, Math.min(tabScrollOffset, maxScroll));
     }
 
     private boolean isInPanelArea(double mx, double my) {

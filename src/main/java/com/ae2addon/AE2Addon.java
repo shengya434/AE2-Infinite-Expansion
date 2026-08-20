@@ -70,9 +70,15 @@ public class AE2Addon {
                 Mode2ConfigPacket::decode,
                 Mode2ConfigPacket::handle
         );
+        NETWORK.registerMessage(2, com.ae2addon.network.LaneListPacket.class,
+                com.ae2addon.network.LaneListPacket::encode,
+                com.ae2addon.network.LaneListPacket::decode,
+                com.ae2addon.network.LaneListPacket::handle
+        );
 
         MinecraftForge.EVENT_BUS.register(this);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);
+        MinecraftForge.EVENT_BUS.register(com.ae2addon.crafting.BatchedCraftingQueue.class);
 
         LOGGER.info("✅ AE2 Addon loaded! Universal Storage Cells ready!");
     }

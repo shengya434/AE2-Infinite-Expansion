@@ -23,6 +23,7 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
     private int panelX;
     private int panelY;
     private int scrollOffset;
+    private boolean draggingScrollbar = false;
     private final int[] laneRowY = new int[8];
 
     private static boolean DIAG_CLICK_LOGGED;
@@ -132,6 +133,12 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             double lx = mouseX - leftPos;
             double ly = mouseY - topPos;
             boolean inPanel = isInPanel(lx, ly);
+            // 滑条区域：按下即开始拖拽（优先于行点击，避免误切线程）
+            if (inPanel && isOnScrollbar(lx, ly)) {
+                draggingScrollbar = true;
+                updateScrollFromDrag(ly);
+                return true;
+            }
             int row = inPanel ? hitRow(ly) : -1;
             if (!DIAG_CLICK_LOGGED) {
                 DIAG_CLICK_LOGGED = true;
@@ -145,6 +152,60 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             }
         }
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button,
+            double dragX, double dragY) {
+        if (button == 0 && draggingScrollbar) {
+            updateScrollFromDrag(mouseY - topPos);
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && draggingScrollbar) {
+            draggingScrollbar = false;
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    /** 鼠标是否在滑条轨道上（含滑块） */
+    private boolean isOnScrollbar(double mouseX, double mouseY) {
+        int laneCount = Math.max(0, menu.laneCount);
+        if (laneCount <= VISIBLE_LANES) {
+            return false;
+        }
+        int height = panelHeight(laneCount);
+        int trackTop = panelY + 20;
+        int trackBottom = panelY + height - 4;
+        return mouseX >= panelX + PANEL_WIDTH - 7 && mouseX <= panelX + PANEL_WIDTH - 2
+                && mouseY >= trackTop - 1 && mouseY <= trackBottom + 1;
+    }
+
+    /** 按滑块位置（鼠标 Y）更新滚动偏移，滑块中心对齐 */
+    private void updateScrollFromDrag(double mouseY) {
+        int laneCount = Math.max(0, menu.laneCount);
+        if (laneCount <= VISIBLE_LANES) {
+            return;
+        }
+        int height = panelHeight(laneCount);
+        int trackTop = panelY + 20;
+        int trackBottom = panelY + height - 4;
+        int trackH = trackBottom - trackTop;
+        int maxScroll = Math.max(0, laneCount - VISIBLE_LANES);
+        int thumbH = Math.max(12, trackH * VISIBLE_LANES / laneCount);
+        double ratio = (mouseY - trackTop - thumbH / 2.0) / Math.max(1, trackH - thumbH);
+        scrollOffset = (int) Math.round(ratio * maxScroll);
+        scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
+    }
+
+    private int panelHeight(int laneCount) {
+        int visible = Math.min(VISIBLE_LANES, Math.max(0, laneCount));
+        return 24 + 13 + ROW_HEIGHT * visible + 4;
     }
 
     @Override
