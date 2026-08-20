@@ -318,6 +318,8 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         }
     }
 
+    // ── 取消无限确认弹窗接收（type 13） ──
+
     private void cycleWorkMode() {
         currentWorkMode = (currentWorkMode % 3) + 1;
         AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(6, currentWorkMode));

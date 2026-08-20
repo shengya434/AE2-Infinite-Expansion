@@ -107,6 +107,16 @@
   "gui.ae2addon.mode2.blacklist_added": "§c✗ 已加入黑名单: %s",
   "gui.ae2addon.mode2.blacklist_removed": "§a✔ 已移出黑名单: %s",
 
+  "item.ae2addon.matter_ball": "§d物质球",
+  "gui.ae2addon.matter_ball.given": "§a已将 %s 个 %s 打包为物质球（右键展开取回）",
+  "gui.ae2addon.matter_ball.dropped": "§a背包已满，%s 个 %s 打包为物质球掉落在脚边（右键展开取回）",
+  "gui.ae2addon.matter_ball.empty": "§c物质球是空的（数据异常）",
+  "gui.ae2addon.matter_ball.unpacked": "§a已取回 %s 个 %s",
+  "gui.ae2addon.matter_ball.partial": "§e已取回 %s 个 %s，背包放不下剩余 %s 个仍留在球内",
+  "gui.ae2addon.matter_ball.tooltip": "§7内含: §f%s §7× §e%s",
+  "gui.ae2addon.matter_ball.tooltip_empty": "§7空球",
+  "gui.ae2addon.matter_ball.hint": "§7右键展开取回物品",
+
   "gui.ae2addon.type.items": "物品",
   "gui.ae2addon.type.fluids": "流体",
   "gui.ae2addon.type.gas": "气体",

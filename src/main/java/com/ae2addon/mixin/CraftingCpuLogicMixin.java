@@ -146,13 +146,22 @@ public abstract class CraftingCpuLogicMixin {
     @Unique
     private long ae2addon$batchMultiplier;
 
-    /**
-     * 批量提取结果缓存：AE2 同一 tick 会对同一任务调用两次 extractPatternInputs，
-     * 第二次直接返回缓存，避免重复提取/重复扣库存，也避免第二次调用开头
-     * clearBatchContext 清掉批量上下文导致 pending 收敛锁死。
-     */
+    // 批量提取结果缓存：AE2 同一 tick 会对同一任务调用两次 extractPatternInputs，
+    // 第二次直接返回缓存，避免重复提取/重复扣库存，也避免第二次调用开头
+    // clearBatchContext 清掉批量上下文导致 pending 收敛锁死。
     @Unique
     private KeyCounter[] ae2addon$batchCachedInputs;
+
+    /**
+     * 缓存命中时必须补回的 expectedOutputs / expectedContainerItems 快照。
+     * 原版 pushPattern 成功后会用这两个 KeyCounter 向 job.waitingFor 记账，
+     * 若缓存路径直接返回输入而不补回它们，waitingFor 会漏记 N× 输出量，
+     * 导致 CPU 界面显示的实际发送量与真实发送量不符（修复 2026-08-17）。
+     */
+    @Unique
+    private KeyCounter ae2addon$batchCachedOutputs;
+    @Unique
+    private KeyCounter ae2addon$batchCachedContainerItems;
 
     /** 上次批量提取的 tick + pattern（用于识别同 tick 重复提取） */
     @Unique
@@ -330,6 +339,17 @@ public abstract class CraftingCpuLogicMixin {
         boolean sameTickSamePattern = ae2addon$lastExtractTick == currentTick
                 && ae2addon$lastExtractPattern == patternDetails;
         if (sameTickSamePattern && ae2addon$batchCachedInputs != null) {
+            // 修复：补回 expected 快照，否则原版 push 成功后的 waitingFor 记账为空
+            if (ae2addon$batchCachedOutputs != null) {
+                for (var entry : ae2addon$batchCachedOutputs) {
+                    expectedOutputs.add(entry.getKey(), entry.getLongValue());
+                }
+            }
+            if (ae2addon$batchCachedContainerItems != null) {
+                for (var entry : ae2addon$batchCachedContainerItems) {
+                    expectedContainerItems.add(entry.getKey(), entry.getLongValue());
+                }
+            }
             return ae2addon$batchCachedInputs;
         }
         if (!sameTickSamePattern) {
@@ -391,6 +411,15 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$batchMultiplier = n;
             ae2addon$batchPendingMultiplier = n;
             ae2addon$batchCachedInputs = batchInputs;
+            // 保存 expected 快照，供同 tick 缓存命中时补回记账
+            ae2addon$batchCachedOutputs = new KeyCounter();
+            for (var entry : expectedOutputs) {
+                ae2addon$batchCachedOutputs.add(entry.getKey(), entry.getLongValue());
+            }
+            ae2addon$batchCachedContainerItems = new KeyCounter();
+            for (var entry : expectedContainerItems) {
+                ae2addon$batchCachedContainerItems.add(entry.getKey(), entry.getLongValue());
+            }
             return batchInputs;
         }
 
@@ -531,6 +560,8 @@ public abstract class CraftingCpuLogicMixin {
         ae2addon$batchScaledPattern = null;
         ae2addon$batchMultiplier = 1;
         ae2addon$batchCachedInputs = null;
+        ae2addon$batchCachedOutputs = null;
+        ae2addon$batchCachedContainerItems = null;
     }
 
     // ── 临时注册 scaled pattern（某些 provider 会校验 pattern 必须在可用列表里）──

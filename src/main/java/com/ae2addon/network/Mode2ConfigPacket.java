@@ -661,6 +661,9 @@ public class Mode2ConfigPacket {
 
     // ── 无限状态切换 + 输出 ──
 
+    /**
+     * 切换无限状态。取消无限时若数量过大，打包成物质球（防掉落物过多卡死）。
+     */
     private static void handleToggleInfinite(UnlimitedCellInventory inv,
                                               CompoundTag keyTag, ServerPlayer player) {
         if (keyTag == null) return;
@@ -674,11 +677,63 @@ public class Mode2ConfigPacket {
 
         inv.togglePanelInfinite(key);
 
-        if (wasInfinite && committed > 0 && key instanceof AEItemKey) {
-            outputItems(player, key, committed);
+        if (wasInfinite && committed > 0 && key instanceof AEItemKey itemKey) {
+            // 取消无限 → 输出承诺数量。数量过大时打包成物质球，避免海量掉落物卡死
+            outputOrBall(player, itemKey, committed);
         }
 
         sendPanelRefresh(inv, player);
+    }
+
+    /**
+     * 输出物品：优先背包；数量过大（超过背包容量）时打包成物质球交给玩家，
+     * 右键物质球可展开取回。绝不产生海量掉落物。
+     */
+    private static void outputOrBall(ServerPlayer player, AEItemKey itemKey, long amount) {
+        // 背包容量估算（36 格 × 最大堆叠）
+        long capacity = 36L * itemKey.getItem().getMaxStackSize();
+
+        if (amount > capacity) {
+            // 打包成物质球
+            ItemStack ball = com.ae2addon.item.MatterBallItem.makeBall(itemKey, amount);
+            boolean placed = player.addItem(ball);
+            if (placed) {
+                player.sendSystemMessage(Component.translatable(
+                        "gui.ae2addon.matter_ball.given", amount, itemKey.getDisplayName()));
+            } else {
+                // 背包满 → 只掉 1 个球实体，不会卡死
+                ItemEntity entity = new ItemEntity(
+                        player.level(),
+                        player.getX(), player.getY() + 0.5, player.getZ(),
+                        ball
+                );
+                entity.setPickUpDelay(10);
+                player.level().addFreshEntity(entity);
+                player.sendSystemMessage(Component.translatable(
+                        "gui.ae2addon.matter_ball.dropped", amount, itemKey.getDisplayName()));
+            }
+            return;
+        }
+
+        // 数量小 → 原逻辑：优先背包，溢出则掉落
+        int maxStackSize = itemKey.getItem().getMaxStackSize();
+        long remaining = amount;
+        while (remaining > 0) {
+            int count = (int) Math.min(remaining, maxStackSize);
+            ItemStack outStack = itemKey.toStack(count);
+            remaining -= count;
+            if (!player.addItem(outStack)) {
+                if (!outStack.isEmpty()) {
+                    ItemEntity entity = new ItemEntity(
+                            player.level(),
+                            player.getX(), player.getY() + 0.5, player.getZ(),
+                            outStack
+                    );
+                    entity.setPickUpDelay(10);
+                    player.level().addFreshEntity(entity);
+                }
+            }
+        }
     }
 
     /** 输出物品：优先背包，溢出则掉落 */

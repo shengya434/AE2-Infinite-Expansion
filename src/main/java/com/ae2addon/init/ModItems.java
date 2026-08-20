@@ -2,6 +2,7 @@ package com.ae2addon.init;
 
 import com.ae2addon.AE2Addon;
 import com.ae2addon.item.EternalHeartItem;
+import com.ae2addon.item.MatterBallItem;
 import com.ae2addon.item.UniversalStorageCell;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
@@ -46,6 +47,13 @@ public class ModItems {
             UniversalStorageCell::new
     );
 
+    // ── 物质球（取消无限时大量物品临时存放） ──
+
+    public static final RegistryObject<Item> MATTER_BALL = ITEMS.register(
+            "matter_ball",
+            MatterBallItem::new
+    );
+
     // ── 新增方块物品 ──
 
     public static final RegistryObject<Item> INTEGRATED_CPU_ITEM = ITEMS.register(
@@ -73,6 +81,9 @@ public class ModItems {
 
                         // 新增三方块
                         output.accept(ModBlocks.INTEGRATED_CPU.get());
+
+                        // 物质球
+                        output.accept(MATTER_BALL.get());
 
                         // Debug 销毁方块（测试用）
                         output.accept(ModBlocks.DEBUG_TRASH.get());
