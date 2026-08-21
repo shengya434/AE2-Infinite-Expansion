@@ -85,8 +85,70 @@ public abstract class CraftingCpuLogicMixin {
     @Final
     private CraftingCPUCluster cluster;
 
-    @Shadow
-    private ExecutingCraftingJob job;
+    /**
+     * 时间片限流是否已注入生效（由 {@link #ae2addon$limitTaskIteration} 置位）。
+     * 供 {@link com.ae2addon.block.IntegratedCPUBE} 查询：若未生效（mixin 注入被其他
+     * mod 干扰/版本不兼容），线程数回退保守值，避免无保护的高线程单 tick 爆炸。
+     */
+    @Unique
+    private static volatile boolean ae2addon$timeSliceActive;
+
+    public static boolean ae2addon$isTimeSliceActive() {
+        return ae2addon$timeSliceActive;
+    }
+
+    // job 字段反射（兼容不同 AE2 版本的字段名；@Shadow 字段名在部分版本不存在会直接崩）
+    @Unique
+    private static volatile java.lang.reflect.Field ae2addon$jobField;
+    @Unique
+    private static volatile boolean ae2addon$jobFieldFailed;
+
+    /** 获取当前执行中的任务（反射按类型匹配，不依赖字段名）。 */
+    @Unique
+    private ExecutingCraftingJob ae2addon$getJob() {
+        if (ae2addon$jobFieldFailed) {
+            return null;
+        }
+        try {
+            java.lang.reflect.Field field = ae2addon$jobField;
+            if (field == null) {
+                field = ae2addon$findJobField(getClass());
+                if (field == null) {
+                    ae2addon$jobFieldFailed = true;
+                    return null;
+                }
+                field.setAccessible(true);
+                ae2addon$jobField = field;
+            }
+            Object value = field.get(this);
+            return value instanceof ExecutingCraftingJob job ? job : null;
+        } catch (RuntimeException | ReflectiveOperationException e) {
+            ae2addon$jobFieldFailed = true;
+            return null;
+        }
+    }
+
+    /** 在目标类中查找 ExecutingCraftingJob 类型字段（名字候选 + 类型匹配）。 */
+    @Unique
+    private static java.lang.reflect.Field ae2addon$findJobField(Class<?> targetClass) {
+        for (String name : new String[]{"job", "craftingJob", "currentJob", "m_job"}) {
+            try {
+                java.lang.reflect.Field field = targetClass.getDeclaredField(name);
+                if (field.getType() == ExecutingCraftingJob.class) {
+                    return field;
+                }
+            } catch (NoSuchFieldException ignored) {
+                // 候选名不存在，继续
+            }
+        }
+        // 类型匹配兜底：不依赖字段名
+        for (java.lang.reflect.Field field : targetClass.getDeclaredFields()) {
+            if (field.getType() == ExecutingCraftingJob.class) {
+                return field;
+            }
+        }
+        return null;
+    }
 
     // 时间片状态
     @Unique
@@ -188,7 +250,7 @@ public abstract class CraftingCpuLogicMixin {
 
     // ── 时间片：每 tick 预算 ──
 
-    @Inject(method = "tickCraftingLogic", at = @At("HEAD"))
+    @Inject(method = "tickCraftingLogic", at = @At("HEAD"), require = 0)
     private void ae2addon$beginDispatchBudget(IEnergyService energyService,
             CraftingService craftingService, CallbackInfo callback) {
         boolean integrated = ae2addon$isIntegratedCpu(cluster);
@@ -198,9 +260,10 @@ public abstract class CraftingCpuLogicMixin {
         }
         ae2addon$budgetActive = integrated;
         if (ae2addon$budgetActive) {
-            if (ae2addon$diagLastJob != job) {
+            ExecutingCraftingJob currentJob = ae2addon$getJob();
+            if (ae2addon$diagLastJob != currentJob) {
                 // 新任务：重置批量自适应状态，避免旧任务的 N/锁定泄漏
-                ae2addon$diagLastJob = job;
+                ae2addon$diagLastJob = currentJob;
                 ae2addon$batchNext.clear();
                 ae2addon$batchLocked.clear();
             }
@@ -264,8 +327,10 @@ public abstract class CraftingCpuLogicMixin {
      * 任务循环（job.tasks.entrySet() 的迭代）：超时即终止整个任务的遍历。
      */
     @Redirect(method = "executeCrafting",
-            at = @At(value = "INVOKE", target = "Ljava/util/Iterator;hasNext()Z", ordinal = 0))
+            at = @At(value = "INVOKE", target = "Ljava/util/Iterator;hasNext()Z", ordinal = 0),
+            require = 0)
     private boolean ae2addon$limitTaskIteration(Iterator<?> iterator) {
+        ae2addon$timeSliceActive = true;
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
             if (System.nanoTime() >= ae2addon$deadlineNanos) {
@@ -280,8 +345,10 @@ public abstract class CraftingCpuLogicMixin {
      * 超时即停止向机器推送，本 tick 收工。
      */
     @Redirect(method = "executeCrafting",
-            at = @At(value = "INVOKE", target = "Ljava/util/Iterator;hasNext()Z", ordinal = 1))
+            at = @At(value = "INVOKE", target = "Ljava/util/Iterator;hasNext()Z", ordinal = 1),
+            require = 0)
     private boolean ae2addon$limitProviderIteration(Iterator<?> iterator) {
+        ae2addon$timeSliceActive = true;
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
             if (System.nanoTime() >= ae2addon$deadlineNanos) {
@@ -299,7 +366,8 @@ public abstract class CraftingCpuLogicMixin {
             at = @At(value = "INVOKE",
                     target = "Lappeng/me/service/CraftingService;getProviders("
                             + "Lappeng/api/crafting/IPatternDetails;)"
-                            + "Ljava/lang/Iterable;"))
+                            + "Ljava/lang/Iterable;"),
+            require = 0)
     private Iterable<ICraftingProvider> ae2addon$appendDebugTrashProviders(
             CraftingService craftingService, IPatternDetails patternDetails) {
         var providers = craftingService.getProviders(patternDetails);
@@ -327,7 +395,8 @@ public abstract class CraftingCpuLogicMixin {
                             + "Lnet/minecraft/world/level/Level;"
                             + "Lappeng/api/stacks/KeyCounter;"
                             + "Lappeng/api/stacks/KeyCounter;"
-                            + ")[Lappeng/api/stacks/KeyCounter;"))
+                            + ")[Lappeng/api/stacks/KeyCounter;"),
+            require = 0)
     private KeyCounter[] ae2addon$extractBatch(IPatternDetails patternDetails,
             ICraftingInventory inventory, Level level, KeyCounter expectedOutputs,
             KeyCounter expectedContainerItems) {
@@ -449,7 +518,8 @@ public abstract class CraftingCpuLogicMixin {
             at = @At(value = "INVOKE",
                     target = "Lappeng/api/networking/crafting/ICraftingProvider;"
                             + "pushPattern(Lappeng/api/crafting/IPatternDetails;"
-                            + "[Lappeng/api/stacks/KeyCounter;)Z"))
+                            + "[Lappeng/api/stacks/KeyCounter;)Z"),
+            require = 0)
     private boolean ae2addon$pushBatch(ICraftingProvider provider,
             IPatternDetails patternDetails, KeyCounter[] inputs) {
         ae2addon$diagPushCalls++;
@@ -503,7 +573,8 @@ public abstract class CraftingCpuLogicMixin {
     @Redirect(method = "tickCraftingLogic",
             at = @At(value = "INVOKE",
                     target = "Lappeng/me/cluster/implementations/CraftingCPUCluster;"
-                            + "getCoProcessors()I"))
+                            + "getCoProcessors()I"),
+            require = 0)
     private int ae2addon$protectCoProcessors(CraftingCPUCluster targetCluster) {
         if (ae2addon$budgetActive && ae2addon$isIntegratedCpu(targetCluster)) {
             return Integer.MAX_VALUE - 1;
@@ -613,7 +684,7 @@ public abstract class CraftingCpuLogicMixin {
 
     @Unique
     private long ae2addon$getTaskValue(IPatternDetails pattern) {
-        var currentJob = job;
+        var currentJob = ae2addon$getJob();
         if (currentJob == null || !ae2addon$reflectionAvailable) {
             return 1;
         }
@@ -635,7 +706,7 @@ public abstract class CraftingCpuLogicMixin {
         if (amount <= 0 || !ae2addon$reflectionAvailable) {
             return;
         }
-        var currentJob = job;
+        var currentJob = ae2addon$getJob();
         if (currentJob == null) {
             return;
         }

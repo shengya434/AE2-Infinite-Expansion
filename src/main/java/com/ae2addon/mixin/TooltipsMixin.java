@@ -32,7 +32,7 @@ public abstract class TooltipsMixin {
      * 注入 getByteAmount：在原方法返回前，用正确的 6 级二进制单位覆盖返回值。
      * 原版 BYTE_NUMS 数组只有 4 个元素，TB/PB/EB 缺失导致 ≥1TB 时数组越界。
      */
-    @Inject(method = "getByteAmount", at = @At("HEAD"), cancellable = true, remap = false)
+    @Inject(method = "getByteAmount", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private static void onGetByteAmount(long value, CallbackInfoReturnable<Tooltips.Amount> cir) {
         // 无限存储哨兵：直接显示 ∞（集成 CPU 的 getStorageBytes 返回 Long.MAX_VALUE）
         if (value == Long.MAX_VALUE) {

@@ -28,7 +28,7 @@ public abstract class CPUSelectionListMixin {
     @Unique
     private static final String AE2ADDON_INFINITE_TEXT = "∞";
 
-    @Inject(method = "formatStorage", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "formatStorage", at = @At("HEAD"), cancellable = true, require = 0)
     private void ae2addon$formatInfiniteStorage(
             CraftingStatusMenu.CraftingCpuListEntry cpu,
             CallbackInfoReturnable<String> callback) {
@@ -46,7 +46,8 @@ public abstract class CPUSelectionListMixin {
 
     @Redirect(method = "drawBackgroundLayer",
             at = @At(value = "INVOKE",
-                    target = "Ljava/lang/String;valueOf(I)Ljava/lang/String;"))
+                    target = "Ljava/lang/String;valueOf(I)Ljava/lang/String;"),
+            require = 0)
     private String ae2addon$formatInfiniteParallelism(int value) {
         return value == Integer.MAX_VALUE - 1
                 ? AE2ADDON_INFINITE_TEXT
@@ -56,7 +57,8 @@ public abstract class CPUSelectionListMixin {
     @Redirect(method = "getTooltip",
             at = @At(value = "INVOKE",
                     target = "Lappeng/core/localization/Tooltips;ofNumber(J)"
-                            + "Lnet/minecraft/network/chat/MutableComponent;"))
+                            + "Lnet/minecraft/network/chat/MutableComponent;"),
+            require = 0)
     private MutableComponent ae2addon$tooltipInfiniteParallelism(long value) {
         return value == Integer.MAX_VALUE - 1
                 ? ae2addon$infiniteTooltipValue()
@@ -66,7 +68,8 @@ public abstract class CPUSelectionListMixin {
     @Redirect(method = "getTooltip",
             at = @At(value = "INVOKE",
                     target = "Lappeng/core/localization/Tooltips;ofBytes(J)"
-                            + "Lnet/minecraft/network/chat/MutableComponent;"))
+                            + "Lnet/minecraft/network/chat/MutableComponent;"),
+            require = 0)
     private MutableComponent ae2addon$tooltipInfiniteStorage(long value) {
         return value == Long.MAX_VALUE
                 ? ae2addon$infiniteTooltipValue()

@@ -47,7 +47,8 @@ public class GridMixin {
             method = "getMachines(Ljava/lang/Class;)Ljava/util/Set;",
             at = @At("HEAD"),
             cancellable = true,
-            remap = false
+            remap = false,
+            require = 0
     )
     private <T> void ae2addon$getMachines(Class<T> clazz, CallbackInfoReturnable<Set<T>> cir) {
         Set<T> result = new HashSet<>();
@@ -73,7 +74,8 @@ public class GridMixin {
             method = "getMachineNodes(Ljava/lang/Class;)Ljava/lang/Iterable;",
             at = @At("HEAD"),
             cancellable = true,
-            remap = false
+            remap = false,
+            require = 0
     )
     private void ae2addon$getMachineNodes(Class<?> clazz, CallbackInfoReturnable<Iterable<IGridNode>> cir) {
         Set<IGridNode> result = new HashSet<>();

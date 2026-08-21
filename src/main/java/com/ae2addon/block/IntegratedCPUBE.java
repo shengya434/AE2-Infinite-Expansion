@@ -109,10 +109,20 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
      * Integer.MAX_VALUE−1：拉满账面并行度（AE2 内部 +1 后恰好 Integer.MAX_VALUE，不溢出）。
      * CraftingCpuLogicMixin 的时间片限流接管真实执行，线程数只是好看的数字，
      * 单 tick 实际只跑预算内的工作量，不会爆炸。
+     * <p>
+     * 兼容性保险（2026-08-21）：限流 mixin 注入被其他 mod（gtlcore/gtocore 等）
+     * 干扰或 AE2 版本不兼容时，{@link com.ae2addon.mixin.CraftingCpuLogicMixin#ae2addon$isTimeSliceActive()}
+     * 为 false → 回退保守线程数（16），避免无时间片保护的高线程单 tick 循环爆炸。
      */
     @Override
     public int getAcceleratorThreads() {
-        return (formed && hasCoProcessing) ? Integer.MAX_VALUE - 1 : 0;
+        if (!formed || !hasCoProcessing) {
+            return 0;
+        }
+        if (!com.ae2addon.mixin.CraftingCpuLogicMixin.ae2addon$isTimeSliceActive()) {
+            return 16;
+        }
+        return Integer.MAX_VALUE - 1;
     }
 
     /**

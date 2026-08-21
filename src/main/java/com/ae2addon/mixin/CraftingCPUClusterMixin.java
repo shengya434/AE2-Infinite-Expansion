@@ -33,7 +33,7 @@ public class CraftingCPUClusterMixin {
         return Integer.MAX_VALUE;
     }
 
-    @Inject(method = "getAvailableStorage", at = @At("HEAD"), cancellable = true, remap = false)
+    @Inject(method = "getAvailableStorage", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private void ae2addon$infiniteStorage(CallbackInfoReturnable<Long> callback) {
         if (!ae2addon$diagLogged) {
             ae2addon$diagLogged = true;
@@ -52,7 +52,7 @@ public class CraftingCPUClusterMixin {
      * done() 是 AE2 合成任务完成后的收尾回调，主簇完成任务时也会走到这里，
      * 但 owner.removeVirtualCpu 内部会判断「只移除虚拟 lane，主簇保留」。
      */
-    @Inject(method = "done", at = @At("RETURN"), remap = false)
+    @Inject(method = "done", at = @At("RETURN"), remap = false, require = 0)
     private void ae2addon$hideFinishedVirtualLane(CallbackInfo callback) {
         var self = (CraftingCPUCluster) (Object) this;
         var owner = IntegratedCPURegistry.ownerOf(self);

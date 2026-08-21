@@ -53,12 +53,12 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
     @Final
     private IGrid grid;
 
-    @Inject(method = "updateCPUClusters", at = @At("RETURN"))
+    @Inject(method = "updateCPUClusters", at = @At("RETURN"), require = 0)
     private void ae2addon$registerVirtualCpus(CallbackInfo callback) {
         ae2addon$refreshIntegratedCpus();
     }
 
-    @Inject(method = "submitJob", at = @At("RETURN"))
+    @Inject(method = "submitJob", at = @At("RETURN"), require = 0)
     private void ae2addon$keepSpareCpuAfterSubmit(ICraftingPlan job,
             ICraftingRequester requestingMachine, ICraftingCPU target,
             boolean prioritizePower, IActionSource source,
@@ -72,7 +72,7 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
      * 首批立即提交（返回真实 link），剩余批次入队串行执行。
      * 也处理模拟阶段拦截产生的 DeferredCraftingPlan（延迟计划）。
      */
-    @Inject(method = "submitJob", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "submitJob", at = @At("HEAD"), cancellable = true, require = 0)
     private void ae2addon$batchOversizedOrder(ICraftingPlan job,
             ICraftingRequester requestingMachine, ICraftingCPU target,
             boolean prioritizePower, IActionSource source,
@@ -142,7 +142,7 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
      * 直接用 BigInteger 估算需求、计算安全批次，返回 DeferredCraftingPlan。
      * 真正提交时由 submitJob 分支拆批执行。
      */
-    @Inject(method = "beginCraftingCalculation", at = @At("HEAD"), cancellable = true, remap = false)
+    @Inject(method = "beginCraftingCalculation", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private void ae2addon$deferOversizedSimulation(Level level,
             ICraftingSimulationRequester simRequester, AEKey what, long amount,
             CalculationStrategy strategy,
@@ -205,7 +205,7 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
     /**
      * 目标集成 CPU 忙时，自动把任务重定向到空闲虚拟 lane。
      */
-    @Inject(method = "submitJob", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "submitJob", at = @At("HEAD"), cancellable = true, require = 0)
     private void ae2addon$redirectBusyIntegratedCpu(ICraftingPlan job,
             ICraftingRequester requestingMachine, ICraftingCPU target,
             boolean prioritizePower, IActionSource source,

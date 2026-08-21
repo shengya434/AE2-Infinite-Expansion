@@ -37,7 +37,8 @@ public abstract class CraftConfirmScreenMixin {
             at = @At(value = "INVOKE",
                     target = "Lappeng/core/localization/LocalizationEnum;"
                             + "text([Ljava/lang/Object;)"
-                            + "Lnet/minecraft/network/chat/MutableComponent;"))
+                            + "Lnet/minecraft/network/chat/MutableComponent;"),
+            require = 0)
     private MutableComponent ae2addon$infiniteConfirmStatus(
             LocalizationEnum instance, Object[] args) {
         if (!ae2addon$diagLogged) {
@@ -57,7 +58,7 @@ public abstract class CraftConfirmScreenMixin {
         return instance.text(args);
     }
 
-    @Inject(method = "updateBeforeRender", at = @At("RETURN"))
+    @Inject(method = "updateBeforeRender", at = @At("RETURN"), require = 0)
     private void ae2addon$forceInfiniteCpuStatus(CallbackInfo callback) {
         var menu = ((CraftConfirmScreen) (Object) this).getMenu();
         if (menu == null) {
