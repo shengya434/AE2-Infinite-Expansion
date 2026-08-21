@@ -388,9 +388,17 @@ public abstract class CraftingCpuLogicMixin {
         return iterator.hasNext();
     }
 
+    /** 上次 getProviders 结果里是否有真实机器接收方（extractBatch 据此决定是否 N× 提取） */
+    @Unique
+    private boolean ae2addon$providersHaveMachine;
+
     /**
      * getProviders 结果追加 Debug 销毁方块：DebugTrashBE 不注册任何 pattern，
      * 通过这里成为任意 pattern 的接收者（同一网络内），用于测试无限吞吐。
+     * <p>
+     * 2026-08-21 修复：无条件追加（DebugTrash 必须能收到材料，sensei 实测：
+     * 改为只兑底后 DebugTrash 输入不进去）。机器订单劫持问题改在
+     * extractBatch：该 pattern 有真实机器接收方时不 N× 提取（机器按 1× 收全量）。
      */
     @Redirect(method = "executeCrafting",
             at = @At(value = "INVOKE",
@@ -401,21 +409,16 @@ public abstract class CraftingCpuLogicMixin {
     private Iterable<ICraftingProvider> ae2addon$appendDebugTrashProviders(
             CraftingService craftingService, IPatternDetails patternDetails) {
         var providers = craftingService.getProviders(patternDetails);
-        var debugProviders = DebugTrashRegistry.collectFor(craftingService);
-        if (debugProviders.isEmpty()) {
-            return providers;
-        }
-        // 2026-08-21 修复：DebugTrash 只做兜底——该 pattern 已有真实接收方
-        // （机器/样板供应器等）时不再追加，避免劫持正常机器订单的 N× 材料
-        // （sensei 实测：向机器下单 128 只收到 64，其余被 DebugTrash 销毁）。
-        boolean hasRealProvider = false;
+        boolean hasMachine = false;
         for (var p : providers) {
             if (p != null && !(p instanceof DebugTrashBE)) {
-                hasRealProvider = true;
+                hasMachine = true;
                 break;
             }
         }
-        if (hasRealProvider) {
+        ae2addon$providersHaveMachine = hasMachine;
+        var debugProviders = DebugTrashRegistry.collectFor(craftingService);
+        if (debugProviders.isEmpty()) {
             return providers;
         }
         var combined = new ArrayList<ICraftingProvider>();
@@ -489,6 +492,13 @@ public abstract class CraftingCpuLogicMixin {
         }
         if (!ae2addon$budgetActive || patternDetails == null || inventory == null) {
             // 非我们 CPU（原版）：直接调用原始静态方法（原版行为）
+            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
+                    level, expectedOutputs, expectedContainerItems);
+        }
+        // 2026-08-21 修复：该 pattern 有真实机器接收方时不 N× 提取——
+        // 机器按 1× 原版收全量（不被 DebugTrash 劫持）；只有 DebugTrash
+        // 接收（无机器）时才 N× 批量（测试无限吞吐）。
+        if (ae2addon$providersHaveMachine) {
             return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
                     level, expectedOutputs, expectedContainerItems);
         }
