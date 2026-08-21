@@ -388,21 +388,17 @@ public abstract class CraftingCpuLogicMixin {
         return iterator.hasNext();
     }
 
-    /** 上次 getProviders 结果里是否有真实机器接收方（有则批量 N 封顶，防机器拒收被 DebugTrash 抢） */
+    /** 上次 getProviders 结果里是否有真实机器接收方（保留供诊断；N 不再封顶，机器/DebugTrash 都吃无限 N×） */
     @Unique
     private boolean ae2addon$providersHaveMachine;
-
-    /** 机器友好批量上限：有机器接收方时 N 不超过此值（机器能吃下，DebugTrash 不抢） */
-    @Unique
-    private static final long AE2ADDON_MACHINE_BATCH_LIMIT = 4096;
 
     /**
      * getProviders 结果追加 Debug 销毁方块：DebugTrashBE 不注册任何 pattern，
      * 通过这里成为任意 pattern 的接收者（同一网络内），用于测试无限吞吐。
      * <p>
-     * 2026-08-21 修复：无条件追加（DebugTrash 必须能收到材料）。
-     * 机器订单防劫持改在 extractBatch：有机器接收方时 N 封顶到机器友好上限
-     * （机器能吃下 N×，DebugTrash 不抢；纯 DebugTrash 场景 N 不受限）。
+     * 2026-08-21 修复：无条件追加 + N 无限（sensei 要求机器也无限 N×，
+     * 不封顶）。机器/DebugTrash 共存时按 providers 顺序分配：机器在前能收就收，
+     * 机器拒收（N 超出其能力）则 DebugTrash 兑底。
      */
     @Redirect(method = "executeCrafting",
             at = @At(value = "INVOKE",
@@ -505,12 +501,6 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$diagTaskValueFallback++;
         }
         long n = Math.min(ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
-        // 2026-08-21 修复：有机器接收方时 N 封顶到机器友好上限——
-        // 机器能吃下的 N× 归机器（DebugTrash 不抢，20:12 实测机器收 130 万 N× 正常）；
-        // 纯 DebugTrash 场景 N 不受限（无限吞吐测试）。
-        if (ae2addon$providersHaveMachine) {
-            n = Math.min(n, AE2ADDON_MACHINE_BATCH_LIMIT);
-        }
         if (n <= 1) {
             // 我们 CPU：直接调原始静态方法，绕开 Omni 的 extractBatch handler
             // （它会对 scaled 输出算 waitingFor 余量，N 大时 reinject+null → 批量被误判失败锁 1）
