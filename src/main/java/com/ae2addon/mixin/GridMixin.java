@@ -29,7 +29,7 @@ import java.util.Set;
  * over all keys and include any key from which the requested class is assignable
  * (i.e., subclass keys).
  */
-@Mixin(Grid.class)
+@Mixin(value = Grid.class, remap = false, priority = 1200)
 public class GridMixin {
 
     @Shadow(remap = false)

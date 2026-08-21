@@ -42,7 +42,7 @@ import java.util.concurrent.Future;
  * CraftingService CPU 集合，实现多订单并行；目标 CPU 忙时自动改用空闲 lane。
  * 思路来自 OmniSequence-Transfinite 的 OmniCraftingServiceMixin。
  */
-@Mixin(value = CraftingService.class, remap = false)
+@Mixin(value = CraftingService.class, remap = false, priority = 1200)
 public abstract class CraftingServiceMixin implements IntegratedCraftingServiceBridge {
 
     @Shadow

@@ -21,7 +21,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * 2. getAvailableStorage() → Long.MAX_VALUE：无限存储的精确哨兵值。
  *    CPU 列表 / 合成确认界面 / tooltip 的「∞」显示都依赖它（=Long.MAX_VALUE 判断）。
  */
-@Mixin(CraftingCPUCluster.class)
+@Mixin(value = CraftingCPUCluster.class, remap = false, priority = 1200)
 public class CraftingCPUClusterMixin {
 
     @ModifyConstant(
