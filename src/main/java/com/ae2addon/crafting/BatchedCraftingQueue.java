@@ -140,7 +140,35 @@ public final class BatchedCraftingQueue {
                     default -> {}
                 }
                 iterator.remove();
+                purgeFromSave(order);
             }
+        }
+    }
+
+    /**
+     * 订单结束（完成/失败/取消/异常）后同步清存档：
+     * saveAll 只写当前 orders 里存在的订单，若订单移除后不清理存档，
+     * 旧快照残留 → 退出重进后取消的订单复活（sensei 2026-08-21 实测）。
+     */
+    private static void purgeFromSave(BatchedCraftingOrder removed) {
+        try {
+            var level = removed.getLevel();
+            if (level == null || level.isClientSide) {
+                return;
+            }
+            var data = com.ae2addon.data.MegaOrderSavedData.get(level);
+            var remaining = new java.util.ArrayList<BatchedCraftingOrder>();
+            for (var o : orders) {
+                if (o.getLevel() == level) {
+                    remaining.add(o);
+                }
+            }
+            data.setOrders(remaining.stream()
+                    .map(BatchedCraftingOrder::snapshot)
+                    .toList());
+        } catch (RuntimeException e) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] 清理订单存档失败", e);
         }
     }
 
