@@ -64,8 +64,13 @@ public final class AE2AddonMixinPlugin implements IMixinConfigPlugin {
             }
             return true;
         }
-        // GT fork：保留 accessor（启动不崩），禁用所有深度注入 mixin
-        boolean disabled = !mixinClassName.endsWith("CraftingCPUClusterAccessor");
+        // GT fork：保留 accessor + GridMixin（CPU 识别必需，目标方法稳定），
+        // 禁用其余深度注入 mixin（它们基于原版 15.4.10 的类/字段，GT fork 必崩）。
+        // GridMixin 必须保留：AE2 的 getMachines 按精确运行时类匹配，
+        // 没有它集成 CPU 子类方块无法被识别为 CPU（sensei 截图：合成CPU 列表空）。
+        boolean isAccessor = mixinClassName.endsWith("CraftingCPUClusterAccessor");
+        boolean isGridMixin = mixinClassName.endsWith("GridMixin");
+        boolean disabled = !(isAccessor || isGridMixin);
         if (disabled) {
             LOGGER.info("[ae2addon] GT AE2 兼容模式：跳过 mixin {}", mixinClassName);
         }
