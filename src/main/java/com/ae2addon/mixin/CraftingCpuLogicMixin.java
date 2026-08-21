@@ -77,10 +77,11 @@ public abstract class CraftingCpuLogicMixin {
     private static final long AE2ADDON_BATCH_MAX_MULTIPLIER = Long.MAX_VALUE;
 
     /**
-     * 诊断日志间隔（tick）。
+     * 诊断日志间隔（tick）。2026-08-21 从 100 拉大到 600（30 秒）——
+     * CPU 功能基本完好，减少日志占用；每 5 分钟还有一次汇总看趋势。
      */
     @Unique
-    private static final long AE2ADDON_DIAG_LOG_INTERVAL_TICKS = 100;
+    private static final long AE2ADDON_DIAG_LOG_INTERVAL_TICKS = 600;
 
     @Shadow
     @Final
