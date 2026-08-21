@@ -116,7 +116,17 @@ public final class BatchedCraftingQueue {
             if (order.getLevel() == null || order.getLevel().isClientSide) {
                 continue;
             }
-            boolean alive = order.tick();
+            boolean alive;
+            try {
+                alive = order.tick();
+            } catch (RuntimeException e) {
+                // 隔离异常：单个订单 tick 崩溃不能拖垮整个队列（恢复订单网格失效等）
+                com.ae2addon.AE2Addon.LOGGER.error(
+                        "[ae2addon] 巨型订单 tick 异常，已强制终止 what={}",
+                        order.getWhat(), e);
+                order.forceTerminate();
+                alive = false;
+            }
             if (!alive) {
                 switch (order.getStatus()) {
                     case DONE -> ChatLog.ok(order.getLevel(), null,
@@ -145,6 +155,10 @@ public final class BatchedCraftingQueue {
             return;
         }
         lastRestoredServer = server;
+        // 清理上一 server 实例残留的订单（orders 是静态列表，退出世界不清空，
+        // 旧订单持有失效的 level/grid，会 tick 异常或与恢复订单重复）
+        orders.removeIf(o -> o.getLevel() == null
+                || o.getLevel().getServer() != server);
         try {
             var overworld = server.overworld();
             var data = com.ae2addon.data.MegaOrderSavedData.get(overworld);

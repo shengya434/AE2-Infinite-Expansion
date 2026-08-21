@@ -56,6 +56,17 @@ public final class BatchedCraftingOrder {
     /** 恢复锚点：订单所属网格的集成 CPU 方块位置（重进后重新绑定网格） */
     private net.minecraft.core.BlockPos anchorPos;
 
+    /** 设置恢复锚点（下单时从网格 CPU 反查，供存档恢复快速绑定）。 */
+    public void setAnchorPos(net.minecraft.core.BlockPos pos) {
+        this.anchorPos = pos;
+    }
+
+    /** 强制终止（队列 tick 异常时兜底）：标记失败并取消进行中批次。 */
+    public void forceTerminate() {
+        status = Status.FAILED;
+        cancelRunning();
+    }
+
     private int nextBatchIndex = 0;
     private int completedCount = 0;
     private Status status = Status.QUEUED;
@@ -97,8 +108,14 @@ public final class BatchedCraftingOrder {
     }
 
     /**
-     * 从存档快照恢复订单：网格/节点延迟绑定（锚点 CPU 方块加载后），
-     * 从断点（nextBatchIndex）继续，进行中的批次（重启后已丢失）跳过。
+     * 从存档快照恢复订单：网格/节点延迟绑定（锚点 CPU 方块加载后）。
+     * <p>
+     * <b>断点回退（2026-08-21 修复）</b>：nextBatchIndex 语义是「已启动的批次指针」，
+     * 全发模式下首个 tick 就推到总批数，而进行中的批次（AE2 任务）重启后必然丢失——
+     * 若按保存的 nextBatchIndex 恢复，fillWindow 会判定「无新批次可启动」→ 订单死锁，
+     * 线程全空闲、永不完成（sensei 截图实锤：恢复后 0/434 进行中但 CPU 全空闲）。
+     * 修复：未完成批次（nextBatchIndex - completedCount 个）全部回退重跑。
+     * 代价：重启前已提取材料的批次材料损失（材料滞留 CPU 库存），产物不翻倍。
      */
     public static BatchedCraftingOrder restore(
             com.ae2addon.data.MegaOrderSavedData.OrderSnapshot snapshot,
@@ -110,8 +127,9 @@ public final class BatchedCraftingOrder {
         var order = new BatchedCraftingOrder(level, null, null,
                 snapshot.what, snapshot.totalAmount, null,
                 appeng.api.networking.security.IActionSource.empty(), batches);
-        order.nextBatchIndex = Math.max(0, Math.min(snapshot.nextBatchIndex, batches.size()));
         order.completedCount = Math.max(0, Math.min(snapshot.completedCount, batches.size()));
+        // 回退到已完成处：已启动未完成的批次全部重跑（任务不跨存档）
+        order.nextBatchIndex = order.completedCount;
         order.anchorPos = snapshot.anchor;
         return order;
     }
@@ -162,8 +180,10 @@ public final class BatchedCraftingOrder {
             return null;
         }
 
-        return new BatchedCraftingOrder(level, grid, null, finalOutput.what(),
+        var order = new BatchedCraftingOrder(level, grid, null, finalOutput.what(),
                 finalOutput.amount(), requester, source, batches);
+        order.anchorPos = findAnchorPos(grid);
+        return order;
     }
 
     /**
@@ -214,8 +234,27 @@ public final class BatchedCraftingOrder {
             return null;
         }
 
-        return new BatchedCraftingOrder(level, grid, plan.getSimNode(),
+        var order = new BatchedCraftingOrder(level, grid, plan.getSimNode(),
                 plan.finalOutput().what(), total, requester, source, batches);
+        order.anchorPos = findAnchorPos(grid);
+        return order;
+    }
+
+    /** 从网格反查集成 CPU 方块位置（恢复锚点），找不到返回 null（恢复时走扫描兜底）。 */
+    private static net.minecraft.core.BlockPos findAnchorPos(IGrid grid) {
+        try {
+            for (var cpu : grid.getCraftingService().getCpus()) {
+                if (cpu instanceof appeng.me.cluster.implementations.CraftingCPUCluster cluster) {
+                    var owner = com.ae2addon.block.IntegratedCPURegistry.ownerOf(cluster);
+                    if (owner != null) {
+                        return owner.getBlockPos();
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // 网格未就绪：恢复时走扫描路径兜底
+        }
+        return null;
     }
 
     /**
