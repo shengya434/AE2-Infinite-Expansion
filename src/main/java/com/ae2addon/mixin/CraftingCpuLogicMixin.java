@@ -457,6 +457,14 @@ public abstract class CraftingCpuLogicMixin {
             return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
                     level, expectedOutputs, expectedContainerItems);
         }
+        // 2026-08-21 修复：只有存在无限消费型接收方（DebugTrash）时才做 N× 批量提取。
+        // 否则普通 PatternProvider/机器会拒绝 ScaledPattern 的 N× 输入，
+        // 材料滞留 → 发送原料数量 < 计算原料数量（sensei 实测 19:30 日志）。
+        // DebugTrash 存在时 N× 照常（测试场景，sensei 确认 N× 本身没问题）。
+        if (!com.ae2addon.block.DebugTrashRegistry.hasActiveIn(level)) {
+            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
+                    level, expectedOutputs, expectedContainerItems);
+        }
 
         long taskRemaining = ae2addon$getTaskValue(patternDetails);
         if (taskRemaining <= 1) {
