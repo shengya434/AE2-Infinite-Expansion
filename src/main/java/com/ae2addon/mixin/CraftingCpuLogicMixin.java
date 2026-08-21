@@ -495,6 +495,15 @@ public abstract class CraftingCpuLogicMixin {
             return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
                     level, expectedOutputs, expectedContainerItems);
         }
+        // 2026-08-21 修复（最终版）：该 pattern 有真实机器接收方时强制 1× 提取。
+        // 机器（PatternProvider）不接受 ScaledPattern N×（实测 push 总调用 0 次，
+        // N× 输入滞留 → 发配数量不准）；只有 DebugTrash 无脑接受 N×。
+        // 机器走原版 1×（数量精确），DebugTrash 走 N×（无限吞吐测试）。
+        // 注：1× 推送也是批量探测，机器场景不会因此变慢——N 只是不用在机器上。
+        if (ae2addon$providersHaveMachine) {
+            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
+                    level, expectedOutputs, expectedContainerItems);
+        }
 
         long taskRemaining = ae2addon$getTaskValue(patternDetails);
         if (taskRemaining <= 1) {
