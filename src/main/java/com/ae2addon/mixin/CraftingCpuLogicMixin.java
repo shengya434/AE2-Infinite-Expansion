@@ -6,7 +6,6 @@ import appeng.api.networking.energy.IEnergyService;
 import appeng.api.stacks.KeyCounter;
 import appeng.crafting.execution.CraftingCpuHelper;
 import appeng.crafting.execution.CraftingCpuLogic;
-import appeng.crafting.execution.ExecutingCraftingJob;
 import appeng.crafting.inv.ICraftingInventory;
 import appeng.hooks.ticking.TickHandler;
 import appeng.me.cluster.implementations.CraftingCPUCluster;
@@ -47,7 +46,7 @@ import java.util.Map;
  * <p>
  * 仅对包含 {@link IntegratedCPUBE} 的 CPU 簇生效，不影响原版 AE2 CPU。
  */
-@Mixin(value = CraftingCpuLogic.class, remap = false)
+@Mixin(value = CraftingCpuLogic.class, remap = false, priority = 1200)
 public abstract class CraftingCpuLogicMixin {
 
     // ── 时间片预算 ──
@@ -97,9 +96,10 @@ public abstract class CraftingCpuLogicMixin {
     @Unique
     private static volatile boolean ae2addon$jobFieldFailed;
 
-    /** 获取当前执行中的任务（反射按类型匹配，不依赖字段名）。 */
+    /** 获取当前执行中的任务（反射按类型匹配，不依赖字段名；返回 Object 避免
+     *  引用 ExecutingCraftingJob 类——GT 版 AE2 无此类，mixin 转换会 ClassMetadataNotFound）。 */
     @Unique
-    private ExecutingCraftingJob ae2addon$getJob() {
+    private Object ae2addon$getJob() {
         if (ae2addon$jobFieldFailed) {
             return null;
         }
@@ -114,21 +114,20 @@ public abstract class CraftingCpuLogicMixin {
                 field.setAccessible(true);
                 ae2addon$jobField = field;
             }
-            Object value = field.get(this);
-            return value instanceof ExecutingCraftingJob job ? job : null;
+            return field.get(this);
         } catch (RuntimeException | ReflectiveOperationException e) {
             ae2addon$jobFieldFailed = true;
             return null;
         }
     }
 
-    /** 在目标类中查找 ExecutingCraftingJob 类型字段（名字候选 + 类型匹配）。 */
+    /** 在目标类中查找任务字段（名字候选 + 类型名匹配，不引用具体类）。 */
     @Unique
     private static java.lang.reflect.Field ae2addon$findJobField(Class<?> targetClass) {
         for (String name : new String[]{"job", "craftingJob", "currentJob", "m_job"}) {
             try {
                 java.lang.reflect.Field field = targetClass.getDeclaredField(name);
-                if (field.getType() == ExecutingCraftingJob.class) {
+                if (ae2addon$isJobType(field.getType())) {
                     return field;
                 }
             } catch (NoSuchFieldException ignored) {
@@ -137,11 +136,22 @@ public abstract class CraftingCpuLogicMixin {
         }
         // 类型匹配兜底：不依赖字段名
         for (java.lang.reflect.Field field : targetClass.getDeclaredFields()) {
-            if (field.getType() == ExecutingCraftingJob.class) {
+            if (ae2addon$isJobType(field.getType())) {
                 return field;
             }
         }
         return null;
+    }
+
+    /** 任务类型判断：按类名匹配（不加载类，兼容 GT 版 AE2 无此类/改名）。 */
+    @Unique
+    private static boolean ae2addon$isJobType(Class<?> type) {
+        if (type == null) {
+            return false;
+        }
+        String name = type.getName();
+        return name.equals("appeng.crafting.execution.ExecutingCraftingJob")
+                || name.endsWith("ExecutingCraftingJob");
     }
 
     // 时间片状态
@@ -254,7 +264,7 @@ public abstract class CraftingCpuLogicMixin {
         }
         ae2addon$budgetActive = integrated;
         if (ae2addon$budgetActive) {
-            ExecutingCraftingJob currentJob = ae2addon$getJob();
+            Object currentJob = ae2addon$getJob();
             if (ae2addon$diagLastJob != currentJob) {
                 // 新任务：重置批量自适应状态，避免旧任务的 N/锁定泄漏
                 ae2addon$diagLastJob = currentJob;
@@ -724,7 +734,7 @@ public abstract class CraftingCpuLogicMixin {
 
     @Unique
     @SuppressWarnings("unchecked")
-    private static Map<IPatternDetails, Object> ae2addon$getTasks(ExecutingCraftingJob currentJob) {
+    private static Map<IPatternDetails, Object> ae2addon$getTasks(Object currentJob) {
         try {
             var field = ae2addon$tasksField;
             if (field == null) {
