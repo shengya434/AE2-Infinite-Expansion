@@ -388,17 +388,16 @@ public abstract class CraftingCpuLogicMixin {
         return iterator.hasNext();
     }
 
-    /** 上次 getProviders 结果里是否有真实机器接收方（保留供诊断；N 不再封顶，机器/DebugTrash 都吃无限 N×） */
-    @Unique
-    private boolean ae2addon$providersHaveMachine;
-
     /**
-     * getProviders 结果追加 Debug 销毁方块：DebugTrashBE 不注册任何 pattern，
+     * getProviders 结果追加 Debug 销毁方块（只兑底）：DebugTrashBE 不注册任何 pattern，
      * 通过这里成为任意 pattern 的接收者（同一网络内），用于测试无限吞吐。
      * <p>
-     * 2026-08-21 修复：无条件追加 + N 无限（sensei 要求机器也无限 N×，
-     * 不封顶）。机器/DebugTrash 共存时按 providers 顺序分配：机器在前能收就收，
-     * 机器拒收（N 超出其能力）则 DebugTrash 兑底。
+     * 2026-08-21 最终版：只兑底追加——该 pattern 已有真实接收方（机器/样板供应器）
+     * 时不追加，机器订单走纯原版路径（N× 无限，机器能收多少收多少，20:12 实测
+     * 机器收 N=130 万、失败 0 次、数量精确）；只有该 pattern 无任何真实接收方时
+     * 才追加 DebugTrash（DebugTrash 测试请用机器不认的 pattern 或独立网络）。
+     * 无条件追加会导致机器拒 N×（ScaledPattern 临时注册失败）时材料被 DebugTrash
+     * 销毁 → 发配数量不准（22:39 实测）。
      */
     @Redirect(method = "executeCrafting",
             at = @At(value = "INVOKE",
@@ -409,14 +408,16 @@ public abstract class CraftingCpuLogicMixin {
     private Iterable<ICraftingProvider> ae2addon$appendDebugTrashProviders(
             CraftingService craftingService, IPatternDetails patternDetails) {
         var providers = craftingService.getProviders(patternDetails);
-        boolean hasMachine = false;
+        boolean hasRealProvider = false;
         for (var p : providers) {
             if (p != null && !(p instanceof DebugTrashBE)) {
-                hasMachine = true;
+                hasRealProvider = true;
                 break;
             }
         }
-        ae2addon$providersHaveMachine = hasMachine;
+        if (hasRealProvider) {
+            return providers;
+        }
         var debugProviders = DebugTrashRegistry.collectFor(craftingService);
         if (debugProviders.isEmpty()) {
             return providers;
@@ -492,15 +493,6 @@ public abstract class CraftingCpuLogicMixin {
         }
         if (!ae2addon$budgetActive || patternDetails == null || inventory == null) {
             // 非我们 CPU（原版）：直接调用原始静态方法（原版行为）
-            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
-                    level, expectedOutputs, expectedContainerItems);
-        }
-        // 2026-08-21 修复（最终版）：该 pattern 有真实机器接收方时强制 1× 提取。
-        // 机器（PatternProvider）不接受 ScaledPattern N×（实测 push 总调用 0 次，
-        // N× 输入滞留 → 发配数量不准）；只有 DebugTrash 无脑接受 N×。
-        // 机器走原版 1×（数量精确），DebugTrash 走 N×（无限吞吐测试）。
-        // 注：1× 推送也是批量探测，机器场景不会因此变慢——N 只是不用在机器上。
-        if (ae2addon$providersHaveMachine) {
             return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
                     level, expectedOutputs, expectedContainerItems);
         }
