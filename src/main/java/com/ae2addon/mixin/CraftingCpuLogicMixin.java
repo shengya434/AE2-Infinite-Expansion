@@ -11,6 +11,7 @@ import appeng.hooks.ticking.TickHandler;
 import appeng.me.cluster.implementations.CraftingCPUCluster;
 import appeng.me.service.CraftingService;
 import com.ae2addon.AE2Addon;
+import com.ae2addon.block.DebugTrashBE;
 import com.ae2addon.block.DebugTrashRegistry;
 import com.ae2addon.block.IntegratedCPUBE;
 import com.ae2addon.crafting.ScaledPattern;
@@ -383,6 +384,19 @@ public abstract class CraftingCpuLogicMixin {
         if (debugProviders.isEmpty()) {
             return providers;
         }
+        // 2026-08-21 修复：DebugTrash 只做兜底——该 pattern 已有真实接收方
+        // （机器/样板供应器等）时不再追加，避免劫持正常机器订单的 N× 材料
+        // （sensei 实测：向机器下单 128 只收到 64，其余被 DebugTrash 销毁）。
+        boolean hasRealProvider = false;
+        for (var p : providers) {
+            if (p != null && !(p instanceof DebugTrashBE)) {
+                hasRealProvider = true;
+                break;
+            }
+        }
+        if (hasRealProvider) {
+            return providers;
+        }
         var combined = new ArrayList<ICraftingProvider>();
         providers.forEach(combined::add);
         combined.addAll(debugProviders);
@@ -454,14 +468,6 @@ public abstract class CraftingCpuLogicMixin {
         }
         if (!ae2addon$budgetActive || patternDetails == null || inventory == null) {
             // 非我们 CPU（原版）：直接调用原始静态方法（原版行为）
-            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
-                    level, expectedOutputs, expectedContainerItems);
-        }
-        // 2026-08-21 修复：只有存在无限消费型接收方（DebugTrash）时才做 N× 批量提取。
-        // 否则普通 PatternProvider/机器会拒绝 ScaledPattern 的 N× 输入，
-        // 材料滞留 → 发送原料数量 < 计算原料数量（sensei 实测 19:30 日志）。
-        // DebugTrash 存在时 N× 照常（测试场景，sensei 确认 N× 本身没问题）。
-        if (!com.ae2addon.block.DebugTrashRegistry.hasActiveIn(level)) {
             return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
                     level, expectedOutputs, expectedContainerItems);
         }

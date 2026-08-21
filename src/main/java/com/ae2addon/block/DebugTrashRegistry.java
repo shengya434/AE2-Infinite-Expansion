@@ -49,31 +49,4 @@ public final class DebugTrashRegistry {
         }
         return result;
     }
-
-    /**
-     * 指定世界里是否存在活跃的 Debug 方块（批量推送 N× 提取的启用条件：
-     * 只有无限消费型接收方存在时才做 N×，否则普通 PatternProvider/机器
-     * 会拒绝 ScaledPattern 的 N× 输入 → 材料滞留，发送量 < 计算量）。
-     */
-    public static boolean hasActiveIn(net.minecraft.world.level.Level level) {
-        if (level == null) {
-            return false;
-        }
-        for (var blockEntity : ACTIVE) {
-            if (blockEntity.isRemoved()) {
-                continue;
-            }
-            if (blockEntity.getLevel() != level) {
-                continue;
-            }
-            try {
-                if (blockEntity.getMainNode().isActive()) {
-                    return true;
-                }
-            } catch (RuntimeException ignored) {
-                // 网格未就绪，继续
-            }
-        }
-        return false;
-    }
 }
