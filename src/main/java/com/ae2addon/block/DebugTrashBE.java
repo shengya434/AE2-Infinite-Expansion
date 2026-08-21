@@ -72,8 +72,9 @@ public class DebugTrashBE extends AENetworkBlockEntity implements ICraftingProvi
                 }
             }
         }
-        destroyedTotal += count;
-        destroyedSinceLog += count;
+        // 2026-08-21 修复：无限 N× 下销毁量可超 Long.MAX_VALUE → 饱和加法防溢出为负
+        destroyedTotal = saturatingAdd(destroyedTotal, count);
+        destroyedSinceLog = saturatingAdd(destroyedSinceLog, count);
 
         if (level != null && !level.isClientSide()) {
             long tick = level.getGameTime();
@@ -91,6 +92,16 @@ public class DebugTrashBE extends AENetworkBlockEntity implements ICraftingProvi
             }
         }
         return true;
+    }
+
+    /** 饱和加法：a+b 溢出时钳到 Long.MAX_VALUE（统计显示不翻负） */
+    private static long saturatingAdd(long a, long b) {
+        long sum = a + b;
+        // 同号相加变号 = 溢出
+        if (((a ^ sum) & (b ^ sum)) < 0) {
+            return a > 0 ? Long.MAX_VALUE : Long.MIN_VALUE;
+        }
+        return sum;
     }
 
     @Override
