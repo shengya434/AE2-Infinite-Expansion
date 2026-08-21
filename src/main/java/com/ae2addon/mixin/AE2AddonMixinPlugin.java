@@ -46,6 +46,13 @@ public final class AE2AddonMixinPlugin implements IMixinConfigPlugin {
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         if (!GT_AE2) {
+            // 原版/兼容 AE2：CraftingCpuLogicMixin 将被应用（priority 1200 先于
+            // gtlcore 等，注入基于原始方法，限流/批量推送全部生效）→ 立即置位，
+            // 与运行状态无关（修复 CPU 空闲时线程数被压成 16 的时序 bug，
+            // 2026-08-21 sensei 截图：合成CPU 两个处理器各显示 16）。
+            if (mixinClassName.endsWith("CraftingCpuLogicMixin")) {
+                com.ae2addon.crafting.CraftingCompat.timeSliceActive = true;
+            }
             return true;
         }
         // GT fork：保留 accessor（启动不崩），禁用所有深度注入 mixin

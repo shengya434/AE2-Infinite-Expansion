@@ -27,7 +27,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -195,12 +195,16 @@ public abstract class CraftingCpuLogicMixin {
     private String ae2addon$diagBatchFailProvider = "-";
 
     // 批量状态（每个 pattern 的自适应 N）
+    // ⚠ 2026-08-21 兼容性修复：原用 IdentityHashMap（对象身份比较），
+    // gtlcore 等 mod 环境下 AE2 每次调用可能传入不同实例（equals 相等）→
+    // 查表永远 miss → 批量 N 永远 1（sensei 日志：批量成功0次/平均批量N=1）。
+    // 改 HashMap 按 equals 匹配（pattern 是值对象，equals 可靠）。
     @Unique
     private final Map<IPatternDetails, Long> ae2addon$batchNext =
-            new IdentityHashMap<>();
+            new HashMap<>();
     @Unique
     private final Map<IPatternDetails, Boolean> ae2addon$batchLocked =
-            new IdentityHashMap<>();
+            new HashMap<>();
 
     // 当前批量上下文（一次提取 → 一次 push 之间传递）
     @Unique
@@ -410,7 +414,8 @@ public abstract class CraftingCpuLogicMixin {
         // 且 pending 收敛会把 batchNext 锁死为 1（历史教训：批量翻倍被吃）。
         long currentTick = TickHandler.instance().getCurrentTick();
         boolean sameTickSamePattern = ae2addon$lastExtractTick == currentTick
-                && ae2addon$lastExtractPattern == patternDetails;
+                && ae2addon$lastExtractPattern != null
+                && ae2addon$lastExtractPattern.equals(patternDetails);
         if (sameTickSamePattern && ae2addon$batchCachedInputs != null) {
             // 修复：补回 expected 快照，否则原版 push 成功后的 waitingFor 记账为空
             if (ae2addon$batchCachedOutputs != null) {
@@ -528,7 +533,8 @@ public abstract class CraftingCpuLogicMixin {
             IPatternDetails patternDetails, KeyCounter[] inputs) {
         ae2addon$diagPushCalls++;
         if (!ae2addon$batchActive
-                || ae2addon$batchBasePattern != patternDetails
+                || ae2addon$batchBasePattern == null
+                || !ae2addon$batchBasePattern.equals(patternDetails)
                 || ae2addon$batchScaledPattern == null
                 || ae2addon$batchMultiplier <= 1) {
             boolean accepted = provider.pushPattern(patternDetails, inputs);
