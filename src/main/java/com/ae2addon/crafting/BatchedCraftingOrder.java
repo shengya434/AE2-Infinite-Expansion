@@ -187,41 +187,27 @@ public final class BatchedCraftingOrder {
     }
 
     /**
-     * 从 DeferredCraftingPlan（模拟阶段拦截产生的伪计划）创建分批订单。
+     * 从上下文创建分批订单（2026-08-21 替代 createFromDeferred：
+     * 模拟拦截不再返回 DeferredCraftingPlan（GTL 界面 mixin 强转 CraftingPlan 崩溃），
+     * 改为返回真 CraftingPlan + IdentityHashMap 上下文，提交时用上下文拆批）。
      */
-    public static BatchedCraftingOrder createFromDeferred(DeferredCraftingPlan plan,
-                                                          ICraftingRequester requester,
-                                                          IActionSource source) {
-        if (plan == null) {
-            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon] createFromDeferred: plan=null");
-            return null;
-        }
-        IGridNode node = null;
-        try {
-            node = requester == null ? null : requester.getActionableNode();
-        } catch (RuntimeException e) {
-            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon] createFromDeferred: requester节点异常", e);
-        }
-        IGrid grid = plan.getGrid();
-        ServerLevel level = plan.getLevel();
-        if (grid == null && node != null) {
-            grid = node.getGrid();
-        }
-        if (level == null && node != null) {
-            level = node.getLevel();
-        }
-        if (grid == null || level == null) {
+    public static BatchedCraftingOrder createFromContext(ICraftingPlan plan,
+                                                         IGrid grid,
+                                                         ServerLevel level,
+                                                         IGridNode simNode,
+                                                         long total,
+                                                         long perBatch,
+                                                         ICraftingRequester requester,
+                                                         IActionSource source) {
+        if (plan == null || grid == null || level == null) {
             com.ae2addon.AE2Addon.LOGGER.warn(
-                    "[ae2addon] createFromDeferred: grid={} level={} node={} 无法获取网格/世界",
-                    grid, level, node);
+                    "[ae2addon] createFromContext: plan={} grid={} level={} 无法创建",
+                    plan, grid, level);
             return null;
         }
-
-        long total = plan.totalAmount();
-        long perBatch = plan.perBatch();
         if (total <= 0 || perBatch <= 0 || perBatch >= total) {
             com.ae2addon.AE2Addon.LOGGER.warn(
-                    "[ae2addon] createFromDeferred: 无法拆批 total={} perBatch={}",
+                    "[ae2addon] createFromContext: 无法拆批 total={} perBatch={}",
                     total, perBatch);
             return null;
         }
@@ -229,12 +215,12 @@ public final class BatchedCraftingOrder {
         List<Long> batches = splitBatches(total, perBatch);
         if (batches.size() <= 1 || batches.size() > MAX_BATCH_COUNT) {
             com.ae2addon.AE2Addon.LOGGER.warn(
-                    "[ae2addon] createFromDeferred: 批次数量异常 total={} perBatch={} 批数={}",
+                    "[ae2addon] createFromContext: 批次数量异常 total={} perBatch={} 批数={}",
                     total, perBatch, batches.size());
             return null;
         }
 
-        var order = new BatchedCraftingOrder(level, grid, plan.getSimNode(),
+        var order = new BatchedCraftingOrder(level, grid, simNode,
                 plan.finalOutput().what(), total, requester, source, batches);
         order.anchorPos = findAnchorPos(grid);
         return order;

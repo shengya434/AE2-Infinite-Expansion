@@ -18,7 +18,6 @@ import com.ae2addon.api.IntegratedCraftingServiceBridge;
 import com.ae2addon.block.IntegratedCPURegistry;
 import com.ae2addon.crafting.BatchedCraftingOrder;
 import com.ae2addon.crafting.BatchedCraftingQueue;
-import com.ae2addon.crafting.DeferredCraftingPlan;
 import com.ae2addon.crafting.RequirementCalculator;
 import com.ae2addon.util.ChatLog;
 import net.minecraft.server.level.ServerLevel;
@@ -53,6 +52,17 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
     @Final
     private IGrid grid;
 
+    /**
+     * 超限订单上下文缓存（2026-08-21）：模拟拦截返回真 CraftingPlan 后，
+     * 用 IdentityHashMap 按实例缓存 grid/level/simNode/perBatch，
+     * submitJob 时取出识别为巨型订单（原 DeferredCraftingPlan 类型识别
+     * 已被 GTL 界面 mixin 强转 CraftingPlan 崩溃，废弃）。
+     * key 是模拟拦截创建的真 CraftingPlan 实例（提交时同实例传入）。
+     */
+    @Unique
+    private static final java.util.IdentityHashMap<ICraftingPlan, Object[]>
+            ae2addon$deferredContexts = new java.util.IdentityHashMap<>();
+
     @Inject(method = "updateCPUClusters", at = @At("RETURN"), require = 0)
     private void ae2addon$registerVirtualCpus(CallbackInfo callback) {
         ae2addon$refreshIntegratedCpus();
@@ -85,18 +95,25 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             return;
         }
 
-        if (job instanceof DeferredCraftingPlan deferred) {
+        // 巨型订单识别：从上下文缓存取（模拟拦截创建的真 CraftingPlan 实例）
+        Object[] ctx = ae2addon$deferredContexts.remove(job);
+        if (ctx != null) {
             com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][debug] submitJob收到延迟计划 total={} perBatch={} planId={}",
-                    deferred.totalAmount(), deferred.perBatch(), deferred.getPlanId());
+                    "[ae2addon][debug] submitJob收到超限计划(上下文) what={} total={} perBatch={}",
+                    job.finalOutput() == null ? null : job.finalOutput().what(),
+                    ctx[3], ctx[4]);
             // 去重：机器 requester 会反复提交同一计划，已受理的直接返回 CPU 忙
-            if (BatchedCraftingQueue.isPlanAccepted(deferred.getPlanId())) {
+            if (BatchedCraftingQueue.isPlanAccepted((java.util.UUID) ctx[5])) {
                 callback.setReturnValue(CraftingSubmitResult.simpleError(
                         CraftingSubmitErrorCode.CPU_BUSY));
                 return;
             }
-            var deferredOrder = BatchedCraftingOrder.createFromDeferred(
-                    deferred, requestingMachine, source);
+            var deferredOrder = BatchedCraftingOrder.createFromContext(
+                    job, (appeng.api.networking.IGrid) ctx[0],
+                    (net.minecraft.server.level.ServerLevel) ctx[1],
+                    (appeng.api.networking.IGridNode) ctx[2],
+                    (Long) ctx[3], (Long) ctx[4],
+                    requestingMachine, source);
             if (deferredOrder == null) {
                 ChatLog.err(ae2addon$levelOf(requestingMachine), null,
                         "订单需求超限且无法拆分，已拒绝");
@@ -106,10 +123,10 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             }
             try {
                 ae2addon$acceptBatchedOrder(deferredOrder, requestingMachine, callback);
-                BatchedCraftingQueue.markPlanAccepted(deferred.getPlanId());
+                BatchedCraftingQueue.markPlanAccepted((java.util.UUID) ctx[5]);
             } catch (RuntimeException e) {
                 com.ae2addon.AE2Addon.LOGGER.error(
-                        "[ae2addon] 延迟计划受理异常 total={}", deferred.totalAmount(), e);
+                        "[ae2addon] 超限计划受理异常", e);
                 ChatLog.err(ae2addon$levelOf(requestingMachine), null,
                         "巨型订单受理异常，请查看日志");
                 callback.setReturnValue(CraftingSubmitResult.simpleError(
@@ -139,8 +156,13 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
 
     /**
      * 模拟阶段拦截：需求超限时不让 AE2 原版模拟器去算（会卡死在反复重试），
-     * 直接用 BigInteger 估算需求、计算安全批次，返回 DeferredCraftingPlan。
-     * 真正提交时由 submitJob 分支拆批执行。
+     * 直接用 BigInteger 估算需求、计算安全批次，返回真 CraftingPlan
+     * （饱和估算值填充；submitJob 分支靠 isOversized 识别后拆批）。
+     * <p>
+     * 2026-08-21 修复：原来返回自定义 DeferredCraftingPlan（ICraftingPlan 伪实现），
+     * GTL 整合包的界面 mixin（gtlcore/EAE 等）会把 ICraftingPlan 强转成
+     * appeng.crafting.CraftingPlan（final Record 不可继承）→ ClassCastException。
+     * 改为直接构造真 CraftingPlan，任何 cast 都能通过。
      */
     @Inject(method = "beginCraftingCalculation", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private void ae2addon$deferOversizedSimulation(Level level,
@@ -167,13 +189,23 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                 "[ae2addon][debug] 模拟拦截超限: perBatch={} safeLimit={}",
                 perBatch, BatchedCraftingOrder.SAFE_LIMIT);
 
-        // 超限：估算需求（饱和到 long 供确认界面显示）并返回延迟计划
+        // 超限：估算需求（饱和到 long 供确认界面显示）并返回真 CraftingPlan
         var used = new KeyCounter();
         var needs = RequirementCalculator.estimate(grid, what, amount);
         for (var entry : needs.entrySet()) {
             used.add(entry.getKey(), entry.getValue()
                     .min(BigInteger.valueOf(Long.MAX_VALUE)).longValue());
         }
+        var realPlan = new appeng.crafting.CraftingPlan(
+                new appeng.api.stacks.GenericStack(what, amount),
+                Long.MAX_VALUE,   // bytes
+                false,            // simulation
+                false,            // multiplePaths
+                used,             // usedItems（饱和估算）
+                new KeyCounter(), // emittedItems
+                new KeyCounter(), // missingItems
+                java.util.Map.of()); // patternTimes
+        // 缓存上下文供 submitJob 识别（按实例 IdentityHashMap）
         ServerLevel serverLevel = level instanceof ServerLevel sl ? sl : null;
         appeng.api.networking.IGridNode simNode = null;
         try {
@@ -182,10 +214,12 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             com.ae2addon.AE2Addon.LOGGER.warn(
                     "[ae2addon] 模拟拦截: simRequester节点获取失败", e);
         }
-        callback.setReturnValue(CompletableFuture.completedFuture(
-                new DeferredCraftingPlan(grid, serverLevel, simNode, what, amount, perBatch, used)));
+        ae2addon$deferredContexts.put(realPlan, new Object[]{
+                grid, serverLevel, simNode, amount, perBatch,
+                java.util.UUID.randomUUID()});
+        callback.setReturnValue(CompletableFuture.completedFuture(realPlan));
         com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon] 模拟拦截：需求超限，改为延迟计划 what={} amount={} perBatch={}",
+                "[ae2addon] 模拟拦截：需求超限，改为真 CraftingPlan what={} amount={} perBatch={}",
                 what, amount, perBatch);
     }
 
