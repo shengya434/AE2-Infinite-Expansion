@@ -1,7 +1,6 @@
 package com.ae2addon.init;
 
 import com.ae2addon.AE2Addon;
-import com.ae2addon.block.DebugTrashBlock;
 import com.ae2addon.block.InfiniteCraftingStorageBlock;
 import com.ae2addon.block.InfiniteCoProcessingBlock;
 import com.ae2addon.block.IntegratedCPUBlock;
@@ -38,11 +37,5 @@ public class ModBlocks {
     public static final RegistryObject<Block> INTEGRATED_CPU = BLOCKS.register(
             "integrated_cpu",
             IntegratedCPUBlock::new
-    );
-
-    /** Debug 销毁方块（测试用）— 无限输入 + 瞬间销毁 */
-    public static final RegistryObject<Block> DEBUG_TRASH = BLOCKS.register(
-            "debug_trash",
-            DebugTrashBlock::new
     );
 }

@@ -60,10 +60,6 @@ public class ModItems {
             "integrated_cpu",
             () -> new BlockItem(ModBlocks.INTEGRATED_CPU.get(), new Item.Properties())
     );
-    public static final RegistryObject<Item> DEBUG_TRASH_ITEM = ITEMS.register(
-            "debug_trash",
-            () -> new BlockItem(ModBlocks.DEBUG_TRASH.get(), new Item.Properties())
-    );
 
     // ── 创造模式标签页 ──
 
@@ -84,9 +80,6 @@ public class ModItems {
 
                         // 物质球
                         output.accept(MATTER_BALL.get());
-
-                        // Debug 销毁方块（测试用）
-                        output.accept(ModBlocks.DEBUG_TRASH.get());
                     })
                     .build()
     );

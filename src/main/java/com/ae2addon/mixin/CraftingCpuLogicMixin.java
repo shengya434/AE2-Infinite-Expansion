@@ -11,8 +11,6 @@ import appeng.hooks.ticking.TickHandler;
 import appeng.me.cluster.implementations.CraftingCPUCluster;
 import appeng.me.service.CraftingService;
 import com.ae2addon.AE2Addon;
-import com.ae2addon.block.DebugTrashBE;
-import com.ae2addon.block.DebugTrashRegistry;
 import com.ae2addon.block.IntegratedCPUBE;
 import com.ae2addon.crafting.ScaledPattern;
 import net.minecraft.server.level.ServerLevel;
@@ -388,45 +386,6 @@ public abstract class CraftingCpuLogicMixin {
         return iterator.hasNext();
     }
 
-    /**
-     * getProviders 结果追加 Debug 销毁方块（只兑底）：DebugTrashBE 不注册任何 pattern，
-     * 通过这里成为任意 pattern 的接收者（同一网络内），用于测试无限吞吐。
-     * <p>
-     * 2026-08-21 最终版：只兑底追加——该 pattern 已有真实接收方（机器/样板供应器）
-     * 时不追加，机器订单走纯原版路径（N× 无限，机器能收多少收多少，20:12 实测
-     * 机器收 N=130 万、失败 0 次、数量精确）；只有该 pattern 无任何真实接收方时
-     * 才追加 DebugTrash（DebugTrash 测试请用机器不认的 pattern 或独立网络）。
-     * 无条件追加会导致机器拒 N×（ScaledPattern 临时注册失败）时材料被 DebugTrash
-     * 销毁 → 发配数量不准（22:39 实测）。
-     */
-    @Redirect(method = "executeCrafting",
-            at = @At(value = "INVOKE",
-                    target = "Lappeng/me/service/CraftingService;getProviders("
-                            + "Lappeng/api/crafting/IPatternDetails;)"
-                            + "Ljava/lang/Iterable;"),
-            require = 0)
-    private Iterable<ICraftingProvider> ae2addon$appendDebugTrashProviders(
-            CraftingService craftingService, IPatternDetails patternDetails) {
-        var providers = craftingService.getProviders(patternDetails);
-        boolean hasRealProvider = false;
-        for (var p : providers) {
-            if (p != null && !(p instanceof DebugTrashBE)) {
-                hasRealProvider = true;
-                break;
-            }
-        }
-        if (hasRealProvider) {
-            return providers;
-        }
-        var debugProviders = DebugTrashRegistry.collectFor(craftingService);
-        if (debugProviders.isEmpty()) {
-            return providers;
-        }
-        var combined = new ArrayList<ICraftingProvider>();
-        providers.forEach(combined::add);
-        combined.addAll(debugProviders);
-        return combined;
-    }
 
     // ── 批量推送：提取阶段 ──
 

@@ -1,7 +1,6 @@
 package com.ae2addon.init;
 
 import com.ae2addon.AE2Addon;
-import com.ae2addon.block.DebugTrashBE;
 import com.ae2addon.block.InfiniteCraftingStorageBE;
 import com.ae2addon.block.InfiniteCoProcessingBE;
 import com.ae2addon.block.IntegratedCPUBE;
@@ -41,12 +40,5 @@ public class ModBlockEntities {
                     () -> BlockEntityType.Builder.of(
                             IntegratedCPUBE::new,
                             ModBlocks.INTEGRATED_CPU.get()
-                    ).build(null));
-
-    public static final RegistryObject<BlockEntityType<DebugTrashBE>> DEBUG_TRASH =
-            BLOCK_ENTITIES.register("debug_trash",
-                    () -> BlockEntityType.Builder.of(
-                            DebugTrashBE::new,
-                            ModBlocks.DEBUG_TRASH.get()
                     ).build(null));
 }

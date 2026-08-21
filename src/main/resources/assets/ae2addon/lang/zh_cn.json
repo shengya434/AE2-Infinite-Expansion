@@ -7,7 +7,6 @@
   "block.ae2addon.integrated_cpu": "集成型CPU（无限级）",
   "gui.ae2addon.mode_select": "选择存储模式",
   "gui.ae2addon.mode2_config": "自定义无限配置",
-  "block.ae2addon.debug_trash": "Debug销毁方块（测试用）",
 
   "gui.ae2addon.cell.name": "§5万能无限 [%s]",
   "gui.ae2addon.mode.unlimited": "§a无限制",
