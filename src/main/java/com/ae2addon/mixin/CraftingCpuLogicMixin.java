@@ -53,10 +53,13 @@ public abstract class CraftingCpuLogicMixin {
     // ── 时间片预算 ──
 
     /**
-     * 预算 = clamp(45ms − 服务器MSPT, 1ms, 32ms)。
+     * 预算 = clamp(45ms − 服务器MSPT, 1ms, 48ms)。
+     * 2026-08-21 优化：上限从 32ms 提到 48ms——MSPT 低时空闲预算更多，
+     * 1× 逐条推送（GTL 等批量失效场景）每 tick 能多跑 ~50% 迭代。
+     * 自适应保护仍在：服务器卡顿时 headroom 归零，预算自动回落到 1ms。
      */
     @Unique
-    private static final long AE2ADDON_DISPATCH_MAX_BUDGET_NANOS = 32_000_000L;
+    private static final long AE2ADDON_DISPATCH_MAX_BUDGET_NANOS = 48_000_000L;
     @Unique
     private static final long AE2ADDON_DISPATCH_TARGET_TICK_NANOS = 45_000_000L;
     @Unique
@@ -332,6 +335,24 @@ public abstract class CraftingCpuLogicMixin {
         return AE2ADDON_DISPATCH_FALLBACK_NANOS;
     }
 
+    /** 时间片预算检查节流：每 N 次迭代才查一次时钟（nanoTime 调用有 ~25-40ns 开销） */
+    @Unique
+    private static final int AE2ADDON_BUDGET_CHECK_INTERVAL = 32;
+
+    /** 当前节流计数（每次迭代 ++，到 32 才查 deadline） */
+    @Unique
+    private int ae2addon$budgetCheckCounter;
+
+    /** 超时检查：节流版（每 32 次迭代查一次时钟，省掉绝大多数 nanoTime 开销） */
+    @Unique
+    private boolean ae2addon$budgetExceeded() {
+        if (++ae2addon$budgetCheckCounter < AE2ADDON_BUDGET_CHECK_INTERVAL) {
+            return false;
+        }
+        ae2addon$budgetCheckCounter = 0;
+        return System.nanoTime() >= ae2addon$deadlineNanos;
+    }
+
     /**
      * 任务循环（job.tasks.entrySet() 的迭代）：超时即终止整个任务的遍历。
      */
@@ -342,7 +363,7 @@ public abstract class CraftingCpuLogicMixin {
         com.ae2addon.crafting.CraftingCompat.timeSliceActive = true;
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
-            if (System.nanoTime() >= ae2addon$deadlineNanos) {
+            if (ae2addon$budgetExceeded()) {
                 return false;
             }
         }
@@ -360,7 +381,7 @@ public abstract class CraftingCpuLogicMixin {
         com.ae2addon.crafting.CraftingCompat.timeSliceActive = true;
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
-            if (System.nanoTime() >= ae2addon$deadlineNanos) {
+            if (ae2addon$budgetExceeded()) {
                 return false;
             }
         }
