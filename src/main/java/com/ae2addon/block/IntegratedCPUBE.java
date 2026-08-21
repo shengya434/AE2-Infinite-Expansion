@@ -119,7 +119,7 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
         if (!formed || !hasCoProcessing) {
             return 0;
         }
-        if (!com.ae2addon.mixin.CraftingCpuLogicMixin.ae2addon$isTimeSliceActive()) {
+        if (!com.ae2addon.crafting.CraftingCompat.timeSliceActive) {
             return 16;
         }
         return Integer.MAX_VALUE - 1;

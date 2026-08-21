@@ -86,17 +86,11 @@ public abstract class CraftingCpuLogicMixin {
     private CraftingCPUCluster cluster;
 
     /**
-     * 时间片限流是否已注入生效（由 {@link #ae2addon$limitTaskIteration} 置位）。
-     * 供 {@link com.ae2addon.block.IntegratedCPUBE} 查询：若未生效（mixin 注入被其他
-     * mod 干扰/版本不兼容），线程数回退保守值，避免无保护的高线程单 tick 爆炸。
+     * 时间片限流是否已注入生效：由限流重定向方法置位
+     * {@link com.ae2addon.crafting.CraftingCompat#timeSliceActive}（独立工具类，
+     * mixin 不能暴露 public static 方法供外部调用——Mixin 规范，2026-08-21 教训：
+     * 在 mixin 里写 public static 方法导致两个整合包全部 MixinApplyError）。
      */
-    @Unique
-    private static volatile boolean ae2addon$timeSliceActive;
-
-    public static boolean ae2addon$isTimeSliceActive() {
-        return ae2addon$timeSliceActive;
-    }
-
     // job 字段反射（兼容不同 AE2 版本的字段名；@Shadow 字段名在部分版本不存在会直接崩）
     @Unique
     private static volatile java.lang.reflect.Field ae2addon$jobField;
@@ -330,7 +324,7 @@ public abstract class CraftingCpuLogicMixin {
             at = @At(value = "INVOKE", target = "Ljava/util/Iterator;hasNext()Z", ordinal = 0),
             require = 0)
     private boolean ae2addon$limitTaskIteration(Iterator<?> iterator) {
-        ae2addon$timeSliceActive = true;
+        com.ae2addon.crafting.CraftingCompat.timeSliceActive = true;
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
             if (System.nanoTime() >= ae2addon$deadlineNanos) {
@@ -348,7 +342,7 @@ public abstract class CraftingCpuLogicMixin {
             at = @At(value = "INVOKE", target = "Ljava/util/Iterator;hasNext()Z", ordinal = 1),
             require = 0)
     private boolean ae2addon$limitProviderIteration(Iterator<?> iterator) {
-        ae2addon$timeSliceActive = true;
+        com.ae2addon.crafting.CraftingCompat.timeSliceActive = true;
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
             if (System.nanoTime() >= ae2addon$deadlineNanos) {
