@@ -1,5 +1,6 @@
 package com.ae2addon.command;
 
+import com.ae2addon.crafting.CraftingCompat;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.ChatFormatting;
@@ -35,7 +36,39 @@ public class AE2InfoCommand {
         CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
         dispatcher.register(Commands.literal("ae2info")
                 .executes(AE2InfoCommand::execute)
+                .then(Commands.literal("debug")
+                        .then(Commands.literal("on")
+                                .executes(ctx -> setDebugLogs(ctx, true)))
+                        .then(Commands.literal("off")
+                                .executes(ctx -> setDebugLogs(ctx, false)))
+                        .executes(ctx -> reportDebugLogs(ctx)))
         );
+    }
+
+    /** 热路径调试日志开关（/ae2info debug on|off），排查发送量/记账问题时用。 */
+    private static int setDebugLogs(CommandContext<CommandSourceStack> ctx, boolean enabled) {
+        CraftingCompat.debugLogs = enabled;
+        CommandSourceStack source = ctx.getSource();
+        try {
+            ServerPlayer player = source.getPlayerOrException();
+            player.sendSystemMessage(Component.literal(
+                    (enabled ? "[ae2addon] 调试日志已开启（热路径 INFO 会刷屏，用完记得关）"
+                            : "[ae2addon] 调试日志已关闭")));
+        } catch (Exception ignored) {
+            // 控制台执行：无声即可
+        }
+        return 1;
+    }
+
+    private static int reportDebugLogs(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack source = ctx.getSource();
+        try {
+            ServerPlayer player = source.getPlayerOrException();
+            player.sendSystemMessage(Component.literal(
+                    "[ae2addon] 调试日志当前：" + (CraftingCompat.debugLogs ? "开" : "关")));
+        } catch (Exception ignored) {
+        }
+        return 1;
     }
 
     private static int execute(CommandContext<CommandSourceStack> ctx) {

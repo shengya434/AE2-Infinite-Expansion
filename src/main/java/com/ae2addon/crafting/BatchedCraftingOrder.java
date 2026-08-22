@@ -1,5 +1,6 @@
 package com.ae2addon.crafting;
 
+import appeng.api.crafting.IPatternDetails;
 import appeng.api.networking.IGrid;
 import appeng.api.networking.IGridNode;
 import appeng.api.networking.crafting.CalculationStrategy;
@@ -9,13 +10,20 @@ import appeng.api.networking.crafting.ICraftingRequester;
 import appeng.api.networking.crafting.ICraftingSubmitResult;
 import appeng.api.networking.security.IActionSource;
 import appeng.api.stacks.AEKey;
+import appeng.api.stacks.GenericStack;
+import appeng.api.stacks.KeyCounter;
+import appeng.crafting.CraftingPlan;
 import appeng.crafting.execution.CraftingSubmitResult;
 import com.ae2addon.util.ChatLog;
 import net.minecraft.server.level.ServerLevel;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Future;
 
 /**
@@ -42,6 +50,22 @@ public final class BatchedCraftingOrder {
 
     /** 并行度：同时执行的批次数（Integer.MAX_VALUE = 一次全发，由 CPU lane 自行调度） */
     public static final int MAX_CONCURRENT = Integer.MAX_VALUE;
+
+    /**
+     * 批次模拟复用缓存（2026-08-22）：key=批次量，value=该量第一次模拟的真计划。
+     * 同量批次后续直接用 {@link #copyPlan} 深拷贝提交，不再重复跑全量模拟
+     * （AE2 模拟含配方树遍历+库存检查，是巨型订单最大的单帧开销）。
+     * 计划是不可变记录（CraftingPlan），深拷贝只复制 KeyCounter/Map 引用结构，成本极低。
+     * 按订单实例持有：订单结束即随对象回收。
+     */
+    private final Map<Long, ICraftingPlan> simulatedPlans = new HashMap<>();
+
+    /**
+     * 正在跑真实模拟的批次量集合（2026-08-22）：全发模式下若每批都启动真实模拟，
+     * CRAFTING_POOL 串行处理几百个模拟成为瓶颈（434 批 → 前 24 秒 0 进度）。
+     * 同量批次只允许 1 个真实模拟，其余 {@link BatchProgress#waitingTemplate} 等模板。
+     */
+    private final java.util.Set<Long> simulatingAmounts = new HashSet<>();
 
     private final ServerLevel level;
     private IGrid grid;
@@ -70,18 +94,26 @@ public final class BatchedCraftingOrder {
     private int nextBatchIndex = 0;
     private int completedCount = 0;
     private Status status = Status.QUEUED;
+    /**
+     * CPU 持续忙计时起点（NO_SUITABLE_CPU_FOUND 连续重试的 tick 起点）。
+     * 按 tick 判死（6000 tick ≈ 5 分钟）而非按重试次数——多批同时卡住时
+     * 重试次数每 tick 暴涨（几十批 × 每 tick），按次数会在几秒内误取消
+     * （sensei 实测 16:44「取消的有点太快」）。任一批次提交成功即重置。
+     */
+    private long busySinceTick = Long.MIN_VALUE;
 
     /** 单个批次的运行状态 */
     private static final class BatchProgress {
         final long amount;
         Future<ICraftingPlan> pendingSimulation;
         ICraftingLink link;
+        /** 同量批次正在模拟 → 等待模板（不重复模拟，见 simulatingAmounts） */
+        boolean waitingTemplate;
 
         BatchProgress(long amount) {
             this.amount = amount;
         }
     }
-
     private BatchedCraftingOrder(ServerLevel level, IGrid grid, IGridNode simNode,
                                  AEKey what, long totalAmount,
                                  ICraftingRequester requester, IActionSource source,
@@ -261,8 +293,16 @@ public final class BatchedCraftingOrder {
                 return status == Status.RUNNING;
             }
             case RUNNING -> {
-                // 1. 模拟完成的批次 → 提交
+                // 1. 模拟完成的批次 → 提交；等待模板的批次 → 模板就绪后转入模拟完成
                 for (BatchProgress batch : running) {
+                    if (batch.waitingTemplate) {
+                        ICraftingPlan template = simulatedPlans.get(batch.amount);
+                        if (template != null) {
+                            batch.waitingTemplate = false;
+                            batch.pendingSimulation = CompletableFuture.completedFuture(template);
+                        }
+                        continue;
+                    }
                     if (batch.pendingSimulation != null && batch.pendingSimulation.isDone()) {
                         Future<ICraftingPlan> done = batch.pendingSimulation;
                         batch.pendingSimulation = null;
@@ -284,12 +324,51 @@ public final class BatchedCraftingOrder {
                             failAll();
                             return false;
                         }
+                        // 模拟复用：首次模拟结果入缓存；同量批次深拷贝后提交（不提交缓存本体，
+                        // 防任何 mixin 拿 plan 做身份判断/修改时炸——8/17 教训）
+                        ICraftingPlan cached = simulatedPlans.get(batch.amount);
+                        if (cached == null) {
+                            simulatedPlans.put(batch.amount, plan);
+                            simulatingAmounts.remove(batch.amount); // 模板就绪，等待批次可领
+                        } else {
+                            plan = copyPlan(cached);
+                        }
                         // requester 为 null（玩家终端提交）时用虚拟请求方换取真实 link
                         ICraftingRequester effectiveRequester = requester != null
                                 ? requester : new BatchedRequester(simNode, source);
                         ICraftingSubmitResult result = BatchedCraftingQueue.submitBypass(
                                 grid, plan, effectiveRequester, source);
                         if (result == null || !result.successful()) {
+                            // 2026-08-22：CPU 瞬时不可用（唯一集成 CPU 忙/量子分裂 lane
+                            // 未就绪）不应取消整个订单——批次放回等下个 tick 重试。
+                            // 原实现直接 failAll：388 批的订单第一批提交失败就全取消。
+                            if (result != null && result.errorCode()
+                                    == appeng.api.networking.crafting.CraftingSubmitErrorCode
+                                            .NO_SUITABLE_CPU_FOUND) {
+                                long nowTick = appeng.hooks.ticking.TickHandler.instance()
+                                        .getCurrentTick();
+                                if (busySinceTick == Long.MIN_VALUE) {
+                                    busySinceTick = nowTick;
+                                }
+                                long busyTicks = nowTick - busySinceTick;
+                                if (busyTicks > 0 && busyTicks % 200 == 0) {
+                                    com.ae2addon.AE2Addon.LOGGER.info(
+                                            "[ae2addon] 批次提交 CPU 忙，稍后重试 what={} 进度={}/{} 持续={}s",
+                                            what, completedCount, batchAmounts.size(),
+                                            busyTicks / 20);
+                                }
+                                if (busyTicks > 6000) {
+                                    com.ae2addon.AE2Addon.LOGGER.warn(
+                                            "[ae2addon] 批次提交 CPU 持续忙超过 5 分钟，订单取消 what={}",
+                                            what);
+                                    ChatLog.err(level, null,
+                                            "CPU 持续忙超过 5 分钟，巨型订单已取消");
+                                    failAll();
+                                    return false;
+                                }
+                                batch.pendingSimulation = CompletableFuture.completedFuture(plan);
+                                continue;
+                            }
                             com.ae2addon.AE2Addon.LOGGER.warn(
                                     "[ae2addon] 分批提交失败: what={} 错误码={} 详情={}",
                                     what,
@@ -301,10 +380,14 @@ public final class BatchedCraftingOrder {
                             return false;
                         }
                         batch.link = result.link();
-                        com.ae2addon.AE2Addon.LOGGER.info(
-                                "[ae2addon] 批次已提交 what={} 进度={}/{}+{}",
-                                what, completedCount, batchAmounts.size(),
-                                running.size());
+                        // 提交成功：CPU 不再持续忙，重置判死计时
+                        busySinceTick = Long.MIN_VALUE;
+                        if (CraftingCompat.debugLogs) {
+                            com.ae2addon.AE2Addon.LOGGER.info(
+                                    "[ae2addon] 批次已提交 what={} 进度={}/{}+{}",
+                                    what, completedCount, batchAmounts.size(),
+                                    running.size());
+                        }
                     }
                 }
 
@@ -325,9 +408,11 @@ public final class BatchedCraftingOrder {
                     if (batch.link.isDone()) {
                         completedCount++;
                         iterator.remove();
-                        com.ae2addon.AE2Addon.LOGGER.info(
-                                "[ae2addon] 批次完成 what={} 进度={}/{}",
-                                what, completedCount, batchAmounts.size());
+                        if (CraftingCompat.debugLogs) {
+                            com.ae2addon.AE2Addon.LOGGER.info(
+                                    "[ae2addon] 批次完成 what={} 进度={}/{}",
+                                    what, completedCount, batchAmounts.size());
+                        }
                     }
                 }
 
@@ -347,7 +432,12 @@ public final class BatchedCraftingOrder {
         }
     }
 
-    /** 补充批次窗口：保持 MAX_CONCURRENT 个进行中（含模拟中）。 */
+    /**
+     * 补充批次窗口：保持 MAX_CONCURRENT 个进行中（含模拟中），一次性全发。
+     * 2026-08-22 恢复全发：beginCraftingCalculation 是异步提交到 CRAFTING_POOL 的
+     * （已反编译确认），全发不卡主线程；限流反而让批次建立变慢
+     * （sensei 实测 16:51「批次建立慢，一瞬间全部建立更好」）。
+     */
     private void fillWindow() {
         while (status == Status.RUNNING
                 && running.size() < MAX_CONCURRENT
@@ -407,8 +497,26 @@ public final class BatchedCraftingOrder {
         return false;
     }
 
-    /** 发起批次模拟（异步）。返回 false 表示发起失败。 */
+    /**
+     * 发起批次模拟（异步）。返回 false 表示发起失败。
+     * <p>
+     * 2026-08-22 模拟复用：同量批次已有缓存计划时不再调 beginCraftingCalculation
+     * （AE2 模拟同步执行，是巨型订单最大单帧开销），直接返回已完成 Future，
+     * 提交时由调用方深拷贝缓存计划。
+     */
     private boolean startSimulation(BatchProgress batch) {
+        ICraftingPlan cached = simulatedPlans.get(batch.amount);
+        if (cached != null) {
+            batch.pendingSimulation = CompletableFuture.completedFuture(cached);
+            return true;
+        }
+        // 同量批次已有真实模拟在跑 → 等模板（2026-08-22：避免全发模式下
+        // 几百个真实模拟把 CRAFTING_POOL 串行堵死）
+        if (!simulatingAmounts.add(batch.amount)) {
+            batch.waitingTemplate = true;
+            batch.pendingSimulation = null;
+            return true;
+        }
         IGridNode node = simNode;
         if (node == null) {
             try {
@@ -430,6 +538,30 @@ public final class BatchedCraftingOrder {
         }
     }
 
+    /**
+     * 深拷贝一个 ICraftingPlan（CraftingPlan 是 final record，不能直接复用实例，
+     * 且任何 mixin 拿 plan 做身份判断/修改时共享实例会炸——8/17 教训）。
+     * 只复制 KeyCounter 条目与 patternTimes 引用结构，成本极低。
+     */
+    private static ICraftingPlan copyPlan(ICraftingPlan source) {
+        var used = new KeyCounter();
+        for (var entry : source.usedItems()) {
+            used.add(entry.getKey(), entry.getLongValue());
+        }
+        var emitted = new KeyCounter();
+        for (var entry : source.emittedItems()) {
+            emitted.add(entry.getKey(), entry.getLongValue());
+        }
+        var missing = new KeyCounter();
+        for (var entry : source.missingItems()) {
+            missing.add(entry.getKey(), entry.getLongValue());
+        }
+        return new CraftingPlan(source.finalOutput(), source.bytes(),
+                source.simulation(), source.multiplePaths(),
+                used, emitted, missing,
+                new HashMap<>(source.patternTimes()));
+    }
+
     private void failAll() {
         status = Status.FAILED;
         cancelRunning();
@@ -448,9 +580,11 @@ public final class BatchedCraftingOrder {
 
     /** 外部（订单面板）取消整个订单：取消所有进行中批次并终止后续批次 */
     public void cancelOrder() {
-        com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon][debug] 订单面板取消请求 what={} 进度={}/{}",
-                what, completedCount, batchAmounts.size());
+        if (CraftingCompat.debugLogs) {
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][debug] 订单面板取消请求 what={} 进度={}/{}",
+                    what, completedCount, batchAmounts.size());
+        }
         cancelAll();
         ChatLog.warn(level, null,
                 "巨型订单已取消（" + what + " " + completedCount

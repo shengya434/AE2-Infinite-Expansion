@@ -3,14 +3,12 @@ package com.ae2addon.mixin;
 import appeng.me.cluster.implementations.CraftingCPUCluster;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.block.IntegratedCPUBE;
-import com.ae2addon.block.IntegratedCPURegistry;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Constant;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyConstant;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
@@ -46,20 +44,14 @@ public class CraftingCPUClusterMixin {
     }
 
     /**
-     * 虚拟 CPU lane 任务完成后自动隐藏：从所属集成 CPU 的 lane 列表移除，
-     * 并把它从 CraftingService 的 craftingCPUClusters 集合剔除。
-     * <p>
-     * done() 是 AE2 合成任务完成后的收尾回调，主簇完成任务时也会走到这里，
-     * 但 owner.removeVirtualCpu 内部会判断「只移除虚拟 lane，主簇保留」。
+     * ⚠️ 2026-08-22 移除（原 done() 自动隐藏虚拟 lane）：
+     * 任务完成即 removeVirtualCpu 导致 lane 刚创建就被移除——单次订单瞬间完成，
+     * 界面永远看不到「线程 1」，量子分裂形同虚设（sensei 实测：主线程被占时
+     * 线程 1 不出现）。改为<b>常驻空闲 lane</b>：lane 完成后保留，由
+     * IntegratedCPUBE.ensureOneIdleCpu 的回收逻辑在「主簇空闲」时才清理
+     * （主簇忙 → 1 个空闲 lane 常驻可见，新订单直接量子分裂并行；
+     * 主簇空闲 → 回收多余空闲 lane）。
      */
-    @Inject(method = "done", at = @At("RETURN"), remap = false, require = 0)
-    private void ae2addon$hideFinishedVirtualLane(CallbackInfo callback) {
-        var self = (CraftingCPUCluster) (Object) this;
-        var owner = IntegratedCPURegistry.ownerOf(self);
-        if (owner != null) {
-            owner.removeVirtualCpu(self);
-        }
-    }
 
     @Unique
     private static boolean ae2addon$diagLogged;

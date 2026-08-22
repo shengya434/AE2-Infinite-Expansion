@@ -18,6 +18,7 @@ import com.ae2addon.api.IntegratedCraftingServiceBridge;
 import com.ae2addon.block.IntegratedCPURegistry;
 import com.ae2addon.crafting.BatchedCraftingOrder;
 import com.ae2addon.crafting.BatchedCraftingQueue;
+import com.ae2addon.crafting.CraftingCompat;
 import com.ae2addon.crafting.RequirementCalculator;
 import com.ae2addon.util.ChatLog;
 import net.minecraft.server.level.ServerLevel;
@@ -54,7 +55,8 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
 
     /**
      * 超限订单上下文缓存（2026-08-21）：模拟拦截返回真 CraftingPlan 后，
-     * 用 IdentityHashMap 按实例缓存 grid/level/simNode/perBatch，
+     * 用 IdentityHashMap 按实例缓存 grid/level/simNode/perBatch/truncated
+     * （[5]=uuid 去重，[6]=截断标志），
      * submitJob 时取出识别为巨型订单（原 DeferredCraftingPlan 类型识别
      * 已被 GTL 界面 mixin 强转 CraftingPlan 崩溃，废弃）。
      * key 是模拟拦截创建的真 CraftingPlan 实例（提交时同实例传入）。
@@ -63,9 +65,43 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
     private static final java.util.IdentityHashMap<ICraftingPlan, Object[]>
             ae2addon$deferredContexts = new java.util.IdentityHashMap<>();
 
+    /**
+     * 上下文缓存容量上限（防泄漏：计划被取消/requester 消失时条目永不 remove，
+     * 超限直接清空——条目生命周期短，偶尔重拦截一次无害）。
+     */
+    @Unique
+    private static final int AE2ADDON_DEFERRED_CONTEXT_MAX = 4096;
+
+    /** 虚拟 CPU 刷新节流：至少间隔 tick 数（submitJob/updateCPUClusters 高频触发，
+     *  批量订单每秒提交数百次，每次全量刷新注册表太浪费）。 */
+    @Unique
+    private static final long AE2ADDON_CPU_REFRESH_INTERVAL_TICKS = 20;
+
+    @Unique
+    private long ae2addon$lastCpuRefreshTick = Long.MIN_VALUE;
+
     @Inject(method = "updateCPUClusters", at = @At("RETURN"), require = 0)
     private void ae2addon$registerVirtualCpus(CallbackInfo callback) {
-        ae2addon$refreshIntegratedCpus();
+        // 事件驱动（updateList 脏标记）触发，不节流：CPU 列表变化时全量刷新。
+        ae2addon$refreshIntegratedCpus(false);
+    }
+
+    /**
+     * 每 tick lane 维护（2026-08-22）：必须在 craftingCPUClusters 迭代（
+     * tickCraftingLogic）<b>之前</b>执行——迭代中 add/remove 会
+     * ConcurrentModificationException（15:26 崩溃实锤：把 refreshLanes 挂进
+     * tickCraftingLogic HEAD 导致 onServerEndTick 迭代期间改集合）。
+     * updateCPUClusters 是事件驱动的（updateList），稳态不触发，所以这里
+     * 是唯一的每 tick 钩子。
+     */
+    @Inject(method = "onServerEndTick", at = @At("HEAD"), require = 0)
+    private void ae2addon$tickLaneMaintenance(CallbackInfo callback) {
+        for (var blockEntity : IntegratedCPURegistry.all()) {
+            if (blockEntity.isRemoved() || !blockEntity.isFormed()) {
+                continue;
+            }
+            blockEntity.refreshLanes();
+        }
     }
 
     @Inject(method = "submitJob", at = @At("RETURN"), require = 0)
@@ -73,7 +109,8 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             ICraftingRequester requestingMachine, ICraftingCPU target,
             boolean prioritizePower, IActionSource source,
             CallbackInfoReturnable<ICraftingSubmitResult> callback) {
-        ae2addon$refreshIntegratedCpus();
+        // 批量提交高频路径：节流到 20 tick 一次（提交前 updateCPUClusters 已刷新过）
+        ae2addon$refreshIntegratedCpus(true);
     }
 
     /**
@@ -88,20 +125,32 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             boolean prioritizePower, IActionSource source,
             CallbackInfoReturnable<ICraftingSubmitResult> callback) {
         if (job == null || job.simulation() || BatchedCraftingQueue.dispatchInProgress) {
-            com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][debug] submitJob早退 job={} sim={} dispatch={}",
-                    job == null ? "null" : job.getClass().getSimpleName(),
-                    job != null && job.simulation(), BatchedCraftingQueue.dispatchInProgress);
+            if (CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] submitJob早退 job={} sim={} dispatch={}",
+                        job == null ? "null" : job.getClass().getSimpleName(),
+                        job != null && job.simulation(), BatchedCraftingQueue.dispatchInProgress);
+            }
             return;
         }
 
         // 巨型订单识别：从上下文缓存取（模拟拦截创建的真 CraftingPlan 实例）
         Object[] ctx = ae2addon$deferredContexts.remove(job);
         if (ctx != null) {
-            com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][debug] submitJob收到超限计划(上下文) what={} total={} perBatch={}",
-                    job.finalOutput() == null ? null : job.finalOutput().what(),
-                    ctx[3], ctx[4]);
+            if (CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] submitJob收到超限计划(上下文) what={} total={} perBatch={} truncated={}",
+                        job.finalOutput() == null ? null : job.finalOutput().what(),
+                        ctx[3], ctx[4], ctx[6]);
+            }
+            // 截断订单：配方树展开超预算（树过深/配方环），无法证明安全拆批 → 拒绝
+            if (Boolean.TRUE.equals(ctx[6])) {
+                ChatLog.err(ae2addon$levelOf(requestingMachine), null,
+                        "配方树展开超预算（树过深或配方环），无法安全拆分，已拒绝");
+                callback.setReturnValue(CraftingSubmitResult.simpleError(
+                        CraftingSubmitErrorCode.CPU_TOO_SMALL));
+                return;
+            }
             // 去重：机器 requester 会反复提交同一计划，已受理的直接返回 CPU 忙
             if (BatchedCraftingQueue.isPlanAccepted((java.util.UUID) ctx[5])) {
                 callback.setReturnValue(CraftingSubmitResult.simpleError(
@@ -136,19 +185,25 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
         }
 
         boolean oversized = ae2addon$isOversized(job);
-        com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon][debug] submitJob检查超限 plan={} 超限={}",
-                job.getClass().getSimpleName(), oversized);
+        if (CraftingCompat.debugLogs) {
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][debug] submitJob检查超限 plan={} 超限={}",
+                    job.getClass().getSimpleName(), oversized);
+        }
         if (!oversized) {
             return;
         }
 
         var order = BatchedCraftingOrder.create(job, requestingMachine, source);
         if (order == null) {
-            ChatLog.err(ae2addon$levelOf(requestingMachine), null,
-                    "订单材料需求超出 CPU 记账上限且无法拆分，已拒绝");
-            callback.setReturnValue(CraftingSubmitResult.simpleError(
-                    CraftingSubmitErrorCode.CPU_TOO_SMALL));
+            if (ae2addon$hasOverflow(job)) {
+                ChatLog.err(ae2addon$levelOf(requestingMachine), null,
+                        "订单材料需求超出 CPU 记账上限且无法拆分，已拒绝");
+                callback.setReturnValue(CraftingSubmitResult.simpleError(
+                        CraftingSubmitErrorCode.CPU_TOO_SMALL));
+            }
+            // 巨大但有效且无法拆分（如残留测试样板导致 perBatch=1）：放行原版提交，
+            // 由 CPU 报缺料或正常执行，避免误导性报错（2026-08-22）。
             return;
         }
         ae2addon$acceptBatchedOrder(order, requestingMachine, callback);
@@ -164,35 +219,63 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
      * appeng.crafting.CraftingPlan（final Record 不可继承）→ ClassCastException。
      * 改为直接构造真 CraftingPlan，任何 cast 都能通过。
      */
+    /**
+     * 小额订单免估算阈值（2026-08-22）：下单量 ≤ 10^6 的物品不可能达到溢出级
+     * （除非每单位需求病态到 ≥2.3×10^12，那种放行原版也会快速报缺料）。
+     * 跳过 analyze/首次配方树展开——首次展开在服务端线程上跑，复杂配方图
+     * 会让普通订单下单瞬间卡死游戏（sensei 实测 17:31）。大单才估算（缓存）。
+     */
+    @Unique
+    private static final long AE2ADDON_CHEAP_ORDER_AMOUNT = 1_000_000L;
+
     @Inject(method = "beginCraftingCalculation", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private void ae2addon$deferOversizedSimulation(Level level,
             ICraftingSimulationRequester simRequester, AEKey what, long amount,
             CalculationStrategy strategy,
             CallbackInfoReturnable<Future<ICraftingPlan>> callback) {
         if (level == null || level.isClientSide || what == null || amount <= 0) {
-            com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][debug] 模拟拦截早退 level={} what={} amount={}",
-                    level, what, amount);
+            if (CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] 模拟拦截早退 level={} what={} amount={}",
+                        level, what, amount);
+            }
             return;
         }
-        boolean oversized = RequirementCalculator.isOversized(
+        // 小额订单免估算：直接走原版（不展开配方树，避免服务端线程卡顿）
+        if (amount <= AE2ADDON_CHEAP_ORDER_AMOUNT) {
+            return;
+        }
+        long t0 = System.nanoTime();
+        var analysis = RequirementCalculator.analyze(
                 grid, what, amount, BatchedCraftingOrder.SAFE_LIMIT);
-        com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon][debug] 模拟拦截: what={} amount={} 超限={}",
-                what, amount, oversized);
-        if (!oversized) {
+        if (CraftingCompat.debugLogs) {
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][debug] 模拟拦截: what={} amount={} 超限={} 截断={} perBatch={} 耗时={}ms",
+                    what, amount, analysis.oversized, analysis.truncated,
+                    analysis.maxSafeBatch,
+                    (System.nanoTime() - t0) / 1_000_000L);
+        }
+        if (!analysis.oversized) {
             return; // 需求安全，走原版模拟
         }
-        long perBatch = RequirementCalculator.maxSafeBatch(
-                grid, what, amount, BatchedCraftingOrder.SAFE_LIMIT);
-        com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon][debug] 模拟拦截超限: perBatch={} safeLimit={}",
-                perBatch, BatchedCraftingOrder.SAFE_LIMIT);
+        if (!analysis.truncated && analysis.maxSafeBatch <= 1) {
+            // 2026-08-22：perBatch=1（单单位需求 ≥ PERF_LIMIT，通常被残留测试样板/
+            // 异常配方撑爆）且非截断 → 无法安全拆批，放行原版模拟。其计划若 long 溢出
+            // 会被 submitJob 拒绝（见 ae2addon$hasOverflow）；若有效则报缺料或正常执行
+            // ——都比误导性的「CPU 存储不足」好（sensei 实测 15:47：dark_oak_log 1kw
+            // 单被测试样板撑爆，误报 CPU_TOO_SMALL）。
+            if (CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] 模拟拦截放行: perBatch<=1 无法拆批 what={} amount={}",
+                        what, amount);
+            }
+            return;
+        }
+        long perBatch = analysis.maxSafeBatch;
 
         // 超限：估算需求（饱和到 long 供确认界面显示）并返回真 CraftingPlan
         var used = new KeyCounter();
-        var needs = RequirementCalculator.estimate(grid, what, amount);
-        for (var entry : needs.entrySet()) {
+        for (var entry : analysis.needs.entrySet()) {
             used.add(entry.getKey(), entry.getValue()
                     .min(BigInteger.valueOf(Long.MAX_VALUE)).longValue());
         }
@@ -216,11 +299,17 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
         }
         ae2addon$deferredContexts.put(realPlan, new Object[]{
                 grid, serverLevel, simNode, amount, perBatch,
-                java.util.UUID.randomUUID()});
+                java.util.UUID.randomUUID(), analysis.truncated});
+        if (ae2addon$deferredContexts.size() > AE2ADDON_DEFERRED_CONTEXT_MAX) {
+            // 防泄漏：超限清空（条目生命周期短，偶尔重拦截无害）
+            ae2addon$deferredContexts.clear();
+        }
         callback.setReturnValue(CompletableFuture.completedFuture(realPlan));
-        com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon] 模拟拦截：需求超限，改为真 CraftingPlan what={} amount={} perBatch={}",
-                what, amount, perBatch);
+        if (CraftingCompat.debugLogs) {
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon] 模拟拦截：需求超限，改为真 CraftingPlan what={} amount={} perBatch={} truncated={}",
+                    what, amount, perBatch, analysis.truncated);
+        }
     }
 
     /** 受理拆批订单：入队异步执行，返回成功（无 link，调用方按受理处理）。 */
@@ -271,8 +360,32 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
     private static boolean ae2addon$diagLogged;
 
     /**
-     * 超限检测：usedItems（材料总需求）或 patternTimes（配方执行次数）
-     * 出现负值（long 溢出）或超过安全上限 → 判定为巨型订单。
+     * 计划是否已 long 溢出（出现负值）：溢出计划已损坏，绝不能提交给 CPU。
+     * 与 ae2addon$isOversized 区分：负值=损坏必须拒；正值巨大=有效（可能缺料/可执行）。
+     */
+    @Unique
+    private static boolean ae2addon$hasOverflow(ICraftingPlan plan) {
+        try {
+            for (var entry : plan.usedItems()) {
+                if (entry.getLongValue() < 0) {
+                    return true;
+                }
+            }
+            for (var times : plan.patternTimes().values()) {
+                if (times < 0) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException ignored) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 超限检测（2026-08-22 双系统）：usedItems/patternTimes 出现负值（long 溢出）
+     * 或超过 SAFE_LIMIT（溢出级巨型订单）→ 判定为巨型订单（拦截拆批）。
+     * 性能级（PERF_LIMIT+EMC）在模拟拦截阶段已处理，这里只管溢出兜底。
      */
     @Unique
     private static boolean ae2addon$isOversized(ICraftingPlan plan) {
@@ -306,7 +419,15 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
         return null;
     }
 
-    private void ae2addon$refreshIntegratedCpus() {
+    private void ae2addon$refreshIntegratedCpus(boolean throttled) {
+        // 节流（仅 submitJob 高频路径）：至少间隔 20 tick 才全量扫描一次注册表
+        if (throttled) {
+            long tick = appeng.hooks.ticking.TickHandler.instance().getCurrentTick();
+            if (tick - ae2addon$lastCpuRefreshTick < AE2ADDON_CPU_REFRESH_INTERVAL_TICKS) {
+                return;
+            }
+            ae2addon$lastCpuRefreshTick = tick;
+        }
         int registered = 0;
         for (var blockEntity : IntegratedCPURegistry.all()) {
             if (blockEntity.isRemoved() || !blockEntity.isFormed()) {

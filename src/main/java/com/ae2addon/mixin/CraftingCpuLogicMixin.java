@@ -219,6 +219,14 @@ public abstract class CraftingCpuLogicMixin {
     @Unique
     private long ae2addon$batchMultiplier;
 
+    // 卡死退避（2026-08-22）：记录「本 tick 内被拒收的 pattern」，
+    // 同一 tick 不再重试（机器拒收时每 tick 最多试 1 次，避免烧光时间片预算
+    // 空转——sensei 实测：合成机器缓冲满后 CPU 每 tick 空转 49 次）。
+    @Unique
+    private IPatternDetails ae2addon$lastStuckPattern;
+    @Unique
+    private long ae2addon$lastStuckTick = Long.MIN_VALUE;
+
     // 批量提取结果缓存：AE2 同一 tick 会对同一任务调用两次 extractPatternInputs，
     // 第二次直接返回缓存，避免重复提取/重复扣库存，也避免第二次调用开头
     // clearBatchContext 清掉批量上下文导致 pending 收敛锁死。
@@ -269,6 +277,10 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$diagLoaded = true;
             AE2Addon.LOGGER.info("[ae2addon] CraftingCpuLogicMixin 已生效，集成CPU检测={}", integrated);
         }
+        // ⚠️ lane 维护不在本钩子做（2026-08-22 15:26 崩溃教训）：tickCraftingLogic
+        // 在 onServerEndTick 的 craftingCPUClusters 迭代中调用，此时 add/remove
+        // 集合会 ConcurrentModificationException。已移到 CraftingServiceMixin 的
+        // onServerEndTick HEAD（迭代前，安全）。
         ae2addon$budgetActive = integrated;
         if (ae2addon$budgetActive) {
             Object currentJob = ae2addon$getJob();
@@ -412,6 +424,14 @@ public abstract class CraftingCpuLogicMixin {
         // 第二次若走完整逻辑，开头 clearBatchContext 会清掉第一次的批量上下文，
         // 且 pending 收敛会把 batchNext 锁死为 1（历史教训：批量翻倍被吃）。
         long currentTick = TickHandler.instance().getCurrentTick();
+        // 卡死退避：本 tick 已尝试推送该 pattern 且被拒（任务值 ≤1 时最典型）→
+        // 直接返回 null 跳过（迭代变廉价，不烧预算）；下个 tick 再试一次。
+        if (ae2addon$lastStuckTick == currentTick
+                && ae2addon$lastStuckPattern != null
+                && ae2addon$lastStuckPattern.equals(patternDetails)
+                && ae2addon$getTaskValue(patternDetails) <= 1) {
+            return null;
+        }
         boolean sameTickSamePattern = ae2addon$lastExtractTick == currentTick
                 && ae2addon$lastExtractPattern != null
                 && ae2addon$lastExtractPattern.equals(patternDetails);
@@ -462,6 +482,20 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$diagTaskValueFallback++;
         }
         long n = Math.min(ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
+        // 2026-08-22：合成样板（AECraftingPattern）强制 1× 推送。
+        // 合成机器（ExtendedAE PatternCore/普通样板供应器）按单次配方执行，
+        // N× ScaledPattern 输入会导致拒收/错乱（sensei 实测：AECraftingPattern
+        // 单 tick 206 次拒收、任务值卡 1、CPU 永久 busy，阻塞全部后续订单）。
+        // 处理样板（AEProcessingPattern）保留批量推送。
+        if (ae2addon$isCraftingPattern(patternDetails)) {
+            n = 1;
+            if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] 合成样板强制1×: pattern={} batchNext={} taskRemaining={}",
+                        patternDetails,
+                        ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
+            }
+        }
         if (n <= 1) {
             // 我们 CPU：直接调原始静态方法，绕开 Omni 的 extractBatch handler
             // （它会对 scaled 输出算 waitingFor 余量，N 大时 reinject+null → 批量被误判失败锁 1）
@@ -515,6 +549,18 @@ public abstract class CraftingCpuLogicMixin {
                 level, expectedOutputs, expectedContainerItems);
     }
 
+    /**
+     * 是否为合成样板（crafting pattern）：此类配方强制 1× 推送（见 extractBatch）。
+     * 按类名判断（不引用具体类，兼容 AE2 民间重置版/gtlcore 改名）。
+     */
+    @Unique
+    private static boolean ae2addon$isCraftingPattern(IPatternDetails pattern) {
+        if (pattern == null) {
+            return false;
+        }
+        return pattern.getClass().getName().endsWith("AECraftingPattern");
+    }
+
     // ── 批量推送：push 阶段 ──
 
     /**
@@ -541,6 +587,8 @@ public abstract class CraftingCpuLogicMixin {
             // 直接尝试 2×/4×/8×... 指数暴涨，对无限消费型接收方瞬间全发
             if (ae2addon$budgetActive && accepted && patternDetails != null) {
                 ae2addon$onBatchAccepted(patternDetails, 1L);
+            } else if (!accepted && patternDetails != null) {
+                ae2addon$recordStuck(patternDetails);
             }
             return accepted;
         }
@@ -568,6 +616,11 @@ public abstract class CraftingCpuLogicMixin {
             // 避免「原始 pattern + N× 输入」错配（历史教训）。
             // 也不直接反馈控制器；由下次提取的 pending 收敛逻辑处理。
             ae2addon$diagBatchFailProvider = provider.getClass().getName();
+            // 2026-08-22 修复：拒收计数此前从不自增（onBatchRejected 只在锁定路径
+            // 调用），诊断里的「失败0次」是假象。这里只计数不改 N 收敛（后续
+            // provider 接受时不该减半，收敛仍交给 pending 逻辑）。
+            ae2addon$diagBatchRejected++;
+            ae2addon$recordStuck(patternDetails);
         }
         return accepted;
     }
@@ -589,6 +642,12 @@ public abstract class CraftingCpuLogicMixin {
             return Integer.MAX_VALUE - 1;
         }
         return targetCluster.getCoProcessors();
+    }
+
+    @Unique
+    private void ae2addon$recordStuck(IPatternDetails pattern) {
+        ae2addon$lastStuckPattern = pattern;
+        ae2addon$lastStuckTick = TickHandler.instance().getCurrentTick();
     }
 
     // ── 批量自适应控制器 ──

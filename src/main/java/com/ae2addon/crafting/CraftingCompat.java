@@ -14,6 +14,12 @@ public final class CraftingCompat {
     private CraftingCompat() {}
 
     /**
+     * 热路径调试日志开关（默认关）：submitJob/模拟拦截/批次进度等高频日志
+     * 全量打开会拖慢服务端（字符串格式化），排查问题时才开启。
+     */
+    public static volatile boolean debugLogs = false;
+
+    /**
      * 时间片限流是否已注入生效（由 CraftingCpuLogicMixin 的限流重定向置位）。
      * <p>
      * 供 {@link com.ae2addon.block.IntegratedCPUBE#getAcceleratorThreads()} 查询：

@@ -44,11 +44,12 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
     private final List<CraftingCPUCluster> virtualCpus = new ArrayList<>();
 
     /**
-     * 常驻线程数（含主线程）：1 = 只保底主簇，虚拟 lane 用完即收。
-     * 主簇忙时会自动补建 1 个空闲 lane 并行；任务完成后由
-     * CraftingCPUClusterMixin.done() 注入触发隐藏（removeVirtualCpu）。
+     * 常驻空闲 lane 数（2026-08-22：1 → 16）。主簇忙时一个 tick 内 burst 建满，
+     * 让巨型订单批次立即并行——原来 1 lane/tick 串行建立（每批占掉 lane 后
+     * 下 tick 才补 1 个），sensei 实测「线程创建速度 1线程/t」批次推进极慢。
+     * 主簇空闲时回收全部空闲 lane，不空转。
      */
-    private static final int IDLE_LANE_TARGET = 1;
+    private static final int IDLE_LANE_TARGET = 16;
 
     public IntegratedCPUBE(BlockPos pos, BlockState state) {
         super(ModBlockEntities.INTEGRATED_CPU.get(), pos, state);
@@ -155,38 +156,90 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
     }
 
     /**
+     * 每 tick lane 维护（2026-08-22）：确保空闲 lane 存在并注册进 CraftingService。
+     * 由 CraftingCpuLogicMixin.beginDispatchBudget（tickCraftingLogic HEAD，每 tick
+     * 对每个已注册簇触发）调用——updateCPUClusters 是事件驱动（updateList 脏标记），
+     * 稳态运行时不触发，靠它建 lane 会饿死（sensei 实测：主簇忙时线程1不出现）。
+     */
+    public void refreshLanes() {
+        if (!formed || getCluster() == null) {
+            return;
+        }
+        ensureOneIdleCpu();
+        var bridge = ae2addon$craftingBridge();
+        if (bridge == null) {
+            return;
+        }
+        for (var cpu : allCpus()) {
+            if (!cpu.isDestroyed() && cpu.isActive()) {
+                bridge.ae2addon$registerCpu(cpu);
+            }
+        }
+    }
+
+    /**
      * 保证常驻线程数（IDLE_LANE_TARGET 个 lane，含主簇），并回收多余空闲。
      */
     public void ensureOneIdleCpu() {
         if (!formed || getCluster() == null) {
             return;
         }
-        int idleCount = getCluster().isBusy() ? 0 : 1;
+        if (!getCluster().isBusy()) {
+            // 主簇空闲：清空空闲虚拟 lane（只留主簇），避免 16 个空转
+            reapIdleLanes(0);
+            return;
+        }
+        // 主簇忙：确保 IDLE_LANE_TARGET 个空闲 lane（一个 tick 内 burst 建满）
+        int idleCount = 0;
         for (var cpu : virtualCpus) {
             if (!cpu.isBusy() && !cpu.isDestroyed()) {
                 idleCount++;
             }
         }
-        // 常驻：空闲 lane 不足时补建（预分裂，界面列表一直可见）
         while (idleCount < IDLE_LANE_TARGET) {
             createVirtualCpu();
             idleCount++;
         }
-        // 回收多余空闲（保留 IDLE_LANE_TARGET 个）
-        if (idleCount > IDLE_LANE_TARGET) {
-            var bridge = ae2addon$craftingBridge();
-            Iterator<CraftingCPUCluster> iterator = virtualCpus.iterator();
-            while (iterator.hasNext() && idleCount > IDLE_LANE_TARGET) {
-                var cpu = iterator.next();
-                if (!cpu.isBusy()) {
-                    iterator.remove();
-                    if (bridge != null) {
-                        bridge.ae2addon$unregisterCpu(cpu);
-                    }
-                    idleCount--;
+        // 回收超标空闲（任务完成留下的多余 lane）
+        reapIdleLanes(IDLE_LANE_TARGET);
+    }
+
+    /** 回收空闲虚拟 lane，保留前 keepIdle 个空闲（按列表顺序）。 */
+    private void reapIdleLanes(int keepIdle) {
+        var bridge = ae2addon$craftingBridge();
+        int idleKept = 0;
+        Iterator<CraftingCPUCluster> iterator = virtualCpus.iterator();
+        while (iterator.hasNext()) {
+            var cpu = iterator.next();
+            if (!cpu.isBusy() && !cpu.isDestroyed()) {
+                if (idleKept < keepIdle) {
+                    idleKept++;
+                    continue;
+                }
+                iterator.remove();
+                if (bridge != null) {
+                    bridge.ae2addon$unregisterCpu(cpu);
                 }
             }
         }
+    }
+
+    /**
+     * 按需创建 lane 并立即注册（2026-08-22：批次无空闲 CPU 时调用，
+     * 每批一个 lane 全并行——「int 级别」并行度，但按需创建不会像
+     * IDLE_LANE_TARGET=Integer.MAX_VALUE 那样无界建到 OOM）。
+     * 已有空闲 lane 时直接返回（不新建）。
+     */
+    public CraftingCPUCluster createAndRegisterLane() {
+        var cpu = getOrCreateIdleCpu();
+        if (cpu != null && !cpu.isDestroyed() && cpu.isActive()) {
+            var bridge = ae2addon$craftingBridge();
+            if (bridge != null) {
+                bridge.ae2addon$registerCpu(cpu);
+            }
+            return cpu;
+        }
+        return null;
     }
 
     /**
@@ -205,11 +258,12 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
     }
 
     /**
-     * 虚拟 CPU lane 任务完成后的隐藏回调（由 CraftingCPUClusterMixin 的
-     * done() 注入调用）：从 lane 列表移除，并从 CraftingService 的
-     * craftingCPUClusters 集合剔除，界面线程列表立即消失。
+     * 虚拟 CPU lane 手动移除（2026-08-22 起不再由 done() 自动调用——
+     * 改为常驻空闲 lane，由 {@link #ensureOneIdleCpu} 的回收逻辑在
+     * 主簇空闲时清理）。保留供手动管理/未来使用。
      * <p>
-     * 主簇完成任务也会走到这里，但主簇不隐藏（cpu == getCluster() 直接返回）。
+     * 从 lane 列表移除，并从 CraftingService 的 craftingCPUClusters 集合剔除，
+     * 界面线程列表立即消失。主簇（cpu == getCluster()）不隐藏。
      */
     public void removeVirtualCpu(CraftingCPUCluster cpu) {
         if (cpu == null || cpu == getCluster()) {

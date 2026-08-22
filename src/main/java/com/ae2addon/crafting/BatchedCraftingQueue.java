@@ -62,6 +62,7 @@ public final class BatchedCraftingQueue {
      * 绕过 mixin 拦截的原版提交（队列内部专用）。
      * 显式选择「存储最大且空闲」的 CPU，避免原版自动选择
      * 选中存储不足的普通 CPU（第一批提交报 CPU_TOO_SMALL）。
+     * 2026-08-22：无空闲 CPU 时按需创建 lane（每批一个，全并行）。
      */
     public static ICraftingSubmitResult submitBypass(IGrid grid, ICraftingPlan plan,
                                                      ICraftingRequester requester,
@@ -69,10 +70,36 @@ public final class BatchedCraftingQueue {
         dispatchInProgress = true;
         try {
             appeng.api.networking.crafting.ICraftingCPU target = findBestCpu(grid, plan);
+            if (target == null) {
+                target = createLaneForBatch(grid, plan);
+            }
             return grid.getCraftingService().submitJob(plan, requester, target, false, source);
         } finally {
             dispatchInProgress = false;
         }
+    }
+
+    /** 无空闲 CPU 时按需创建 lane（批次全并行；集成 CPU 才创建，其他场景返回 null 走原版选择）。 */
+    private static appeng.api.networking.crafting.ICraftingCPU createLaneForBatch(
+            IGrid grid, ICraftingPlan plan) {
+        for (var be : com.ae2addon.block.IntegratedCPURegistry.all()) {
+            if (be.isRemoved() || !be.isFormed()) {
+                continue;
+            }
+            try {
+                var beGrid = be.getMainNode() == null ? null : be.getMainNode().getGrid();
+                if (beGrid != grid) {
+                    continue;
+                }
+            } catch (RuntimeException ignored) {
+                continue;
+            }
+            var cpu = be.createAndRegisterLane();
+            if (cpu != null && cpu.getAvailableStorage() >= plan.bytes()) {
+                return cpu;
+            }
+        }
+        return null;
     }
 
     /**
