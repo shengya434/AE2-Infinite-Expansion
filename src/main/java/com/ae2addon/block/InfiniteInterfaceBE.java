@@ -686,6 +686,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         if ((lvl.getGameTime() & (RESTOCK_INTERVAL - 1)) == 0) {
             restockFromNetwork();
         }
+        feedMachinePower(); // 感应卡供电独立于喂出（蓄水池空也供电）
         feedMachine();
     }
 
@@ -1028,17 +1029,32 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         reservoirSummary()[0], fmt(totalAmount()));
             }
         }
-        // AppFlux 感应卡：网络 FE → 机器能量槽（供电）
-        if (hasInductionCard()) {
-            try {
-                long fe = com.ae2addon.compat.AppFluxPowerCompat.feedEnergy(
-                        target, front.getOpposite(), getMainNode().getGrid(), actionSource);
-                if (fe > 0 && (level.getGameTime() & 0x3F) == 0) {
-                    com.ae2addon.AE2Addon.LOGGER.info(
-                            "[ae2addon][feeder] 供电 {} FE/tick（感应卡）", fe);
-                }
-            } catch (RuntimeException ignored) {
+    }
+
+    /** 感应卡供电：网络 FE → 正面机器能量槽（独立于喂出；蓄水池空也供电）。 */
+    private void feedMachinePower() {
+        if (!hasInductionCard()) {
+            return;
+        }
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        try {
+            Direction front = getFront();
+            if (front == null) {
+                return;
             }
+            BlockEntity target = level.getBlockEntity(worldPosition.relative(front));
+            if (target == null) {
+                return;
+            }
+            long fe = com.ae2addon.compat.AppFluxPowerCompat.feedEnergy(
+                    target, front.getOpposite(), getMainNode().getGrid(), actionSource);
+            if (fe > 0 && (level.getGameTime() & 0x3F) == 0) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][feeder] 供电 {} FE/tick（感应卡）", fe);
+            }
+        } catch (RuntimeException ignored) {
         }
     }
 
