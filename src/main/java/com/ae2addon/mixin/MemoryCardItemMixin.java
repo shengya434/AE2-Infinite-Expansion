@@ -40,7 +40,7 @@ public class MemoryCardItemMixin {
         if (player == null) {
             return;
         }
-        if (com.ae2addon.util.MemoryCardHelper.handleUse(feeder, player, ctx.getItemInHand())) {
+        if (com.ae2addon.util.MemoryCardHelper.handleCopy(feeder, player, ctx.getItemInHand())) {
             cir.setReturnValue(InteractionResult.sidedSuccess(level.isClientSide));
         }
     }

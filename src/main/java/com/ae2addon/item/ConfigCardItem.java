@@ -36,7 +36,11 @@ public class ConfigCardItem extends Item {
         if (ctx.getPlayer() == null) {
             return InteractionResult.FAIL;
         }
-        if (com.ae2addon.util.MemoryCardHelper.handleUse(feeder, ctx.getPlayer(), ctx.getItemInHand())) {
+        boolean paste = ctx.getPlayer().isShiftKeyDown();
+        boolean handled = paste
+                ? com.ae2addon.util.MemoryCardHelper.handlePaste(feeder, ctx.getPlayer(), ctx.getItemInHand())
+                : com.ae2addon.util.MemoryCardHelper.handleCopy(feeder, ctx.getPlayer(), ctx.getItemInHand());
+        if (handled) {
             return InteractionResult.sidedSuccess(level.isClientSide);
         }
         return InteractionResult.PASS;

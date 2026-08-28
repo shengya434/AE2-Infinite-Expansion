@@ -76,8 +76,11 @@ public class InfiniteInterfaceBlock extends AEBaseEntityBlock<InfiniteInterfaceB
         // 检测内存卡 → 复制/粘贴配置（与正常右键 useOn 路径同一套逻辑）
         if (heldStack.getItem() instanceof appeng.items.tools.MemoryCardItem) {
             var be = getBlockEntity(level, pos);
-            if (be != null && com.ae2addon.util.MemoryCardHelper.handleUse(be, player, heldStack)) {
-                return InteractionResult.SUCCESS;
+            if (be != null) {
+                // shift+右键（bypass useOn）= 粘贴；正常右键走 useOn 复制
+                if (com.ae2addon.util.MemoryCardHelper.handlePaste(be, player, heldStack)) {
+                    return InteractionResult.SUCCESS;
+                }
             }
         }
         var be = getBlockEntity(level, pos);
