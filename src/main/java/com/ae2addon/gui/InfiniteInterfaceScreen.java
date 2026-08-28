@@ -14,15 +14,15 @@ import java.util.List;
  * <p>
  * 自绘背景（无贴图依赖）：暗色面板 + 槽位底框。
  * <p>
- * 布局（2026-08-28 修）：状态行不再压玩家背包——窗口加高到 214，
- * 背包整体下移；样板槽上方加「样板槽」标签防误认成投掷器。
+ * 布局（2026-08-28 v3）：窗口压回标准高度 176——此前 214 在 GUI 缩放 ≥6
+ * 或小窗口下会超出屏幕（sensei 全屏模式反馈）。状态行精简为 4 行。
  */
 public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInterfaceMenu> {
 
     private static final int W = 176;
-    private static final int H = 214;
+    private static final int H = 176;
     private static final int STATUS_X = 8;
-    private static final int STATUS_Y = 60;
+    private static final int STATUS_Y = 58;
     private static final int STATUS_LINE_H = 8;
 
     /** 蓄水池状态行（服务端 FeederStatusPacket → 主线程）。 */
@@ -39,7 +39,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         imageWidth = W;
         imageHeight = H;
         titleLabelY = 6;
-        inventoryLabelY = 108;
+        inventoryLabelY = -1000; // 隐藏原版「背包」标签（状态行占位，布局自明）
     }
 
     @Override
@@ -58,7 +58,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         // 槽位底框（样板槽 + 玩家背包槽）
         for (Slot slot : menu.getSlotList()) {
             if (slot.isActive()) {
-                drawSlotBg(g, slot.x - 1, slot.y - 1);
+                drawSlotBg(g, x + slot.x - 1, y + slot.y - 1);
             }
         }
     }
@@ -72,18 +72,15 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
         g.drawString(font, title, titleLabelX, titleLabelY, 0xFFFFAA, false);
 
-        // 样板槽标签（3×3 格上方，防误认成投掷器）
+        // 样板槽标签（右上角，3×3 格右侧空位；防误认成投掷器）
         g.drawString(font,
                 Component.translatable("gui.ae2addon.infinite_interface.patterns"),
-                62, 6, 0xAAAAAA, false);
+                104, 6, 0xAAAAAA, false);
 
-        g.drawString(font, Component.translatable("gui.ae2addon.infinite_interface.player_inv"),
-                inventoryLabelX, inventoryLabelY, 0xAAAAAA, false);
-
-        // 蓄水池状态行（样板槽下方、背包上方；最多 6 行，超长截断）
+        // 蓄水池状态行（样板槽下方、背包上方；最多 4 行，超长截断）
         List<String> lines = menu.statusLines;
         int lineY = STATUS_Y;
-        for (int i = 0; i < Math.min(lines.size(), 6); i++) {
+        for (int i = 0; i < Math.min(lines.size(), 4); i++) {
             String line = lines.get(i);
             String stripped = line.replaceAll("§.", "");
             if (font.width(stripped) > W - 16) {
@@ -96,8 +93,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        renderBg(g, partialTick, mouseX, mouseY);
+        // ⚠️ 不能自己先调 renderBg：AbstractContainerScreen.render 内部会调（m_7286_），
+        // 手动再调 = 背景画两遍（四周纯黑）。renderTooltip 同理由 super 统一处理。
         super.render(g, mouseX, mouseY, partialTick);
-        renderTooltip(g, mouseX, mouseY);
     }
 }

@@ -54,15 +54,15 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             }
         }
 
-        // 玩家背包 9×3（下移，给蓄水池状态行让位）
+        // 玩家背包 9×3（样板槽+状态行下方）
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
-                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 120 + row * 18));
+                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 92 + row * 18));
             }
         }
         // 快捷栏 1×9
         for (int col = 0; col < 9; col++) {
-            addSlot(new Slot(playerInventory, col, 8 + col * 18, 178));
+            addSlot(new Slot(playerInventory, col, 8 + col * 18, 152));
         }
     }
 
