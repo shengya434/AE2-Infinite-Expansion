@@ -993,8 +993,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         if ((lvl.getGameTime() & (RESTOCK_INTERVAL - 1)) == 0) {
             restockFromNetwork();
         }
-        if ((lvl.getGameTime() & (RESTOCK_INTERVAL - 1)) == 1) {
-            extractFromMachine(); // 主动抽取：正面机器产物 → 网络
+        if ((lvl.getGameTime() & 3) == 1) {
+            extractFromMachine(); // 主动抽取：正面机器产物 → 网络（固定每 4 tick）
         }
         feedMachinePower(); // 感应卡供电独立于喂出（蓄水池空也供电）
         feedMachine();
@@ -1002,6 +1002,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     /** ① 从网络无上限拉取：对每个待补物品一次拉满缺口（每 RESTOCK_INTERVAL tick）。 */
     private void restockFromNetwork() {
+        cleanupStrayItems(); // 标记槽误存的真实物品退回网络（防吞材料）
         if (STOCK_TARGET <= 0) {
             return; // 配置关闭自动补货
         }
@@ -1158,6 +1159,40 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                     e.getKey().toString().equals(link.getCraftingID().toString()));
         } else {
             craftingRequests.clear();
+        }
+    }
+
+    /**
+     * 清理标记槽里的真实物品（非 WrappedGenericStack）：shift 快捷移动曾绕过
+     * 虚拟化拦截直接写入容器导致材料被吞（2026-08-28 BUG）。
+     * 检测到 → 退回网络 + 清空槽；纯标记（WGS）不受影响。
+     */
+    private void cleanupStrayItems() {
+        IGrid grid = getMainNode().getGrid();
+        if (grid == null) {
+            return;
+        }
+        MEStorage storage = grid.getStorageService().getInventory();
+        boolean changed = false;
+        for (int i = 0; i < markerInv.getContainerSize(); i++) {
+            ItemStack stack = markerInv.getItem(i);
+            if (stack.isEmpty() || stack.getItem() instanceof appeng.items.misc.WrappedGenericStack) {
+                continue;
+            }
+            // 真实物品：退回网络
+            AEItemKey key = AEItemKey.of(stack);
+            if (key != null) {
+                long inserted = storage.insert(key, stack.getCount(),
+                        Actionable.MODULATE, actionSource);
+                com.ae2addon.AE2Addon.LOGGER.warn(
+                        "[ae2addon][feeder] 清理标记槽误存物品: {} x{} 已退回网络",
+                        key, inserted);
+            }
+            markerInv.setItem(i, ItemStack.EMPTY);
+            changed = true;
+        }
+        if (changed) {
+            setChanged();
         }
     }
 

@@ -244,12 +244,10 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 return ItemStack.EMPTY;
             }
         } else {
-            // 玩家背包 → 样板槽（仅已编码样板）或标记槽（任意物品）
+            // 玩家背包 → 样板槽（仅已编码样板）；标记槽不收真实物品（虚拟标记，
+            // shift 移入会卡死被吞——2026-08-28 BUG，改为不放）
             if (PatternDetailsHelper.isEncodedPattern(stack)
                     && !moveItemStackTo(stack, 0, patternEnd, false)) {
-                return ItemStack.EMPTY;
-            }
-            if (!stack.isEmpty() && !moveItemStackTo(stack, patternEnd, markerEnd, false)) {
                 return ItemStack.EMPTY;
             }
             // 背包内移动（避免卡死）
