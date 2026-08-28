@@ -997,8 +997,27 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         MEStorage storage = grid.getStorageService().getInventory();
         for (AEKey key : wantedKeys()) {
             long have = reservoirAmount(key);
-            long want = targetFor(key) - have;
-            if (want <= 0) {
+            long target = targetFor(key);
+            long want = target - have;
+            if (want < 0) {
+                // 目标调小：超出部分退回网络（只补不减 bug 修复）
+                long excess = -want;
+                try {
+                    long back = storage.insert(key, excess, Actionable.MODULATE, actionSource);
+                    if (back > 0) {
+                        subtractReservoir(key, back);
+                        setChanged();
+                        com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ae2addon][feeder] 目标调小，退回 {} x{}（新目标 {}）",
+                                key, back, target);
+                    }
+                } catch (RuntimeException e) {
+                    com.ae2addon.AE2Addon.LOGGER.warn(
+                            "[ae2addon][feeder] 退回失败 {} {}", key, e);
+                }
+                continue;
+            }
+            if (want == 0) {
                 continue;
             }
             long got = storage.extract(key, want, Actionable.MODULATE, actionSource);
