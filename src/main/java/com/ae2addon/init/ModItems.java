@@ -75,21 +75,38 @@ public class ModItems {
                     .title(Component.translatable("itemGroup.ae2addon"))
                     .icon(() -> new ItemStack(ETERNAL_HEART.get()))
                     .displayItems((params, output) -> {
-                        // 已有物品
-                        output.accept(ETERNAL_HEART.get());
-                        output.accept(UNIVERSAL_STORAGE_CELL.get());
-                        output.accept(ModBlocks.INFINITE_CRAFTING_STORAGE.get());
-                        output.accept(ModBlocks.INFINITE_CO_PROCESSING.get());
-
-                        // 新增三方块
-                        output.accept(ModBlocks.INTEGRATED_CPU.get());
-
-                        // ME接口（无限级）
-                        output.accept(ModBlocks.INFINITE_INTERFACE.get());
-
-                        // 物质球
-                        output.accept(MATTER_BALL.get());
+                        // 防御性填充（2026-08-28 12:30 崩）：任何物品计数异常都钳回 1，
+                        // 单个物品失败不影响其余（ForgeHooks 对 count≠1 会硬抛）
+                        acceptTabItem(output, ETERNAL_HEART.get());
+                        acceptTabItem(output, UNIVERSAL_STORAGE_CELL.get());
+                        acceptTabItem(output, ModBlocks.INFINITE_CRAFTING_STORAGE.get());
+                        acceptTabItem(output, ModBlocks.INFINITE_CO_PROCESSING.get());
+                        acceptTabItem(output, ModBlocks.INTEGRATED_CPU.get());
+                        acceptTabItem(output, ModBlocks.INFINITE_INTERFACE.get());
+                        acceptTabItem(output, MATTER_BALL.get());
                     })
                     .build()
     );
+
+    /**
+     * 创造标签页安全添加：显式构造 ItemStack 并保证 count=1
+     * （ForgeHooks 对 count≠1 抛 IllegalArgumentException）。
+     * 单物品异常只跳过该物品并记日志，绝不崩游戏。
+     */
+    private static void acceptTabItem(net.minecraft.world.item.CreativeModeTab.Output output,
+            net.minecraft.world.level.ItemLike item) {
+        try {
+            net.minecraft.world.item.ItemStack stack = new net.minecraft.world.item.ItemStack(item);
+            if (stack.getCount() != 1) {
+                com.ae2addon.AE2Addon.LOGGER.warn(
+                        "[ae2addon] 创造标签页物品 {} count={}（异常，已钳回 1）",
+                        item, stack.getCount());
+                stack.setCount(1);
+            }
+            output.accept(stack);
+        } catch (RuntimeException e) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] 创造标签页添加失败，已跳过: {}", item, e);
+        }
+    }
 }
