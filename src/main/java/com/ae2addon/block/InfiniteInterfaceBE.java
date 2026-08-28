@@ -567,15 +567,64 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 public net.minecraftforge.fluids.FluidStack drain(
                         net.minecraftforge.fluids.FluidStack resource,
                         net.minecraftforge.fluids.capability.IFluidHandler.FluidAction action) {
-                    return net.minecraftforge.fluids.FluidStack.EMPTY; // 不支持抽出
+                    if (resource.isEmpty()) {
+                        return net.minecraftforge.fluids.FluidStack.EMPTY;
+                    }
+                    // 从蓄水池扣对应流体（管道从侧面抽流体缓存）
+                    var key = appeng.api.stacks.AEFluidKey.of(resource.getFluid());
+                    if (key == null) {
+                        return net.minecraftforge.fluids.FluidStack.EMPTY;
+                    }
+                    long have = reservoirAmount(key);
+                    long take = Math.min(have, resource.getAmount());
+                    if (take <= 0) {
+                        return net.minecraftforge.fluids.FluidStack.EMPTY;
+                    }
+                    if (!action.simulate()) {
+                        subtractReservoir(key, take);
+                        setChanged();
+                    }
+                    return new net.minecraftforge.fluids.FluidStack(resource.getFluid(), (int) take);
                 }
 
                 @Override
                 public net.minecraftforge.fluids.FluidStack drain(int maxDrain,
                         net.minecraftforge.fluids.capability.IFluidHandler.FluidAction action) {
-                    return net.minecraftforge.fluids.FluidStack.EMPTY; // 不支持抽出
+                    if (maxDrain <= 0) {
+                        return net.minecraftforge.fluids.FluidStack.EMPTY;
+                    }
+                    // 蓄水池最多流体（管道无指定时的通用抽取）
+                    var best = largestFluid();
+                    if (best == null) {
+                        return net.minecraftforge.fluids.FluidStack.EMPTY;
+                    }
+                    long take = Math.min(best.getValue().longValue(), maxDrain);
+                    if (take <= 0) {
+                        return net.minecraftforge.fluids.FluidStack.EMPTY;
+                    }
+                    if (!action.simulate()) {
+                        subtractReservoir(best.getKey(), take);
+                        setChanged();
+                    }
+                    return new net.minecraftforge.fluids.FluidStack(
+                            ((appeng.api.stacks.AEFluidKey) best.getKey()).getFluid(), (int) take);
                 }
             };
+
+    /** 蓄水池中数量最多的流体（侧面抽取预览/通用抽取用）。 */
+    private Map.Entry<AEKey, BigInteger> largestFluid() {
+        Map.Entry<AEKey, BigInteger> best = null;
+        for (var entry : reservoir.entrySet()) {
+            if (!(entry.getKey() instanceof appeng.api.stacks.AEFluidKey)
+                    || entry.getValue().signum() <= 0) {
+                continue;
+            }
+            if (best == null || entry.getValue().compareTo(best.getValue()) > 0) {
+                best = entry;
+            }
+        }
+        return best;
+    }
 
 
 
