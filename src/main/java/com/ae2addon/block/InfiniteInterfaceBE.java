@@ -250,6 +250,26 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     private boolean feederDiagLogged;
 
+    // ── 主动输入/输出开关（GUI 内切换；默认全开） ──
+
+    /** 主动抽取（正面机器产物 → 网络）。 */
+    public boolean activeExtract = true;
+
+    /** 主动喂出（蓄水池 → 正面机器）。 */
+    public boolean activeFeed = true;
+
+    /** GUI 开关切换。 */
+    public void toggleActive(String which) {
+        if ("extract".equals(which)) {
+            activeExtract = !activeExtract;
+            com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 主动抽取 {}", activeExtract ? "开" : "关");
+        } else if ("feed".equals(which)) {
+            activeFeed = !activeFeed;
+            com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 主动喂出 {}", activeFeed ? "开" : "关");
+        }
+        setChanged();
+    }
+
     // ── 每标记独立缓存目标（中键循环切换；缺省用全局 STOCK_TARGET） ──
 
     /** 标记 key → 独立补货目标（0 = 用全局配置）。 */
@@ -1263,6 +1283,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     /** ③ 按机器容量分批喂出：insertItem 拒收的余量留在蓄水池。 */
     private void feedMachine() {
+        if (!activeFeed) {
+            return; // GUI 开关：主动喂出关闭
+        }
         if (!redstoneAllowsFeed()) {
             return; // 感应卡：红石信号不允许时暂停喂出
         }
@@ -1402,6 +1425,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
      * 只抽机器里的「产物」，避免喂入材料被抽回的死循环。
      */
     private void extractFromMachine() {
+        if (!activeExtract) {
+            return; // GUI 开关：主动抽取关闭
+        }
         if (level == null || level.isClientSide) {
             return;
         }
@@ -2035,6 +2061,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             targetList.add(ent);
         }
         tag.put("markerTargets", targetList);
+        tag.putBoolean("activeExtract", activeExtract);
+        tag.putBoolean("activeFeed", activeFeed);
 
         ListTag reservoirList = new ListTag();
         for (var entry : reservoir.entrySet()) {
@@ -2075,6 +2103,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 markerInv.setItem(slot, stack);
             }
         }
+        activeExtract = tag.getBoolean("activeExtract");
+        activeFeed = tag.getBoolean("activeFeed");
         markerTargets.clear();
         ListTag targetList = tag.getList("markerTargets", Tag.TAG_COMPOUND);
         for (int i = 0; i < targetList.size(); i++) {
