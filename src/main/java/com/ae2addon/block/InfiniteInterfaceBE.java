@@ -993,6 +993,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         if ((lvl.getGameTime() & (RESTOCK_INTERVAL - 1)) == 0) {
             restockFromNetwork();
         }
+        if ((lvl.getGameTime() & (RESTOCK_INTERVAL - 1)) == 1) {
+            extractFromMachine(); // 主动抽取：正面机器产物 → 网络
+        }
         feedMachinePower(); // 感应卡供电独立于喂出（蓄水池空也供电）
         feedMachine();
     }
@@ -1355,6 +1358,106 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         reservoirSummary()[0], fmt(totalAmount()));
             }
         }
+    }
+
+    /**
+     * 主动抽取（2026-08-28 sensei）：每 RESTOCK_INTERVAL tick 从正面机器
+     * 抽取物品/流体/气体 → 直接进网络。
+     * 防回流：抽到的若是标记材料（蓄水池/标记列表中存在）则跳过——
+     * 只抽机器里的「产物」，避免喂入材料被抽回的死循环。
+     */
+    private void extractFromMachine() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        Direction front = getFront();
+        if (front == null) {
+            return;
+        }
+        BlockEntity target = level.getBlockEntity(worldPosition.relative(front));
+        if (target == null) {
+            return;
+        }
+        IGrid grid = getMainNode().getGrid();
+        if (grid == null) {
+            return;
+        }
+        MEStorage storage = grid.getStorageService().getInventory();
+        Direction side = front.getOpposite();
+        try {
+            // 物品：抽第一个槽（产物）；标记材料跳过
+            var itemCap = target.getCapability(ForgeCapabilities.ITEM_HANDLER, side);
+            if (itemCap.isPresent()) {
+                IItemHandler handler = itemCap.orElse(null);
+                if (handler != null && handler.getSlots() > 0) {
+                    var extracted = handler.extractItem(0, 64, true);
+                    if (!extracted.isEmpty()) {
+                        var key = appeng.api.stacks.AEItemKey.of(extracted);
+                        if (key != null && !isMarkedMaterial(key)) {
+                            long inserted = storage.insert(
+                                    key, extracted.getCount(), Actionable.MODULATE, actionSource);
+                            if (inserted > 0) {
+                                handler.extractItem(0, (int) inserted, false);
+                                com.ae2addon.AE2Addon.LOGGER.info(
+                                        "[ae2addon][feeder] 主动抽取: {} x{} → 网络", key, inserted);
+                            }
+                        }
+                    }
+                }
+            }
+            // 流体：drain 1 桶（产物跳过标记材料）
+            var fluidCap = target.getCapability(ForgeCapabilities.FLUID_HANDLER, side);
+            if (fluidCap.isPresent()) {
+                var fluidHandler = fluidCap.orElse(null);
+                if (fluidHandler != null && fluidHandler.getTanks() > 0) {
+                    var drained = fluidHandler.drain(1000, net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.SIMULATE);
+                    if (!drained.isEmpty()) {
+                        var key = appeng.api.stacks.AEFluidKey.of(drained.getFluid());
+                        if (key != null && !isMarkedMaterial(key)) {
+                            long inserted = storage.insert(
+                                    key, drained.getAmount(), Actionable.MODULATE, actionSource);
+                            if (inserted > 0) {
+                                fluidHandler.drain((int) inserted, net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.EXECUTE);
+                                com.ae2addon.AE2Addon.LOGGER.info(
+                                        "[ae2addon][feeder] 主动抽取: {} {}mB → 网络", key, inserted);
+                            }
+                        }
+                    }
+                }
+            }
+            // 气体：extractChemical 1 单位（产物跳过标记材料）
+            if (com.ae2addon.compat.MekanismGasCompat.isLoaded()) {
+                var gasCap = target.getCapability(mekanism.common.capabilities.Capabilities.GAS_HANDLER, side);
+                if (gasCap.isPresent()) {
+                    var gasHandler = gasCap.orElse(null);
+                    if (gasHandler != null && gasHandler.getTanks() > 0) {
+                        var extracted = gasHandler.extractChemical(1000, mekanism.api.Action.SIMULATE);
+                        if (!extracted.isEmpty()) {
+                            AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(extracted);
+                            if (key != null && !isMarkedMaterial(key)) {
+                                long inserted = storage.insert(
+                                        key, extracted.getAmount(), Actionable.MODULATE, actionSource);
+                                if (inserted > 0) {
+                                    gasHandler.extractChemical((int) inserted, mekanism.api.Action.EXECUTE);
+                                    com.ae2addon.AE2Addon.LOGGER.info(
+                                            "[ae2addon][feeder] 主动抽取: {} {}单位 → 网络", key, inserted);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    /** 是否为标记材料（标记列表或蓄水池缓存中）——是则跳过抽取（防回流）。 */
+    private boolean isMarkedMaterial(AEKey key) {
+        if (wantedKeys().contains(key)) {
+            return true;
+        }
+        var have = reservoir.get(key);
+        return have != null && have.signum() > 0;
     }
 
     /** 蓄水池中数量最多的物品（正面/侧面抽取预览共用）。 */
