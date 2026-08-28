@@ -137,6 +137,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
     public static void applyConfig() {
         STOCK_TARGET = AE2AddonConfig.feederStockTarget();
         FEED_BUDGET = AE2AddonConfig.feederFeedBudget();
+        FEED_STACK = AE2AddonConfig.feederFeedStack();
+        RESTOCK_INTERVAL = Math.max(1, AE2AddonConfig.feederRestockInterval());
     }
 
     // ── 蓄水池（BigInteger 防溢出；CPU N× 直灌可达 2^63-1/批） ──
@@ -149,6 +151,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
     /** 推送速率统计：当前 1 秒窗口内喂出数 / 上一秒速率（items/s）。 */
     private long rateWindowFed;
     private long currentFeedRate;
+
+    /** 拒收统计：整 tick 零喂出（机器满/拒收）的次数窗口 / 上一秒速率。 */
+    private long rejectWindow;
+    private long currentRejectRate;
 
     // ── 样板槽（3×3，声明可处理的配方；CPU 路由靠它） ──
 
@@ -355,6 +361,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         if ((lvl.getGameTime() & 19) == 0) {
             currentFeedRate = rateWindowFed;
             rateWindowFed = 0;
+            currentRejectRate = rejectWindow;
+            rejectWindow = 0;
         }
         if (!feederDiagLogged) {
             feederDiagLogged = true;
@@ -505,6 +513,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
                     "[ae2addon][feeder] 喂出 {} 个（{}种并行）→ 蓄水池={}种/合计{}，累计已喂出={}",
                     fedAll, feedable, reservoirSummary()[0],
                     fmt(totalAmount()), fmt(totalFed));
+        } else {
+            rejectWindow++; // 有货但整 tick 零喂出 → 机器满/拒收（诊断瓶颈）
         }
     }
 
@@ -841,6 +851,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
     /** 上一秒喂出速率（items/s，GUI 状态用）。 */
     public long feedRatePerSecond() {
         return currentFeedRate;
+    }
+
+    /** 上一秒整 tick 零喂出次数（机器满/拒收诊断；0=正常）。 */
+    public long rejectRatePerSecond() {
+        return currentRejectRate;
     }
 
     /** 累计已喂出总量（GUI 状态用）。 */

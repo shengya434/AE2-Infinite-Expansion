@@ -52,6 +52,10 @@ public class AE2AddonConfigScreen extends Screen {
         entries.add(new Entry("infiniteItemAmount — 无限物品真实数量", AE2AddonConfig.INFINITE_ITEM_AMOUNT, 1, Long.MAX_VALUE));
         entries.add(new Entry("cpuDisplayBytes — CPU 显示字节", AE2AddonConfig.CPU_DISPLAY_BYTES, 1, Long.MAX_VALUE));
         entries.add(new Entry("cpuDisplayThreads — CPU 显示线程（0=拉满）", AE2AddonConfig.CPU_DISPLAY_THREADS, 0, 100_000_000));
+        entries.add(new Entry("feederFeedBudget — 接口喂出尝试/tick（发送速度主旋钮）", AE2AddonConfig.FEEDER_FEED_BUDGET, 1, 1_000_000));
+        entries.add(new Entry("feederFeedStack — 接口单次喂出堆叠（1-64）", AE2AddonConfig.FEEDER_FEED_STACK, 1, 64));
+        entries.add(new Entry("feederRestockInterval — 接口补货间隔 tick（1=最快）", AE2AddonConfig.FEEDER_RESTOCK_INTERVAL, 1, 200));
+        entries.add(new Entry("feederStockTarget — 接口补货目标/种（0=关）", AE2AddonConfig.FEEDER_STOCK_TARGET, 0, Long.MAX_VALUE));
         entries.add(new Entry("debugLogs — 调试日志", AE2AddonConfig.DEBUG_LOGS, 0, 0));
     }
 

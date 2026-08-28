@@ -188,6 +188,11 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             }
         }
         lines.add("§7喂出目标: " + machine);
+        long rejects = feeder.rejectRatePerSecond();
+        if (rejects > 0) {
+            lines.set(lines.size() - 1,
+                    lines.get(lines.size() - 1) + " §c[拒收 " + rejects + "/s — 机器满或不吃]");
+        }
         for (var item : feeder.topItems(1)) {
             lines.add("§b" + item);
         }

@@ -93,9 +93,21 @@ public final class AE2AddonConfig {
 
     /** 每 tick 喂给相邻机器的 insertItem 尝试次数上限（防单 tick 卡顿）。 */
     public static final ForgeConfigSpec.IntValue FEEDER_FEED_BUDGET = BUILDER
-            .comment("ME接口(无限级)每tick喂给相邻机器的尝试次数上限（防单tick卡顿）",
-                    "Infinite Interface max feed attempts per tick (anti-lag)")
+            .comment("ME接口(无限级)每tick喂给相邻机器的尝试次数上限（防单tick卡顿；发送速度主旋钮）",
+                    "Infinite Interface max feed attempts per tick (anti-lag; main send-speed knob)")
             .defineInRange("feederFeedBudget", 4096, 1, 1_000_000);
+
+    /** 每次 insertItem 尝试的最大堆叠数（受物品堆叠上限约束）。 */
+    public static final ForgeConfigSpec.IntValue FEEDER_FEED_STACK = BUILDER
+            .comment("ME接口(无限级)每次尝试的最大堆叠数（1-64；调小=更精细的发送粒度）",
+                    "Infinite Interface max stack per feed attempt (1-64)")
+            .defineInRange("feederFeedStack", 64, 1, 64);
+
+    /** 补货间隔（tick；1 = 每 tick 补货 = 网络拉取最快）。 */
+    public static final ForgeConfigSpec.IntValue FEEDER_RESTOCK_INTERVAL = BUILDER
+            .comment("ME接口(无限级)自动补货间隔 tick（1=每tick补货最快；调大省网络操作）",
+                    "Infinite Interface restock interval ticks (1 = fastest)")
+            .defineInRange("feederRestockInterval", 4, 1, 200);
 
     // ── 调试 ──
 
@@ -197,5 +209,15 @@ public final class AE2AddonConfig {
     /** ME接口(无限级)：每 tick 喂出尝试次数上限。 */
     public static int feederFeedBudget() {
         return Math.max(1, FEEDER_FEED_BUDGET.get());
+    }
+
+    /** ME接口(无限级)：每次尝试的最大堆叠数。 */
+    public static int feederFeedStack() {
+        return Math.max(1, Math.min(64, FEEDER_FEED_STACK.get()));
+    }
+
+    /** ME接口(无限级)：补货间隔 tick。 */
+    public static int feederRestockInterval() {
+        return Math.max(1, FEEDER_RESTOCK_INTERVAL.get());
     }
 }
