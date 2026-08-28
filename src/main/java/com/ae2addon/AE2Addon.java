@@ -114,8 +114,27 @@ public class AE2Addon {
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.crafting.BatchedCraftingQueue.class);
 
-        // ME接口（无限级）升级卡注册：容量卡（每卡+1页=9格/槽，最多4）+ 红石/反向/感应/频道/虚拟合成
-        // 2026-08-28 12:22 sensei：容量卡上限 2→4；加速卡取消（不再接受速度卡）
+        // 升级卡注册移到方块注册完成后（onBlocksRegistered）；AppFlux/ExtendedAE+
+        // 的卡在运行时懒注册（ensureCompatUpgrades，BE 构造时触发）
+        modBus.addListener(this::onBlocksRegistered);
+
+        LOGGER.info("✅ AE2 Addon loaded! Universal Storage Cells ready!");
+    }
+
+    public static ResourceLocation id(String path) {
+        return new ResourceLocation(MODID, path);
+    }
+
+    /**
+     * 方块注册完成后注册升级卡（2026-08-28 崩溃修复）：
+     * 构造期 ModBlocks.XXX.get() 会抛 "Registry Object not present" NPE
+     * （方块要等 REGISTER 事件才进注册表），必须延迟到这里。
+     */
+    private void onBlocksRegistered(net.minecraftforge.registries.RegisterEvent event) {
+        if (event.getRegistryKey() != net.minecraft.core.registries.Registries.BLOCK) {
+            return;
+        }
+        // AE2 自带卡片（AE2 物品始终可用）
         appeng.api.upgrades.Upgrades.add(
                 ModBlocks.INFINITE_INTERFACE.get(),
                 appeng.core.definitions.AEItems.CAPACITY_CARD.asItem(), 4);
@@ -128,6 +147,17 @@ public class AE2Addon {
         appeng.api.upgrades.Upgrades.add(
                 ModBlocks.INFINITE_INTERFACE.get(),
                 appeng.core.definitions.AEItems.CRAFTING_CARD.asItem(), 1);
+    }
+
+    /** 跨 mod 升级卡懒注册（AppFlux 感应卡 / ExtendedAE+ 频道卡、虚拟合成卡）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_UPGRADES =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** 世界加载时（BE 构造）调用；此时所有 mod 的注册表已就绪。 */
+    public static void ensureCompatUpgrades() {
+        if (COMPAT_UPGRADES.getAndSet(true)) {
+            return; // 只注册一次
+        }
         // AppFlux 感应卡（供电卡；未装 AppFlux 时为 null 跳过）
         var inductionCard = com.ae2addon.compat.AppFluxPowerCompat.inductionCard();
         if (inductionCard != null) {
@@ -145,11 +175,5 @@ public class AE2Addon {
             appeng.api.upgrades.Upgrades.add(
                     ModBlocks.INFINITE_INTERFACE.get(), virtualCard, 1);
         }
-
-        LOGGER.info("✅ AE2 Addon loaded! Universal Storage Cells ready!");
-    }
-
-    public static ResourceLocation id(String path) {
-        return new ResourceLocation(MODID, path);
     }
 }

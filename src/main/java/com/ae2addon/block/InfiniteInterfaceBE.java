@@ -241,6 +241,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     public InfiniteInterfaceBE(BlockPos pos, BlockState state) {
         super(ModBlockEntities.INFINITE_INTERFACE.get(), pos, state);
+        // 世界加载时触发跨 mod 升级卡懒注册（AppFlux/ExtendedAE+；构造器里注册会崩）
+        com.ae2addon.AE2Addon.ensureCompatUpgrades();
     }
 
     // ── 诊断日志（定位供料问题用） ──
