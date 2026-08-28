@@ -3,6 +3,7 @@ package com.ae2addon.gui;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.config.AE2AddonConfig;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -11,6 +12,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.Slot;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -25,8 +27,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
     private static final int W = 176;
     private static final int H = 237;
-    private static final int MAX_STATUS_LINES = 3;
-    private static final int STATUS_Y = 139;
+    private static final int MAX_STATUS_LINES = 4;
+    private static final int STATUS_Y = 138;
 
     private static final String[] KEYS = {"stockTarget", "restockInterval", "feedBudget"};
     private static final String[] LABELS = {
@@ -64,6 +66,24 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                 }
             }
         }
+    }
+
+    /** 按像素宽度拆行（逐码点，中文/emoji 安全）。 */
+    private static List<String> wrapByWidth(Font font, String text, int maxW) {
+        List<String> out = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        for (int i = 0; i < text.length(); ) {
+            int cp = text.codePointAt(i);
+            String ch = new String(Character.toChars(cp));
+            if (cur.length() > 0 && font.width(cur.toString() + ch) > maxW) {
+                out.add(cur.toString());
+                cur.setLength(0);
+            }
+            cur.append(ch);
+            i += Character.charCount(cp);
+        }
+        if (cur.length() > 0) out.add(cur.toString());
+        return out;
     }
 
     /** 状态行 JSON → Component（失败回退纯文本）。 */
@@ -323,14 +343,27 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         // 状态行（样板槽下方；最多 2 行，超长截断）
         List<String> lines = menu.statusLines;
         int lineY = STATUS_Y;
+        int shown = 0;
+        outer:
         for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
             Component comp = deserialize(lines.get(i));
-            String stripped = comp.getString().replaceAll("§.", "");
-            if (font.width(stripped) > W - 16) {
-                comp = Component.literal(font.plainSubstrByWidth(stripped, W - 20) + "…");
+            String text = comp.getString();
+            String stripped = text.replaceAll("§.", "");
+            if (font.width(stripped) <= W - 16) {
+                // 一行放得下：原样（保留颜色）
+                if (shown >= MAX_STATUS_LINES) break;
+                g.drawString(font, comp, 8, lineY, 0xFFFFFF, false);
+                lineY += 5;
+                shown++;
+                continue;
             }
-            g.drawString(font, comp, 8, lineY, 0xFFFFFF, false);
-            lineY += 7; // 行距 7：3 行（139/146/153）不压背包（161）
+            // 超宽：按宽度拆行（纯文本降级，保证完整可见）
+            for (String seg : wrapByWidth(font, stripped, W - 16)) {
+                if (shown >= MAX_STATUS_LINES) break outer;
+                g.drawString(font, Component.literal(seg), 8, lineY, 0xFFFFFF, false);
+                lineY += 5;
+                shown++;
+            }
         }
         // 标记槽图标叠加（WrappedGenericStack 流体/物品）
         renderMarkerIcons(g);
