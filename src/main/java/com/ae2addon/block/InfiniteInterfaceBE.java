@@ -437,7 +437,17 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
                 @Override
                 public net.minecraft.world.item.ItemStack getStackInSlot(int slot) {
-                    return net.minecraft.world.item.ItemStack.EMPTY; // 虚拟槽：无预览
+                    if (slot != 0) {
+                        return net.minecraft.world.item.ItemStack.EMPTY;
+                    }
+                    // 蓄水池最多物品预览（管道能看到 → 可抽取）
+                    var best = largestItem();
+                    if (best == null || !(best.getKey() instanceof AEItemKey itemKey)) {
+                        return net.minecraft.world.item.ItemStack.EMPTY;
+                    }
+                    long amount = best.getValue()
+                            .min(BigInteger.valueOf(FEED_STACK)).longValue();
+                    return itemKey.toStack((int) Math.max(1, amount));
                 }
 
                 @Override
@@ -476,7 +486,26 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 @Override
                 public net.minecraft.world.item.ItemStack extractItem(int slot, int amount,
                         boolean simulate) {
-                    return net.minecraft.world.item.ItemStack.EMPTY; // 不支持抽出
+                    // 从蓄水池抽取（与正面一致；管道/漏斗可从侧面抽缓存）
+                    if (slot != 0 || amount <= 0) {
+                        return net.minecraft.world.item.ItemStack.EMPTY;
+                    }
+                    var best = largestItem();
+                    if (best == null || !(best.getKey() instanceof AEItemKey itemKey)) {
+                        return net.minecraft.world.item.ItemStack.EMPTY;
+                    }
+                    long take = best.getValue()
+                            .min(BigInteger.valueOf(amount)).min(BigInteger.valueOf(FEED_STACK))
+                            .longValue();
+                    if (take <= 0) {
+                        return net.minecraft.world.item.ItemStack.EMPTY;
+                    }
+                    if (!simulate) {
+                        subtractReservoir(itemKey, take);
+                        totalFed = totalFed.add(BigInteger.valueOf(take));
+                        setChanged();
+                    }
+                    return itemKey.toStack((int) take);
                 }
 
                 @Override
@@ -1157,6 +1186,21 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
     }
 
+    /** 蓄水池中数量最多的物品（正面/侧面抽取预览共用）。 */
+    private Map.Entry<AEKey, BigInteger> largestItem() {
+        Map.Entry<AEKey, BigInteger> best = null;
+        for (var entry : reservoir.entrySet()) {
+            if (!(entry.getKey() instanceof AEItemKey) || entry.getValue().signum() <= 0) {
+                continue;
+            }
+            if (best == null
+                    || entry.getValue().compareTo(best.getValue()) > 0) {
+                best = entry;
+            }
+        }
+        return best;
+    }
+
     /** 感应卡供电：网络 FE → 正面机器能量槽（独立于喂出；蓄水池空也供电）。 */
     private void feedMachinePower() {
         if (!hasInductionCard()) {
@@ -1489,19 +1533,6 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             return false; // 只出不进
         }
 
-        private Map.Entry<AEKey, BigInteger> largestItem() {
-            Map.Entry<AEKey, BigInteger> best = null;
-            for (var entry : reservoir.entrySet()) {
-                if (!(entry.getKey() instanceof AEItemKey) || entry.getValue().signum() <= 0) {
-                    continue;
-                }
-                if (best == null
-                        || entry.getValue().compareTo(best.getValue()) > 0) {
-                    best = entry;
-                }
-            }
-            return best;
-        }
     }
 
     // ── NBT ──
