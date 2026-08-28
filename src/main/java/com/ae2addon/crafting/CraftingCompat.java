@@ -14,10 +14,32 @@ public final class CraftingCompat {
     private CraftingCompat() {}
 
     /**
-     * 热路径调试日志开关（默认关）：submitJob/模拟拦截/批次进度等高频日志
-     * 全量打开会拖慢服务端（字符串格式化），排查问题时才开启。
+     * 热路径调试日志开关（config debugLogs 初始值，可在游戏内命令切换；
+     * 配置热加载会同步覆盖）：高频日志全量打开会拖慢服务端，排查时才开启。
      */
-    public static volatile boolean debugLogs = false;
+    public static volatile boolean debugLogs = com.ae2addon.config.AE2AddonConfig.debugLogs();
+
+    // ── 可热加载配置（config/ae2addon-common.toml 修改后自动生效，无需重启）──
+
+    /** 批量推送翻倍上限（1×→2×→4× 指数暴涨的最大 N）。 */
+    public static volatile long batchMaxMultiplier =
+            com.ae2addon.config.AE2AddonConfig.batchMaxMultiplier();
+
+    /** 批量经验共享继承上限（0 = 关闭共享，新 lane 从 1× 起步）。 */
+    public static volatile long sharedExpCap =
+            com.ae2addon.config.AE2AddonConfig.sharedExpCap();
+
+    /** 小额订单免估算阈值（下单量 ≤ 此值不展开配方树，防普通订单卡顿）。 */
+    public static volatile long cheapOrderAmount =
+            com.ae2addon.config.AE2AddonConfig.cheapOrderAmount();
+
+    /** 配置热加载时由 AE2AddonConfig 调用，同步最新值。 */
+    public static void applyConfig() {
+        debugLogs = com.ae2addon.config.AE2AddonConfig.debugLogs();
+        batchMaxMultiplier = com.ae2addon.config.AE2AddonConfig.batchMaxMultiplier();
+        sharedExpCap = com.ae2addon.config.AE2AddonConfig.sharedExpCap();
+        cheapOrderAmount = com.ae2addon.config.AE2AddonConfig.cheapOrderAmount();
+    }
 
     /**
      * 时间片限流是否已注入生效（由 CraftingCpuLogicMixin 的限流重定向置位）。

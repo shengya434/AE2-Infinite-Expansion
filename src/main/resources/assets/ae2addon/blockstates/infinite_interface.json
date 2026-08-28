@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "ae2addon:block/infinite_interface"
+    }
+  }
+}

@@ -5,8 +5,11 @@
   "block.ae2addon.infinite_crafting_storage": "无限合成存储器",
   "block.ae2addon.infinite_co_processing": "无限并行处理单元",
   "block.ae2addon.integrated_cpu": "集成型CPU（无限级）",
+  "block.ae2addon.infinite_interface": "ME接口（无限级）",
   "gui.ae2addon.mode_select": "选择存储模式",
   "gui.ae2addon.mode2_config": "自定义无限配置",
+  "gui.ae2addon.infinite_interface.title": "ME接口（无限级）",
+  "gui.ae2addon.infinite_interface.player_inv": "背包",
 
   "gui.ae2addon.cell.name": "§5万能无限 [%s]",
   "gui.ae2addon.mode.unlimited": "§a无限制",

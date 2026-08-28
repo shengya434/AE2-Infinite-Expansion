@@ -61,6 +61,12 @@ public class ModItems {
             () -> new BlockItem(ModBlocks.INTEGRATED_CPU.get(), new Item.Properties())
     );
 
+    /** ME接口（无限级）方块物品 */
+    public static final RegistryObject<Item> INFINITE_INTERFACE_ITEM = ITEMS.register(
+            "infinite_interface",
+            () -> new BlockItem(ModBlocks.INFINITE_INTERFACE.get(), new Item.Properties())
+    );
+
     // ── 创造模式标签页 ──
 
     public static final RegistryObject<CreativeModeTab> TAB_AE2ADDON = CREATIVE_TABS.register(
@@ -77,6 +83,9 @@ public class ModItems {
 
                         // 新增三方块
                         output.accept(ModBlocks.INTEGRATED_CPU.get());
+
+                        // ME接口（无限级）
+                        output.accept(ModBlocks.INFINITE_INTERFACE.get());
 
                         // 物质球
                         output.accept(MATTER_BALL.get());

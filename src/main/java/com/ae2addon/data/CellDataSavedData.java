@@ -93,8 +93,8 @@ public class CellDataSavedData extends SavedData {
     // ══════════════════════════════════════════════
 
     public static class CellData {
-        /** 无限物品在面板中显示的字节数 — 与合成 CPU 存储量一致 */
-        public static final long INFINITE_BYTES = 300000000;
+        /** 无限物品在面板中显示的字节数（config cellDisplayBytes 热加载） */
+        public static volatile long INFINITE_BYTES = com.ae2addon.config.AE2AddonConfig.cellDisplayBytes();
 
         /** BigInteger 存储，突破 Long.MAX_VALUE 限制 */
         public final Map<AEKey, BigInteger> s1 = new HashMap<>();

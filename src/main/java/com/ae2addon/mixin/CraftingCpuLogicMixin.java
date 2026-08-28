@@ -12,6 +12,7 @@ import appeng.me.cluster.implementations.CraftingCPUCluster;
 import appeng.me.service.CraftingService;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.block.IntegratedCPUBE;
+import com.ae2addon.crafting.CraftingCompat;
 import com.ae2addon.crafting.ScaledPattern;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
@@ -72,9 +73,29 @@ public abstract class CraftingCpuLogicMixin {
      * Long.MAX_VALUE：批量 N 可以一路涨到 long 级（2^63−1），
      * 单次 push 即可发放 long 级材料（受任务剩余量与库存钳制，
      * 输入×N 溢出由 ScaledPattern 的 multiplyExact 抛异常自动回退）。
+     * config batchMaxMultiplier 可配（热加载）。
      */
     @Unique
-    private static final long AE2ADDON_BATCH_MAX_MULTIPLIER = Long.MAX_VALUE;
+    private long ae2addon$batchMaxMultiplier() {
+        return com.ae2addon.crafting.CraftingCompat.batchMaxMultiplier;
+    }
+
+    /**
+     * 批量经验共享（2026-08-27）：按产物物品共享「同 pattern 已成功翻倍到的 N」。
+     * 各 lane 独立 CPU、各自维护 batchNext，新 lane 从 1× 探测起步，翻倍到高 N
+     * 前速度远落后老 lane（sensei 实测 20:05「每个线程发送速度不一致」）。
+     * 新 lane 无本地经验时继承共享经验（clamp 到 65536 起步），随后本地翻倍
+     * 继续增长——所有 lane 快速收敛到一致吞吐。key = 产物 AEKey。
+     */
+    @Unique
+    private static final java.util.Map<appeng.api.stacks.AEKey, Long>
+            ae2addon$sharedBatchExp = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 共享经验继承上限（config sharedExpCap 热加载，0=关闭共享）：防新 lane 直接继承天文 N 单次巨量 push */
+    @Unique
+    private long ae2addon$sharedExpCap() {
+        return com.ae2addon.crafting.CraftingCompat.sharedExpCap;
+    }
 
     /**
      * 诊断日志间隔（tick）。2026-08-21 从 100 拉大到 600（30 秒）——
@@ -192,6 +213,10 @@ public abstract class CraftingCpuLogicMixin {
     private boolean ae2addon$diagExtractLogged;
     @Unique
     private long ae2addon$diagPushCalls;
+
+    /** 诊断日志节流计数器（extractBatch 详情/1x提取/pushBatch 共用，防刷屏掉刻） */
+    @Unique
+    private long ae2addon$diagExtractLogCount;
     @Unique
     private long ae2addon$diagProbeGrowth;
     @Unique
@@ -482,6 +507,19 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$diagTaskValueFallback++;
         }
         long n = Math.min(ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
+        if (com.ae2addon.crafting.CraftingCompat.debugLogs && (++ae2addon$diagExtractLogCount & 0x3F) == 0) {
+            String io = "?";
+            try {
+                var outs = patternDetails.getOutputs();
+                if (outs != null && outs.length > 0 && outs[0] != null && outs[0].what() != null) {
+                    io = outs[0].what().getDisplayName().getString();
+                }
+            } catch (RuntimeException ignored) {
+            }
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][debug] extractBatch详情(节流): 产出={} taskRemaining={} batchMultiplier={} n={}",
+                    io, taskRemaining, ae2addon$getBatchMultiplier(patternDetails), n);
+        }
         // 2026-08-22：合成样板（AECraftingPattern）强制 1× 推送。
         // 合成机器（ExtendedAE PatternCore/普通样板供应器）按单次配方执行，
         // N× ScaledPattern 输入会导致拒收/错乱（sensei 实测：AECraftingPattern
@@ -499,8 +537,23 @@ public abstract class CraftingCpuLogicMixin {
         if (n <= 1) {
             // 我们 CPU：直接调原始静态方法，绕开 Omni 的 extractBatch handler
             // （它会对 scaled 输出算 waitingFor 余量，N 大时 reinject+null → 批量被误判失败锁 1）
-            return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
+            var result1x = CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
                     level, expectedOutputs, expectedContainerItems);
+            if (com.ae2addon.crafting.CraftingCompat.debugLogs && (++ae2addon$diagExtractLogCount & 0x3F) == 0) {
+                String io = "?";
+                try {
+                    var outs = patternDetails.getOutputs();
+                    if (outs != null && outs.length > 0 && outs[0] != null && outs[0].what() != null) {
+                        io = outs[0].what().getDisplayName().getString();
+                    }
+                } catch (RuntimeException ignored) {
+                }
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] 1x提取(节流): 产出={} 结果={} inv={}",
+                        io, result1x == null ? "null(失败)" : "成功",
+                        inventory == null ? "null" : inventory.getClass().getSimpleName());
+            }
+            return result1x;
         }
 
         ae2addon$diagBatchExtractAttempts++;
@@ -583,6 +636,16 @@ public abstract class CraftingCpuLogicMixin {
                 || ae2addon$batchScaledPattern == null
                 || ae2addon$batchMultiplier <= 1) {
             boolean accepted = provider.pushPattern(patternDetails, inputs);
+            if (CraftingCompat.debugLogs) {
+                // 节流：push 高频，全量打印掉刻（sensei 实测 20:00）。每 200 次打一条。
+                if ((++ae2addon$diagPushCalls & 0xFF) == 0) {
+                    com.ae2addon.AE2Addon.LOGGER.info(
+                            "[ae2addon][debug] pushBatch(1x): provider={} pattern={} 接受={} batchActive={} (节流)",
+                            provider == null ? "null" : provider.getClass().getSimpleName(),
+                            patternDetails == null ? "null" : patternDetails.getClass().getSimpleName(),
+                            accepted, ae2addon$batchActive);
+                }
+            }
             // 1× 成功也是批量探测的成功：翻倍 N，让同一 tick 内后续提取
             // 直接尝试 2×/4×/8×... 指数暴涨，对无限消费型接收方瞬间全发
             if (ae2addon$budgetActive && accepted && patternDetails != null) {
@@ -602,6 +665,18 @@ public abstract class CraftingCpuLogicMixin {
         } finally {
             if (temporarilyAdded) {
                 ae2addon$removeTemporarilyAddedPattern(provider, dispatchPattern);
+            }
+        }
+
+        if (CraftingCompat.debugLogs) {
+            // 节流：push 高频（32 lane × 每 tick 多次），全量打印掉刻
+            //（sensei 实测 20:00：开 debug 日志游戏掉刻）。每 200 次打一条。
+            if ((++ae2addon$diagPushCalls & 0xFF) == 0) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] pushBatch: provider={} pattern={} N={} 接受={} (节流)",
+                        provider == null ? "null" : provider.getClass().getSimpleName(),
+                        dispatchPattern == null ? "null" : dispatchPattern.getClass().getSimpleName(),
+                        ae2addon$batchMultiplier, accepted);
             }
         }
 
@@ -655,7 +730,37 @@ public abstract class CraftingCpuLogicMixin {
     @Unique
     private long ae2addon$getBatchMultiplier(IPatternDetails pattern) {
         var value = ae2addon$batchNext.get(pattern);
-        return value == null ? 1L : value;
+        if (value != null) {
+            return value;
+        }
+        // 无本地经验：继承共享经验（其他 lane 同产物已成功翻倍到的 N）
+        if (ae2addon$sharedExpCap() <= 0) {
+            return 1L; // config 关闭共享（sharedExpCap=0）
+        }
+        var key = ae2addon$patternKey(pattern);
+        if (key != null) {
+            var exp = ae2addon$sharedBatchExp.get(key);
+            if (exp != null && exp > 1) {
+                return Math.min(exp, ae2addon$sharedExpCap());
+            }
+        }
+        return 1L;
+    }
+
+    /** 样板经验 key：产物 AEKey（同产物样板共享批量经验）；获取失败返回 null */
+    @Unique
+    private static appeng.api.stacks.AEKey ae2addon$patternKey(IPatternDetails pattern) {
+        if (pattern == null) {
+            return null;
+        }
+        try {
+            var outs = pattern.getOutputs();
+            if (outs != null && outs.length > 0 && outs[0] != null && outs[0].what() != null) {
+                return outs[0].what();
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return null;
     }
 
     @Unique
@@ -675,10 +780,18 @@ public abstract class CraftingCpuLogicMixin {
         if (Boolean.TRUE.equals(ae2addon$batchLocked.get(pattern))) {
             return;
         }
-        long doubled = multiplier > AE2ADDON_BATCH_MAX_MULTIPLIER / 2
-                ? AE2ADDON_BATCH_MAX_MULTIPLIER
+        long maxMult = ae2addon$batchMaxMultiplier();
+        long doubled = multiplier > maxMult / 2
+                ? maxMult
                 : multiplier * 2;
         ae2addon$batchNext.put(pattern, Math.max(1L, doubled));
+        // 共享经验：同产物其他 lane 的新任务继承此 N（clamp 上限防单次巨量起步）
+        if (multiplier > 1 && ae2addon$sharedExpCap() > 0) {
+            var key = ae2addon$patternKey(pattern);
+            if (key != null) {
+                ae2addon$sharedBatchExp.merge(key, multiplier, Math::max);
+            }
+        }
     }
 
     @Unique

@@ -43,6 +43,20 @@ public class AE2Addon {
     public AE2Addon() {
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
 
+        // 注册配置文件（config/ae2addon-common.toml，2026-08-27；热加载）
+        com.ae2addon.config.AE2AddonConfig.register();
+        modBus.addListener(com.ae2addon.config.AE2AddonConfig::onConfigEvent);
+
+        // 游戏内配置界面（mod 列表 → 配置按钮，2026-08-27 21:46）：
+        // 自研轻量界面（Forge 1.20.1 无内置通用配置 GUI），保存即写盘 + 热加载。
+        // 用全限定名 + dist 检查：dedicated server 不加载 client 类。
+        if (net.minecraftforge.fml.loading.FMLEnvironment.dist.isClient()) {
+            net.minecraftforge.fml.ModLoadingContext.get().registerExtensionPoint(
+                    net.minecraftforge.client.ConfigScreenHandler.ConfigScreenFactory.class,
+                    () -> new net.minecraftforge.client.ConfigScreenHandler.ConfigScreenFactory(
+                            screen -> new com.ae2addon.client.gui.AE2AddonConfigScreen(screen)));
+        }
+
         // 注册物品
         ModItems.ITEMS.register(modBus);
         ModItems.CREATIVE_TABS.register(modBus);
@@ -79,6 +93,11 @@ public class AE2Addon {
                 com.ae2addon.network.OrderListPacket::encode,
                 com.ae2addon.network.OrderListPacket::decode,
                 com.ae2addon.network.OrderListPacket::handle
+        );
+        NETWORK.registerMessage(4, com.ae2addon.network.FeederStatusPacket.class,
+                com.ae2addon.network.FeederStatusPacket::encode,
+                com.ae2addon.network.FeederStatusPacket::decode,
+                com.ae2addon.network.FeederStatusPacket::handle
         );
 
         MinecraftForge.EVENT_BUS.register(this);

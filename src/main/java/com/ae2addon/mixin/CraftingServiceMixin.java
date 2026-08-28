@@ -45,6 +45,16 @@ import java.util.concurrent.Future;
 @Mixin(value = CraftingService.class, remap = false, priority = 1200)
 public abstract class CraftingServiceMixin implements IntegratedCraftingServiceBridge {
 
+    /**
+     * 2026-08-27 重要修正：priority 语义 = 高者后应用、后执行。
+     * 此前设 2500（> AE2-VM 的 2000）想让模拟拦截抢在 VM 前，实际相反：
+     * 我们后执行，VM 先 cancel → 我们让路 → 巨型订单绕过拆批（sensei 实测
+     * 20:25：有 AE2-VM 时无「模拟拦截」日志、patternTimes=Long.MAX 的
+     * oak_stairs/blackstone 订单未拆批）。改回 1200（< VM 2000）：
+     * 我们先应用先执行 → 超限拦截 cancel → VM 后执行看到 isCancelled 尊重（
+     * VM 字节码第 3 步 callback.isCancelled() → return，反编译确认）。
+     */
+
     @Shadow
     @Final
     private Set<CraftingCPUCluster> craftingCPUClusters;
@@ -124,12 +134,22 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             ICraftingRequester requestingMachine, ICraftingCPU target,
             boolean prioritizePower, IActionSource source,
             CallbackInfoReturnable<ICraftingSubmitResult> callback) {
-        if (job == null || job.simulation() || BatchedCraftingQueue.dispatchInProgress) {
+        if (job == null || BatchedCraftingQueue.dispatchInProgress) {
             if (CraftingCompat.debugLogs) {
                 com.ae2addon.AE2Addon.LOGGER.info(
                         "[ae2addon][debug] submitJob早退 job={} sim={} dispatch={}",
                         job == null ? "null" : job.getClass().getSimpleName(),
                         job != null && job.simulation(), BatchedCraftingQueue.dispatchInProgress);
+            }
+            return;
+        }
+        // AE2-VM 等第三方 mod 接管模拟计算后，返回的模拟计划 simulation=true。
+        // 普通模拟计划放行原版；超限的模拟计划也必须拆批（防溢出级订单绕过拆批）。
+        if (job.simulation() && !ae2addon$isOversized(job)) {
+            if (CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] submitJob模拟计划放行(不超限) job={}",
+                        job.getClass().getSimpleName());
             }
             return;
         }
@@ -195,6 +215,11 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
         }
 
         var order = BatchedCraftingOrder.create(job, requestingMachine, source);
+        if (order == null && requestingMachine == null) {
+            // 2026-08-27 修复：VM 提交路径 requester 可能为 null → create 直接失败。
+            // 用本 CraftingService 的 grid 兜底构造（requester 只用于拿网格/level）。
+            order = BatchedCraftingOrder.createFromGrid(job, this.grid, source);
+        }
         if (order == null) {
             if (ae2addon$hasOverflow(job)) {
                 ChatLog.err(ae2addon$levelOf(requestingMachine), null,
@@ -226,13 +251,30 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
      * 会让普通订单下单瞬间卡死游戏（sensei 实测 17:31）。大单才估算（缓存）。
      */
     @Unique
-    private static final long AE2ADDON_CHEAP_ORDER_AMOUNT = 1_000_000L;
+    private long ae2addon$cheapOrderAmount() {
+        return com.ae2addon.crafting.CraftingCompat.cheapOrderAmount;
+    }
 
     @Inject(method = "beginCraftingCalculation", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private void ae2addon$deferOversizedSimulation(Level level,
             ICraftingSimulationRequester simRequester, AEKey what, long amount,
             CalculationStrategy strategy,
             CallbackInfoReturnable<Future<ICraftingPlan>> callback) {
+        // 2026-08-27：handler 是否被调用的诊断（非 debug——VM 环境下曾出现
+        // handler 完全不执行/被抢先，debug 日志看不到，改 WARN 定位）。
+        com.ae2addon.AE2Addon.LOGGER.warn(
+                "[ae2addon] 模拟拦截被调用 what={} amount={} isCancelled={}",
+                what, amount, callback.isCancelled());
+        // 2026-08-27：AE2-VM 等更高/同优先级 mod 已接管（cancel+setReturnValue）→ 让路，
+        // 避免覆盖对方的计算结果（本类 priority=1200 低于 VM 的 2000，正常我们先执行）。
+        if (callback.isCancelled()) {
+            if (CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] 模拟拦截让路: 已被其他mod接管(cancelled) what={} amount={}",
+                        what, amount);
+            }
+            return;
+        }
         if (level == null || level.isClientSide || what == null || amount <= 0) {
             if (CraftingCompat.debugLogs) {
                 com.ae2addon.AE2Addon.LOGGER.info(
@@ -242,12 +284,22 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             return;
         }
         // 小额订单免估算：直接走原版（不展开配方树，避免服务端线程卡顿）
-        if (amount <= AE2ADDON_CHEAP_ORDER_AMOUNT) {
+        if (amount <= ae2addon$cheapOrderAmount()) {
             return;
         }
         long t0 = System.nanoTime();
+        // 2026-08-27：拆批基准 = OVERFLOW_THRESHOLD (Long.MAX = 2^63-1，真溢出线)。
+        // 需求 2^63 → 拆 (2^63-1)+1；2^64 → (2^63-1)×2+2。
+        // 不用 SAFE_LIMIT (Long.MAX/4)——那是执行层保守余量，作拆批基准会
+        // 把 10^16~10^18 级合法订单误判超限、拆出天文数字批次（sensei 拍板）。
         var analysis = RequirementCalculator.analyze(
-                grid, what, amount, BatchedCraftingOrder.SAFE_LIMIT);
+                grid, what, amount, BatchedCraftingOrder.OVERFLOW_THRESHOLD);
+        // 2026-08-27：analyze 结果非 debug（VM 环境下曾判定未超限/异常，需无条件可见）
+        com.ae2addon.AE2Addon.LOGGER.warn(
+                "[ae2addon] 模拟拦截结果: what={} amount={} 超限={} 截断={} perBatch={} perUnit数={}",
+                what, amount, analysis.oversized, analysis.truncated,
+                analysis.maxSafeBatch,
+                analysis.perUnit == null ? -1 : analysis.perUnit.size());
         if (CraftingCompat.debugLogs) {
             com.ae2addon.AE2Addon.LOGGER.info(
                     "[ae2addon][debug] 模拟拦截: what={} amount={} 超限={} 截断={} perBatch={} 耗时={}ms",
@@ -383,21 +435,28 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
     }
 
     /**
-     * 超限检测（2026-08-22 双系统）：usedItems/patternTimes 出现负值（long 溢出）
-     * 或超过 SAFE_LIMIT（溢出级巨型订单）→ 判定为巨型订单（拦截拆批）。
-     * 性能级（PERF_LIMIT+EMC）在模拟拦截阶段已处理，这里只管溢出兜底。
+     * 超限检测：usedItems/patternTimes 出现负值（long 溢出损坏）
+     * 或超过 OVERFLOW_THRESHOLD（Long.MAX/2 ≈ 4.6×10^18，接近真溢出 2^63）
+     * → 判定为巨型订单（拦截拆批）。
+     * <p>
+     * 2026-08-27 修正：原用 SAFE_LIMIT (Long.MAX/4) 太保守，AE2-VM 精确计算
+     * 的 10^16~10^18 级订单（远未到 2^63 溢出）会被误判超限强行拆批，
+     * 批数超上限反而拆批失败（sensei 实测「溢出拆批没成功」）。
      */
     @Unique
     private static boolean ae2addon$isOversized(ICraftingPlan plan) {
         try {
             for (var entry : plan.usedItems()) {
                 long value = entry.getLongValue();
-                if (value < 0 || value > BatchedCraftingOrder.SAFE_LIMIT) {
+                // >= 而非 >：AE2-VM 把超限需求 cap 成 Long.MAX_VALUE 哨兵（正好等于阈值），
+                // 用 > 会漏判（Long.MAX > Long.MAX = false）→ 订单按 cap 值提交只发 Long.MAX 材料
+                // （sensei 实测 16:00：真实需求 2^64 只发出 9223372036854775807）。
+                if (value < 0 || value >= BatchedCraftingOrder.OVERFLOW_THRESHOLD) {
                     return true;
                 }
             }
             for (var times : plan.patternTimes().values()) {
-                if (times < 0 || times > BatchedCraftingOrder.SAFE_LIMIT) {
+                if (times < 0 || times >= BatchedCraftingOrder.OVERFLOW_THRESHOLD) {
                     return true;
                 }
             }
@@ -431,6 +490,23 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
         int registered = 0;
         for (var blockEntity : IntegratedCPURegistry.all()) {
             if (blockEntity.isRemoved() || !blockEntity.isFormed()) {
+                continue;
+            }
+            // 2026-08-27 修复：只注册本网格的 lane。此前遍历全局注册表，
+            // 把其他网络的 lane 也注册进当前 CraftingService → AE2 终端可看到
+            // 其他网络的 CPU 并跨网络下单（sensei 实测 20:15：未连接其他网络
+            // 的 CPU，也能用本网络终端给别的网络 CPU 下单）。
+            appeng.api.networking.IGrid beGrid = null;
+            try {
+                var node = blockEntity.getMainNode() == null
+                        ? null : blockEntity.getMainNode().getNode();
+                if (node != null) {
+                    beGrid = node.getGrid();
+                }
+            } catch (RuntimeException ignored) {
+                // 网格未就绪：跳过（下轮刷新再试）
+            }
+            if (beGrid != this.grid) {
                 continue;
             }
             // 提交任务后主簇可能已忙：确保有空闲虚拟 lane 再注册，

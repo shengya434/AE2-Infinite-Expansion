@@ -3,6 +3,7 @@ package com.ae2addon.init;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.block.InfiniteCraftingStorageBE;
 import com.ae2addon.block.InfiniteCoProcessingBE;
+import com.ae2addon.block.InfiniteInterfaceBE;
 import com.ae2addon.block.IntegratedCPUBE;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraftforge.registries.DeferredRegister;
@@ -40,5 +41,14 @@ public class ModBlockEntities {
                     () -> BlockEntityType.Builder.of(
                             IntegratedCPUBE::new,
                             ModBlocks.INTEGRATED_CPU.get()
+                    ).build(null));
+
+    // ── ME接口（无限级） ──
+
+    public static final RegistryObject<BlockEntityType<InfiniteInterfaceBE>> INFINITE_INTERFACE =
+            BLOCK_ENTITIES.register("infinite_interface",
+                    () -> BlockEntityType.Builder.of(
+                            InfiniteInterfaceBE::new,
+                            ModBlocks.INFINITE_INTERFACE.get()
                     ).build(null));
 }

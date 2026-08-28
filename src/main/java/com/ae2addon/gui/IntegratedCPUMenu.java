@@ -210,9 +210,18 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
         super.broadcastChanges();
     }
 
-    /** 构建订单描述列表并发送（变化检测节流）。 */
+    /** 构建订单描述列表并发送（变化检测节流）。按当前集成 CPU 所属网格过滤（2026-08-27：
+     *  不同网络的 CPU 终端不应显示同一巨型订单——此前全局列表导致所有 CPU 同步显示）。 */
     private void syncOrders() {
-        var orderList = com.ae2addon.crafting.BatchedCraftingQueue.getOrders();
+        appeng.api.networking.IGrid myGrid = null;
+        try {
+            if (core != null && core.getMainNode() != null && core.getMainNode().getNode() != null) {
+                myGrid = core.getMainNode().getNode().getGrid();
+            }
+        } catch (RuntimeException ignored) {
+            // 网格未就绪：myGrid=null → 显示全部（兼容旧行为）
+        }
+        var orderList = com.ae2addon.crafting.BatchedCraftingQueue.getOrders(myGrid);
         var descs = new java.util.ArrayList<String>(orderList.size());
         for (var order : orderList) {
             descs.add(describeOrder(order));

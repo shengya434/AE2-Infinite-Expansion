@@ -3,6 +3,7 @@ package com.ae2addon.init;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.block.InfiniteCraftingStorageBlock;
 import com.ae2addon.block.InfiniteCoProcessingBlock;
+import com.ae2addon.block.InfiniteInterfaceBlock;
 import com.ae2addon.block.IntegratedCPUBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraftforge.registries.DeferredRegister;
@@ -37,5 +38,13 @@ public class ModBlocks {
     public static final RegistryObject<Block> INTEGRATED_CPU = BLOCKS.register(
             "integrated_cpu",
             IntegratedCPUBlock::new
+    );
+
+    // ── ME接口（无限级） ──
+
+    /** ME接口（无限级）— 机器供料站：被动拉取无上限 + 接收 CPU N× 直灌 + 按机器容量喂出 */
+    public static final RegistryObject<Block> INFINITE_INTERFACE = BLOCKS.register(
+            "infinite_interface",
+            InfiniteInterfaceBlock::new
     );
 }

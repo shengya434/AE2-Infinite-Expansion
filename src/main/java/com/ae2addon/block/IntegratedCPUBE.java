@@ -44,12 +44,17 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
     private final List<CraftingCPUCluster> virtualCpus = new ArrayList<>();
 
     /**
-     * 常驻空闲 lane 数（2026-08-22：1 → 16）。主簇忙时一个 tick 内 burst 建满，
-     * 让巨型订单批次立即并行——原来 1 lane/tick 串行建立（每批占掉 lane 后
-     * 下 tick 才补 1 个），sensei 实测「线程创建速度 1线程/t」批次推进极慢。
-     * 主簇空闲时回收全部空闲 lane，不空转。
+     * 常驻空闲 lane 数（2026-08-22：1 → 16；2026-08-27：config idleLaneTarget 可配）。
+     * 主簇忙时一个 tick 内 burst 建满，让巨型订单批次立即并行——原来 1 lane/tick
+     * 串行建立（每批占掉 lane 后下 tick 才补 1 个），sensei 实测「线程创建速度
+     * 1线程/t」批次推进极慢。主簇空闲时回收全部空闲 lane，不空转。
      */
-    private static final int IDLE_LANE_TARGET = 16;
+    private static volatile int IDLE_LANE_TARGET = com.ae2addon.config.AE2AddonConfig.idleLaneTarget();
+
+    /** 配置热加载时由 AE2AddonConfig 调用（更新空闲 lane 池大小）。 */
+    public static void applyConfig() {
+        IDLE_LANE_TARGET = com.ae2addon.config.AE2AddonConfig.idleLaneTarget();
+    }
 
     public IntegratedCPUBE(BlockPos pos, BlockState state) {
         super(ModBlockEntities.INTEGRATED_CPU.get(), pos, state);
@@ -100,9 +105,10 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
     @Override
     public long getStorageBytes() {
         // 未成型 → 不贡献存储，无法接入网络
-        // Long.MAX_VALUE：无限存储显示。单个核心方块相加不会溢出；
-        // 若同簇混入其他贡献存储的 CraftingBlockEntity 会溢出为负（历史教训）
-        return formed ? Long.MAX_VALUE : 0;
+        // config cpuDisplayBytes（默认 Long.MAX_VALUE）：无限存储显示。
+        // 单个核心方块相加不会溢出；若同簇混入其他贡献存储的
+        // CraftingBlockEntity 会溢出为负（历史教训）。真实存储无限。
+        return formed ? com.ae2addon.config.AE2AddonConfig.cpuDisplayBytes() : 0;
     }
 
     /**
@@ -123,7 +129,10 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
         if (!com.ae2addon.crafting.CraftingCompat.timeSliceActive) {
             return 16;
         }
-        return Integer.MAX_VALUE - 1;
+        // config cpuDisplayThreads（0 = Integer.MAX_VALUE-1 拉满）：
+        // 账面并行度显示值；CraftingCpuLogicMixin 的时间片限流接管真实执行，
+        // 单 tick 实际只跑预算内的工作量，不会爆炸。
+        return com.ae2addon.config.AE2AddonConfig.cpuDisplayThreads();
     }
 
     /**
@@ -204,14 +213,25 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
         reapIdleLanes(IDLE_LANE_TARGET);
     }
 
-    /** 回收空闲虚拟 lane，保留前 keepIdle 个空闲（按列表顺序）。 */
+    /** 回收空闲虚拟 lane，保留前 keepIdle 个空闲（按列表顺序）。
+     *  2026-08-27：增加对「isBusy 假阳性」lane 的强制回收——批次 link 取消后
+     *  AE2 job 清理可能延迟/丢失，cluster.isBusy() 永久 true → lane 泄漏
+     *  （sensei 实测：恢复订单取消后 lane 累积到 64+ 个）。
+     *  通过公开 API getLastLink().isCanceled() 判断任务已取消 → 强制 cancelJob 后回收。 */
     private void reapIdleLanes(int keepIdle) {
         var bridge = ae2addon$craftingBridge();
         int idleKept = 0;
         Iterator<CraftingCPUCluster> iterator = virtualCpus.iterator();
         while (iterator.hasNext()) {
             var cpu = iterator.next();
-            if (!cpu.isBusy() && !cpu.isDestroyed()) {
+            if (cpu.isDestroyed()) {
+                iterator.remove();
+                if (bridge != null) {
+                    bridge.ae2addon$unregisterCpu(cpu);
+                }
+                continue;
+            }
+            if (!cpu.isBusy()) {
                 if (idleKept < keepIdle) {
                     idleKept++;
                     continue;
@@ -220,6 +240,20 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
                 if (bridge != null) {
                     bridge.ae2addon$unregisterCpu(cpu);
                 }
+                continue;
+            }
+            // isBusy 但底层任务已取消（link canceled）：强制清理后回收，防泄漏
+            try {
+                var link = cpu.craftingLogic.getLastLink();
+                if (link != null && link.isCanceled()) {
+                    cpu.cancelJob();
+                    iterator.remove();
+                    if (bridge != null) {
+                        bridge.ae2addon$unregisterCpu(cpu);
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // 反射/状态读取失败：保留 lane，下轮再试
             }
         }
     }

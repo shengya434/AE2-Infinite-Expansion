@@ -263,10 +263,26 @@ public final class BatchedCraftingQueue {
         }
     }
 
-    /** 订单面板用：当前所有巨型订单的快照。 */
+    /** 订单面板用：当前所有巨型订单的快照（可按网格过滤；grid=null 返回全部）。 */
     public static java.util.List<BatchedCraftingOrder> getOrders() {
+        return getOrders(null);
+    }
+
+    /**
+     * 订单面板用：按网格过滤的巨型订单快照。
+     * 2026-08-27 修复：此前返回全局全部订单，不同网络的集成 CPU 终端
+     * 都显示同一巨型订单（sensei 实测：下订单后所有集成 CPU 同步出现标识）。
+     * 订单必须只显示在其所属网络的 CPU 终端上。
+     */
+    public static java.util.List<BatchedCraftingOrder> getOrders(appeng.api.networking.IGrid grid) {
         synchronized (orders) {
-            return new java.util.ArrayList<>(orders);
+            var result = new java.util.ArrayList<BatchedCraftingOrder>(orders.size());
+            for (var order : orders) {
+                if (grid == null || order.sameGrid(grid)) {
+                    result.add(order);
+                }
+            }
+            return result;
         }
     }
 

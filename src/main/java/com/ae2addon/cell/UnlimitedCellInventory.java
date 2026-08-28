@@ -36,8 +36,11 @@ import java.util.*;
  */
 public class UnlimitedCellInventory implements StorageCell {
 
-    public static final long INFINITE = Long.MAX_VALUE; // 9223372036854775807
-    public static final long INFINITE_BYTES = 300000000; // 无限类型在面板中显示的字节数
+    /** 无限物品真实数量（config infiniteItemAmount 热加载）：提取/显示上限 */
+    public static volatile long INFINITE = com.ae2addon.config.AE2AddonConfig.infiniteItemAmount();
+
+    /** 无限类型在面板中显示的字节数（config cellDisplayBytes 热加载） */
+    public static volatile long INFINITE_BYTES = com.ae2addon.config.AE2AddonConfig.cellDisplayBytes();
 
     private final ItemStack cellItem;
     private final ISaveProvider saveProvider;
@@ -292,8 +295,30 @@ public class UnlimitedCellInventory implements StorageCell {
     }
 
     public long insert(AEKey what, long amount, Actionable act, IActionSource src) {
+        return insert(what, amount, act, src, 0);
+    }
+
+    /** 内部 insert：depth 为解包深度（物质球套球最多解 2 层）。 */
+    private long insert(AEKey what, long amount, Actionable act, IActionSource src, int depth) {
         if (amount <= 0) return 0;
         if (act != Actionable.MODULATE) return amount;
+
+        // ── 物质球特例（2026-08-27 22:16 sensei 要求）：存入物质球 → 自动解包入库 ──
+        // 物质球是取消无限时打包的临时容器（NBT 存 innerKey+amount），
+        // 存入元件时直接解包，球本身不入库。
+        if (depth < 2 && what instanceof AEItemKey ballKey
+                && ballKey.getItem() == com.ae2addon.init.ModItems.MATTER_BALL.get()
+                && ballKey.hasTag()) {
+            var ballStack = ballKey.toStack(1);
+            var innerKey = com.ae2addon.item.MatterBallItem.getKey(ballStack);
+            long innerAmount = com.ae2addon.item.MatterBallItem.getAmount(ballStack);
+            if (innerKey != null && innerAmount > 0) {
+                insert(innerKey, innerAmount, act, src, depth + 1);
+            }
+            dataDirty = true;
+            save();
+            return amount; // 物质球本身不入库（已解包）
+        }
 
         // ── 无限路径：直接收下，不占内部存储 ──
         if (mode == 3) {
@@ -786,6 +811,12 @@ public class UnlimitedCellInventory implements StorageCell {
     private boolean matchesRule(AEKey key) {
         if (tags.isEmpty() && mods.isEmpty()) return false;
         if (key instanceof AEItemKey itemKey) {
+            // 2026-08-27 修复：带 NBT 的变体不参与 tag/mod 无限规则。
+            // 否则存入带 NBT 物品会被无限路径吞掉（return amount 不存内部）→
+            // 原始带 NBT 物品消失，只剩虚拟无限（sensei 实测 22:14：
+            // Mode2 tags/mods 规则下带 NBT 物品存入后消失）。
+            // 带 NBT 物品走正常存储（s2 累加），NBT 完整保留。
+            if (itemKey.hasTag()) return false;
             Item item = itemKey.getItem();
             ResourceLocation id = BuiltInRegistries.ITEM.getKey(item);
             if (mods.contains(id.getNamespace())) return true;

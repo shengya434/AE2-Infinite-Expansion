@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "group": "ae2addon",
+  "ingredients": [
+    {
+      "item": "ae2:pattern_provider"
+    },
+    {
+      "item": "ae2:interface"
+    },
+    {
+      "item": "ae2addon:eternal_heart"
+    }
+  ],
+  "result": {
+    "item": "ae2addon:infinite_interface"
+  }
+}

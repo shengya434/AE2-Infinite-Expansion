@@ -5,8 +5,11 @@
   "block.ae2addon.infinite_crafting_storage": "Infinite Crafting Storage",
   "block.ae2addon.infinite_co_processing": "Infinite Co-Processing Unit",
   "block.ae2addon.integrated_cpu": "Integrated CPU",
+  "block.ae2addon.infinite_interface": "ME Interface (Infinite)",
   "gui.ae2addon.mode_select": "Select Storage Mode",
   "gui.ae2addon.mode2_config": "Custom Infinite Configuration",
+  "gui.ae2addon.infinite_interface.title": "ME Interface (Infinite)",
+  "gui.ae2addon.infinite_interface.player_inv": "Inventory",
 
   "gui.ae2addon.cell.name": "§5Universal Infinite [%s]",
   "gui.ae2addon.mode.unlimited": "§aUnlimited",

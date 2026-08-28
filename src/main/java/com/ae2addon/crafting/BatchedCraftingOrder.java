@@ -45,11 +45,30 @@ public final class BatchedCraftingOrder {
     /** 单批材料需求安全上限：Long.MAX/4，给执行层（批量推送 N×）留足余量 */
     public static final long SAFE_LIMIT = Long.MAX_VALUE / 4;
 
-    /** 单个巨型订单的最大批次数（防呆：超出则拒绝，避免天文数字批次） */
-    private static final int MAX_BATCH_COUNT = 100_000;
+    /**
+     * 超限判定/拆批基准（2026-08-27 sensei 拍板）：真溢出线 = 2^63-1 = Long.MAX。
+     * 需求 2^63 → 拆成 (2^63-1)+1；2^64 → (2^63-1)×2+2。
+     * 不用 SAFE_LIMIT(Long.MAX/4) 或 Long.MAX/2——那些只是保守余量，
+     * 会误伤 10^16~10^18 级合法订单（AE2-VM 精确计算不溢出）。
+     */
+    public static final long OVERFLOW_THRESHOLD = Long.MAX_VALUE;
 
-    /** 并行度：同时执行的批次数（Integer.MAX_VALUE = 一次全发，由 CPU lane 自行调度） */
-    public static final int MAX_CONCURRENT = Integer.MAX_VALUE;
+    /** 单个巨型订单的最大批次数（config maxBatchCount 热加载，防呆：超出则拒绝，避免天文数字批次） */
+    private static volatile int MAX_BATCH_COUNT = com.ae2addon.config.AE2AddonConfig.maxBatchCount();
+
+    /**
+     * 并行度：同时执行的批次数（config maxConcurrent，0 = 无限制全发）。
+     * 2026-08-27 21:14 sensei 拍板无限制：lane 回收已修复（reapIdleLanes 对
+     * link canceled 的 lane 强制 cancelJob + 回收），全发不再泄漏；
+     * 21:17 改为 config 可配（maxConcurrent=0 无限制）。接受主线程 tick 开销。
+     */
+    public static volatile int MAX_CONCURRENT = com.ae2addon.config.AE2AddonConfig.maxConcurrent();
+
+    /** 配置热加载时由 AE2AddonConfig 调用（更新并行度/批数上限）。 */
+    public static void applyConfig() {
+        MAX_CONCURRENT = com.ae2addon.config.AE2AddonConfig.maxConcurrent();
+        MAX_BATCH_COUNT = com.ae2addon.config.AE2AddonConfig.maxBatchCount();
+    }
 
     /**
      * 批次模拟复用缓存（2026-08-22）：key=批次量，value=该量第一次模拟的真计划。
@@ -125,7 +144,21 @@ public final class BatchedCraftingOrder {
         this.totalAmount = totalAmount;
         this.requester = requester;
         this.source = source;
-        this.batchAmounts = batchAmounts;
+
+        // 后续构造逻辑（批次拆分等）
+        this.batchAmounts = new java.util.ArrayList<>(batchAmounts);
+    }
+
+    /**
+     * 订单是否属于目标网格（订单面板按网络隔离显示用）。
+     * 订单网格未绑定（恢复期）时返回 true（宽松放行，避免恢复期订单消失）；
+     * 目标网格为 null 时返回 true（全量视图兼容）。
+     */
+    public boolean sameGrid(IGrid target) {
+        if (target == null || this.grid == null) {
+            return true;
+        }
+        return this.grid == target;
     }
 
     private static List<Long> splitBatches(long total, long perBatch) {
@@ -180,40 +213,135 @@ public final class BatchedCraftingOrder {
                                               ICraftingRequester requester,
                                               IActionSource source) {
         if (badPlan == null || requester == null) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] create: 参数为空 plan={} requester={}",
+                    badPlan == null ? "null" : "set",
+                    requester == null ? "null" : requester.getClass().getSimpleName());
             return null;
         }
         IGridNode node;
         try {
             node = requester.getActionableNode();
         } catch (RuntimeException e) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] create: getActionableNode 异常 requester={} err={}",
+                    requester.getClass().getSimpleName(), e.toString());
             return null;
         }
         if (node == null || node.getGrid() == null) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] create: 节点/网格为空 requester={} node={}",
+                    requester.getClass().getSimpleName(), node == null ? "null" : "set");
             return null;
         }
         ServerLevel level = node.getLevel();
         if (level == null) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] create: level 为空 requester={}",
+                    requester.getClass().getSimpleName());
             return null;
         }
         var finalOutput = badPlan.finalOutput();
         if (finalOutput == null || finalOutput.what() == null || finalOutput.amount() <= 0) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] create: finalOutput 无效 requester={}",
+                    requester.getClass().getSimpleName());
             return null;
         }
 
         IGrid grid = node.getGrid();
-        long perBatch = RequirementCalculator.maxSafeBatch(
-                grid, finalOutput.what(), finalOutput.amount(), SAFE_LIMIT);
+        // 2026-08-27：拆批粒度用 OVERFLOW_THRESHOLD（Long.MAX/2，接近真溢出 2^63）
+        // 而非 SAFE_LIMIT——SAFE_LIMIT 拆太细，10^18 级订单会拆出 43 万批超上限；
+        // 每批允许到接近溢出线，批数可控（10^18 订单约 217 批）。
+        long perBatch;
+        try {
+            perBatch = RequirementCalculator.maxSafeBatch(
+                    grid, finalOutput.what(), finalOutput.amount(), OVERFLOW_THRESHOLD);
+        } catch (RuntimeException e) {
+            // 2026-08-27：VM 环境下配方树/缓存异常时 create 会静默失败导致
+            // 订单放行原版（超限不拆批）。记录异常便于定位。
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] create: maxSafeBatch 异常 what={} amount={} err={}",
+                    finalOutput.what(), finalOutput.amount(), e.toString());
+            return null;
+        }
         if (perBatch >= finalOutput.amount()) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] create: perBatch>=amount 无法拆批 what={} amount={} perBatch={}",
+                    finalOutput.what(), finalOutput.amount(), perBatch);
             return null;
         }
 
         List<Long> batches = splitBatches(finalOutput.amount(), perBatch);
         if (batches.size() <= 1 || batches.size() > MAX_BATCH_COUNT) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] create: 批数异常无法拆批 what={} amount={} perBatch={} 批数={}",
+                    finalOutput.what(), finalOutput.amount(), perBatch, batches.size());
             return null;
         }
 
         var order = new BatchedCraftingOrder(level, grid, null, finalOutput.what(),
                 finalOutput.amount(), requester, source, batches);
+        order.anchorPos = findAnchorPos(grid);
+        return order;
+    }
+
+    /**
+     * requester 为 null 时（VM 提交路径）用 grid 直接构造分批订单。
+     * 2026-08-27：VM 环境 submitJob 的 requester=null → create() 直接失败
+     * （sensei 实测 20:59「create: 参数为空 requester=null」）→ 订单放行原版不拆批。
+     * level 从 grid 的 pivot 节点拿。
+     */
+    public static BatchedCraftingOrder createFromGrid(ICraftingPlan badPlan,
+                                                      IGrid grid,
+                                                      IActionSource source) {
+        if (badPlan == null || grid == null) {
+            return null;
+        }
+        ServerLevel level = null;
+        try {
+            var pivot = grid.getPivot();
+            if (pivot != null) {
+                level = pivot.getLevel();
+            }
+        } catch (RuntimeException ignored) {
+        }
+        if (level == null) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] createFromGrid: 无法获取 level（pivot 无效）");
+            return null;
+        }
+        var finalOutput = badPlan.finalOutput();
+        if (finalOutput == null || finalOutput.what() == null || finalOutput.amount() <= 0) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] createFromGrid: finalOutput 无效");
+            return null;
+        }
+        long perBatch;
+        try {
+            perBatch = RequirementCalculator.maxSafeBatch(
+                    grid, finalOutput.what(), finalOutput.amount(), OVERFLOW_THRESHOLD);
+        } catch (RuntimeException e) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] createFromGrid: maxSafeBatch 异常 what={} amount={} err={}",
+                    finalOutput.what(), finalOutput.amount(), e.toString());
+            return null;
+        }
+        if (perBatch >= finalOutput.amount()) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] createFromGrid: perBatch>=amount 无法拆批 what={} amount={} perBatch={}",
+                    finalOutput.what(), finalOutput.amount(), perBatch);
+            return null;
+        }
+        List<Long> batches = splitBatches(finalOutput.amount(), perBatch);
+        if (batches.size() <= 1 || batches.size() > MAX_BATCH_COUNT) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] createFromGrid: 批数异常 what={} amount={} perBatch={} 批数={}",
+                    finalOutput.what(), finalOutput.amount(), perBatch, batches.size());
+            return null;
+        }
+        var order = new BatchedCraftingOrder(level, grid, grid.getPivot(), finalOutput.what(),
+                finalOutput.amount(), null, source, batches);
         order.anchorPos = findAnchorPos(grid);
         return order;
     }
@@ -452,7 +580,10 @@ public final class BatchedCraftingOrder {
         }
     }
 
-    /** 恢复锚点绑定：锚点 CPU 方块优先，否则扫描已加载的集成 CPU（单网格场景）。 */
+    /** 恢复锚点绑定：锚点 CPU 方块优先，否则扫描已加载的集成 CPU（仅单网格场景）。
+     *  2026-08-27：扫描兜底限定「全局只有一个集成 CPU」——多网络时扫描会绑到
+     *  错误网络的 BE（sensei 实测：另一个网络的 CPU 出现本网络订单的运行线程）。
+     *  多网络且锚点未就绪时返回 false 等重试（下个 tick 锚点 BE 加载后再绑）。 */
     private boolean tryBindGrid() {
         if (anchorPos != null) {
             try {
@@ -464,8 +595,8 @@ public final class BatchedCraftingOrder {
                         this.grid = node.getGrid();
                         this.simNode = node;
                         com.ae2addon.AE2Addon.LOGGER.info(
-                                "[ae2addon] 巨型订单恢复绑定网格成功 what={} 进度={}/{}",
-                                what, completedCount, batchAmounts.size());
+                                "[ae2addon] 巨型订单恢复绑定网格成功 what={} 进度={}/{} 锚点={}",
+                                what, completedCount, batchAmounts.size(), anchorPos.toShortString());
                         return true;
                     }
                 }
@@ -473,25 +604,31 @@ public final class BatchedCraftingOrder {
                 // 方块未加载/结构未成型，下个 tick 重试
             }
         }
-        // 兜底：扫描已加载的集成 CPU（单网格测试环境直接命中）
+        // 兜底扫描：仅当全局只有一个集成 CPU（单网格测试环境直接命中）
+        com.ae2addon.block.IntegratedCPUBE only = null;
+        int total = 0;
         for (var be : com.ae2addon.block.IntegratedCPURegistry.all()) {
+            if (be.isRemoved() || !be.isFormed()) {
+                continue;
+            }
+            total++;
+            only = be;
+        }
+        if (total == 1 && only != null) {
             try {
-                if (be.isRemoved() || !be.isFormed()) {
-                    continue;
-                }
-                var mainNode = be.getMainNode();
+                var mainNode = only.getMainNode();
                 var node = mainNode == null ? null : mainNode.getNode();
                 if (node != null && node.getGrid() != null) {
                     this.grid = node.getGrid();
                     this.simNode = node;
-                    this.anchorPos = be.getBlockPos();
+                    this.anchorPos = only.getBlockPos();
                     com.ae2addon.AE2Addon.LOGGER.info(
-                            "[ae2addon] 巨型订单恢复绑定网格成功(扫描) what={} 进度={}/{}",
+                            "[ae2addon] 巨型订单恢复绑定网格成功(扫描·单网格) what={} 进度={}/{}",
                             what, completedCount, batchAmounts.size());
                     return true;
                 }
             } catch (RuntimeException ignored) {
-                // 继续尝试下一个
+                // 继续等待
             }
         }
         return false;
@@ -527,9 +664,19 @@ public final class BatchedCraftingOrder {
             }
         }
         try {
-            batch.pendingSimulation = grid.getCraftingService().beginCraftingCalculation(
-                    level, new SimulationRequester(source, node), what, batch.amount,
-                    CalculationStrategy.REPORT_MISSING_ITEMS);
+            // 2026-08-27 方案2：批次模拟不再走原版 beginCraftingCalculation
+            // （long 累加在 999999×999999×batch 中间溢出 → 损坏计划 → 批次全失败），
+            // 改用 BigInteger 估算直接构造真计划（simulation=false），永不溢出。
+            // 模拟复用缓存逻辑不变（同量批次深拷贝提交）。
+            ICraftingPlan plan = RequirementCalculator.buildBatchPlan(
+                    grid, what, batch.amount);
+            if (plan == null) {
+                com.ae2addon.AE2Addon.LOGGER.error(
+                        "[ae2addon] 发起批次模拟: 估算失败/截断 what={} amount={}",
+                        what, batch.amount);
+                return false;
+            }
+            batch.pendingSimulation = CompletableFuture.completedFuture(plan);
             return true;
         } catch (RuntimeException e) {
             com.ae2addon.AE2Addon.LOGGER.error(

@@ -1,6 +1,7 @@
 package com.ae2addon.init;
 
 import com.ae2addon.AE2Addon;
+import com.ae2addon.gui.InfiniteInterfaceMenu;
 import com.ae2addon.gui.IntegratedCPUMenu;
 import com.ae2addon.gui.Mode2ConfigMenu;
 import com.ae2addon.gui.ModeSelectMenu;
@@ -32,5 +33,10 @@ public class ModMenuTypes {
     public static final RegistryObject<MenuType<IntegratedCPUMenu>> INTEGRATED_CPU =
             MENUS.register("integrated_cpu",
                     () -> IForgeMenuType.create(IntegratedCPUMenu::fromNetwork));
+
+    // ME 接口（无限级）配置界面
+    public static final RegistryObject<MenuType<InfiniteInterfaceMenu>> INFINITE_INTERFACE =
+            MENUS.register("infinite_interface",
+                    () -> IForgeMenuType.create(InfiniteInterfaceMenu::fromNetwork));
 
 }

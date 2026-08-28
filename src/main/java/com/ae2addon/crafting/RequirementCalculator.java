@@ -2,6 +2,7 @@ package com.ae2addon.crafting;
 
 import appeng.api.crafting.IPatternDetails;
 import appeng.api.networking.IGrid;
+import appeng.api.networking.crafting.ICraftingPlan;
 import appeng.api.stacks.AEKey;
 import appeng.api.stacks.GenericStack;
 
@@ -90,6 +91,15 @@ public final class RequirementCalculator {
     /** 某物品的每单位最坏需求 + 配方快照（懒失效校验用）。 */
     private static final class CachedNeeds {
         final Map<AEKey, BigInteger> perUnit;
+        /** 每单位产物的样板执行次数（BigInteger，防 long 溢出；buildBatchPlan 用） */
+        final Map<IPatternDetails, BigInteger> perUnitPatternTimes;
+        /**
+         * 每单位<b>叶子材料</b>需求（无配方/外部提供的终端材料，如永恒之星、无尽桶）。
+         * 原版 tryExtractInitialItems 只从网络提取叶子材料——中间产物（奇异点等）
+         * 由 CPU 按 patternTimes 执行样板合成，不能出现在 usedItems 里
+         * （否则网络无该中间物库存 → MISSING_INGREDIENT，sensei 实测 18:31）。
+         */
+        final Map<AEKey, BigInteger> perUnitLeafNeeds;
         /** 展开时用到的每个物品的配方列表快照（校验：getCraftingFor 是否还是这些） */
         final Map<AEKey, Collection<IPatternDetails>> snapshots;
         final boolean truncated;
@@ -97,9 +107,13 @@ public final class RequirementCalculator {
         int skipValidation;
 
         CachedNeeds(Map<AEKey, BigInteger> perUnit,
+                    Map<IPatternDetails, BigInteger> perUnitPatternTimes,
+                    Map<AEKey, BigInteger> perUnitLeafNeeds,
                     Map<AEKey, Collection<IPatternDetails>> snapshots,
                     boolean truncated) {
             this.perUnit = perUnit;
+            this.perUnitPatternTimes = perUnitPatternTimes;
+            this.perUnitLeafNeeds = perUnitLeafNeeds;
             this.snapshots = snapshots;
             this.truncated = truncated;
         }
@@ -172,6 +186,62 @@ public final class RequirementCalculator {
     /** 兼容入口（BatchedCraftingOrder 用）：只算最大安全单批产物量。 */
     public static long maxSafeBatch(IGrid grid, AEKey what, long amount, long safeLimit) {
         return analyze(grid, what, amount, safeLimit).maxSafeBatch;
+    }
+
+    /**
+     * 2026-08-27 方案2：用 BigInteger 估算直接构造批次真计划（simulation=false），
+     * 完全绕过原版 AE2 模拟（long 累加在 999999×999999×batch 中间溢出 → 损坏计划）。
+     * <p>
+     * 由每单位需求 + 每单位样板执行次数缩放得到批次需求，饱和到 long 填充计划。
+     * 注意：估算不抵扣库存（纯配方树最坏上界）——批次提交后由 CPU 按计划提取，
+     * 库存足够时正常执行；缺料时 CPU 报缺料（与模拟拦截的饱和计划行为一致）。
+     *
+     * @return 真 CraftingPlan（simulation=false）；网格/节点不可用时返回 null
+     */
+    public static appeng.api.networking.crafting.ICraftingPlan buildBatchPlan(
+            IGrid grid, AEKey what, long amount) {
+        if (grid == null || what == null || amount <= 0) {
+            return null;
+        }
+        CachedNeeds cached = cachedPerUnit(grid, what);
+        if (cached.truncated) {
+            // 估算被截断：无法证明安全，不能构造计划（调用方应拒绝）
+            return null;
+        }
+        BigInteger amountBI = BigInteger.valueOf(amount);
+
+        var used = new appeng.api.stacks.KeyCounter();
+        // 只放叶子材料（无配方/外部提供）的<b>总需求</b>：中间产物（奇异点等）由 CPU
+        // 按 patternTimes 执行样板合成，不能出现在 usedItems——否则原版
+        // tryExtractInitialItems 尝试从网络提取中间物 → 无库存 → MISSING_INGREDIENT。
+        // 2026-08-27 19:30 修复：此前用「缺口=总需求−库存」，用户无限模式库存巨大 →
+        // gap=0 → usedItems 空 → tryExtractInitialItems 无事可做 → CPU inventory 空
+        // → executeCrafting 所有 task 提取失败（1x提取 null，日志实锤）→ 订单卡死。
+        // 原版语义：usedItems = 需从网络提取注入 CPU inventory 的初始材料（叶子总需求），
+        // 库存不够时 tryExtractInitialItems 自然报 MISSING_INGREDIENT（正确缺料行为）。
+        for (var e : cached.perUnitLeafNeeds.entrySet()) {
+            BigInteger need = e.getValue().multiply(amountBI);
+            long needLong = need.min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
+            if (needLong > 0) {
+                used.add(e.getKey(), needLong);
+            }
+        }
+        Map<appeng.api.crafting.IPatternDetails, Long> patternTimes = new HashMap<>();
+        for (var e : cached.perUnitPatternTimes.entrySet()) {
+            BigInteger scaled = e.getValue().multiply(amountBI);
+            patternTimes.put(e.getKey(), scaled
+                    .min(BigInteger.valueOf(Long.MAX_VALUE)).longValue());
+        }
+
+        return new appeng.crafting.CraftingPlan(
+                new appeng.api.stacks.GenericStack(what, amount),
+                Long.MAX_VALUE,   // bytes（集成 CPU 无限存储；原版 CPU 也接受哨兵）
+                false,            // simulation
+                false,            // multiplePaths
+                used,             // usedItems（缺口 = 总需求 - 库存）
+                new appeng.api.stacks.KeyCounter(), // emittedItems
+                new appeng.api.stacks.KeyCounter(), // missingItems
+                patternTimes);
     }
 
     /** 由每单位需求反推单批安全产物量（瓶颈材料 = 需求最大的那个）。 */
@@ -255,6 +325,8 @@ public final class RequirementCalculator {
     /** 计算某物品的每单位最坏需求（展开 1 单位产物的整棵配方树）。 */
     private static CachedNeeds computePerUnit(IGrid grid, AEKey what) {
         Map<AEKey, BigInteger> needs = new HashMap<>();
+        Map<IPatternDetails, BigInteger> patternTimes = new HashMap<>();
+        Map<AEKey, BigInteger> leafNeeds = new HashMap<>();
         Map<AEKey, Collection<IPatternDetails>> snapshots = new HashMap<>();
         int[] budget = {0};
         boolean[] truncated = {false};
@@ -269,8 +341,8 @@ public final class RequirementCalculator {
                         isExpandable(grid, p), isEmcPattern(p));
             }
         }
-        expand(grid, what, BigInteger.ONE, new HashSet<>(), needs, snapshots,
-                budget, truncated);
+        expand(grid, what, BigInteger.ONE, new HashSet<>(), needs, patternTimes,
+                leafNeeds, snapshots, budget, truncated);
         if (CraftingCompat.debugLogs) {
             com.ae2addon.AE2Addon.LOGGER.info(
                     "[ae2addon][debug] 每单位需求 {}: {} 种材料, 截断={}",
@@ -286,12 +358,14 @@ public final class RequirementCalculator {
                         "[ae2addon][debug]   {} = {}", e.getKey(), e.getValue());
             }
         }
-        return new CachedNeeds(needs, snapshots, truncated[0]);
+        return new CachedNeeds(needs, patternTimes, leafNeeds, snapshots, truncated[0]);
     }
 
     private static void expand(IGrid grid, AEKey key, BigInteger need,
                                Set<AEKey> path,
                                Map<AEKey, BigInteger> needs,
+                               Map<IPatternDetails, BigInteger> patternTimes,
+                               Map<AEKey, BigInteger> leafNeeds,
                                Map<AEKey, Collection<IPatternDetails>> snapshots,
                                int[] budget, boolean[] truncated) {
         if (++budget[0] > MAX_EXPANSIONS) {
@@ -309,6 +383,7 @@ public final class RequirementCalculator {
         // 记录需求即止。绝不查它的「配方」——AppliedE 给 EMCKey 也注册了
         // EMC→物品转换配方，展开会陷入 EMC 互转图爆炸/误导（sensei 建议）。
         if (isEmcKey(key)) {
+            leafNeeds.merge(key, need, BigInteger::add);
             path.remove(key);
             return;
         }
@@ -317,7 +392,10 @@ public final class RequirementCalculator {
         Collection<IPatternDetails> patterns = service.getCraftingFor(key);
         snapshots.put(key, patterns);
         if (patterns.isEmpty()) {
-            // 无配方：外部提供（如无尽桶）或缺失，无法展开，需求照记
+            // 无配方：外部提供（如无尽桶、无限盘叶子）或缺失，无法展开——
+            // 这是叶子材料，需求记入 leafNeeds（原版只从网络提取叶子；
+            // 中间产物由 CPU 按 patternTimes 合成，不进 usedItems）。
+            leafNeeds.merge(key, need, BigInteger::add);
             path.remove(key);
             return;
         }
@@ -385,6 +463,10 @@ public final class RequirementCalculator {
         BigInteger times = need.add(BigInteger.valueOf(outAmount - 1))
                 .divide(BigInteger.valueOf(outAmount));
 
+        // 2026-08-27：记录样板执行次数（BigInteger，buildBatchPlan 构造真计划用，
+        // 避免批次模拟走原版 long 累加溢出）。
+        patternTimes.merge(best, times, BigInteger::add);
+
         for (var input : best.getInputs()) {
             var possible = input.getPossibleInputs();
             GenericStack chosen = null;
@@ -402,7 +484,7 @@ public final class RequirementCalculator {
             BigInteger perUnit = BigInteger.valueOf(chosen.amount())
                     .multiply(BigInteger.valueOf(Math.max(1, input.getMultiplier())));
             expand(grid, chosen.what(), times.multiply(perUnit),
-                    path, needs, snapshots, budget, truncated);
+                    path, needs, patternTimes, leafNeeds, snapshots, budget, truncated);
         }
 
         path.remove(key);
