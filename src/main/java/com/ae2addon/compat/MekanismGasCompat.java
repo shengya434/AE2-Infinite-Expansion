@@ -51,32 +51,53 @@ public final class MekanismGasCompat {
         return loaded;
     }
 
-    /** 标记槽：气体容器（气罐/气桶）→ 内部气体 AEKey；非气体容器返回 null。 */
+    /** 标记槽：化学容器（气罐/灌注罐/颜料罐/泥浆罐）→ 内部化学物 AEKey；非容器返回 null。 */
     public static AEKey chemicalInContainer(ItemStack stack) {
         if (!isLoaded() || stack.isEmpty()) {
             return null;
         }
         try {
-            var cap = stack.getCapability(Capabilities.GAS_HANDLER);
-            if (cap.isPresent()) {
-                var handler = cap.orElse(null);
-                if (handler != null && handler.getTanks() > 0) {
-                    var chemical = handler.getChemicalInTank(0);
-                    if (chemical != null && !chemical.isEmpty()) {
-                        return MekanismKey.of(chemical);
-                    }
-                }
+            AEKey key = chemicalInHandler(stack, Capabilities.GAS_HANDLER);
+            if (key != null) {
+                return key;
             }
+            key = chemicalInHandler(stack, Capabilities.INFUSION_HANDLER);
+            if (key != null) {
+                return key;
+            }
+            key = chemicalInHandler(stack, Capabilities.PIGMENT_HANDLER);
+            if (key != null) {
+                return key;
+            }
+            key = chemicalInHandler(stack, Capabilities.SLURRY_HANDLER);
+            return key;
         } catch (RuntimeException ignored) {
-            // 非气体容器/能力异常：按非气体处理
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static AEKey chemicalInHandler(ItemStack stack,
+            net.minecraftforge.common.capabilities.Capability<?> cap) {
+        var lo = stack.getCapability(cap);
+        if (!lo.isPresent()) {
+            return null;
+        }
+        Object handler = lo.orElse(null);
+        if (!(handler instanceof mekanism.api.chemical.IChemicalHandler<?, ?> ch)
+                || ch.getTanks() <= 0) {
+            return null;
+        }
+        var chemical = (mekanism.api.chemical.ChemicalStack<?>) ch.getChemicalInTank(0);
+        if (chemical != null && !chemical.isEmpty()) {
+            return MekanismKey.of(chemical);
         }
         return null;
     }
 
-    /** 该 AEKey 是否为可喂出的气体（MekanismKey GAS 形态）。 */
+    /** 该 AEKey 是否为可喂出的化学物（MekanismKey 任意形态：气体/灌注/颜料/泥浆）。 */
     public static boolean isFeedable(AEKey key) {
-        return isLoaded() && key instanceof MekanismKey mekKey
-                && mekKey.getForm() == MekanismKey.GAS;
+        return isLoaded() && key instanceof MekanismKey;
     }
 
     /** 化学物 JEI 拖取 → AEKey（MekanismKey.of，气体/灌注/颜料/泥浆均可）。 */
@@ -87,11 +108,11 @@ public final class MekanismGasCompat {
         return MekanismKey.of(stack);
     }
 
-    /** 喂出：把气体的 amount 量插入机器气体槽；返回实际喂出量（0=机器满/拒收）。
-     * 指定面优先，找不到气体槽时遍历机器所有面。带失败原因诊断（节流）。 */
+    /** 喂出：把化学物的 amount 量插入机器对应槽（气体/灌注/颜料/泥浆）；
+     * 返回实际喂出量（0=机器满/拒收）。带失败原因诊断（节流）。 */
     public static long feed(BlockEntity target, Direction side, AEKey key, long amount) {
         if (!isFeedable(key) || amount <= 0) {
-            // 早退也诊断：key 类型/form 不对或蓄水池里根本没气体
+            // 早退也诊断：key 类型/form 不对或蓄水池里根本没化学物
             diag("isFeedable=false 或 amount<=0: key="
                     + (key == null ? "null" : key.getClass().getSimpleName())
                     + (key instanceof MekanismKey mk ? " form=" + mk.getForm() : " 非MekanismKey")
@@ -100,28 +121,80 @@ public final class MekanismGasCompat {
         }
         try {
             MekanismKey mekKey = (MekanismKey) key;
-            var handler = findGasHandler(target, side);
-            if (handler == null) {
-                diag("机器无气体槽（" + machineName(target) + " side=" + side + "）");
-                return 0;
-            }
-            if (handler.getTanks() <= 0) {
-                diag("机器气体槽数为0（" + machineName(target) + "）");
-                return 0;
-            }
+            byte form = mekKey.getForm();
             var stack = mekKey.getStack();
-            if (!(stack instanceof GasStack gasStack) || gasStack.isEmpty()) {
-                diag("key 内部不是 GasStack: " + (stack == null ? "null" : stack.getClass().getSimpleName()));
+            if (stack == null || stack.isEmpty()) {
+                diag("key 内部化学物为空");
                 return 0;
             }
             long insertAmount = Math.min(amount, Integer.MAX_VALUE);
-            // 复制栈：不改动 key 内部缓存的化学物
-            var insert = new GasStack(gasStack, insertAmount);
-            var leftover = handler.insertChemical(insert, Action.EXECUTE);
-            long fed = insertAmount - leftover.getAmount();
-            if (fed <= 0) {
-                diag("机器拒收气体 " + gasStack.getType() + "（尝试 " + insertAmount
-                        + " mB；槽满或不吃该气体）");
+            long fed = switch (form) {
+                case MekanismKey.GAS -> {
+                    if (!(stack instanceof GasStack gasStack)) {
+                        diag("form=气体 但内部不是 GasStack: " + stack.getClass().getSimpleName());
+                        yield 0;
+                    }
+                    var handler = findHandler(target, side, Capabilities.GAS_HANDLER);
+                    if (handler == null) {
+                        diag("机器无气体槽（" + machineName(target) + "）");
+                        yield 0;
+                    }
+                    var leftover = handler.insertChemical(
+                            new GasStack(gasStack, insertAmount), Action.EXECUTE);
+                    yield insertAmount - leftover.getAmount();
+                }
+                case MekanismKey.INFUSION -> {
+                    if (!(stack instanceof mekanism.api.chemical.infuse.InfusionStack infuseStack)) {
+                        diag("form=灌注 但内部不是 InfusionStack");
+                        yield 0;
+                    }
+                    var handler = findHandler(target, side, Capabilities.INFUSION_HANDLER);
+                    if (handler == null) {
+                        diag("机器无灌注槽（" + machineName(target) + "）");
+                        yield 0;
+                    }
+                    var leftover = handler.insertChemical(
+                            new mekanism.api.chemical.infuse.InfusionStack(infuseStack, insertAmount),
+                            Action.EXECUTE);
+                    yield insertAmount - leftover.getAmount();
+                }
+                case MekanismKey.PIGMENT -> {
+                    if (!(stack instanceof mekanism.api.chemical.pigment.PigmentStack pigmentStack)) {
+                        diag("form=颜料 但内部不是 PigmentStack");
+                        yield 0;
+                    }
+                    var handler = findHandler(target, side, Capabilities.PIGMENT_HANDLER);
+                    if (handler == null) {
+                        diag("机器无颜料槽（" + machineName(target) + "）");
+                        yield 0;
+                    }
+                    var leftover = handler.insertChemical(
+                            new mekanism.api.chemical.pigment.PigmentStack(pigmentStack, insertAmount),
+                            Action.EXECUTE);
+                    yield insertAmount - leftover.getAmount();
+                }
+                case MekanismKey.SLURRY -> {
+                    if (!(stack instanceof mekanism.api.chemical.slurry.SlurryStack slurryStack)) {
+                        diag("form=泥浆 但内部不是 SlurryStack");
+                        yield 0;
+                    }
+                    var handler = findHandler(target, side, Capabilities.SLURRY_HANDLER);
+                    if (handler == null) {
+                        diag("机器无泥浆槽（" + machineName(target) + "）");
+                        yield 0;
+                    }
+                    var leftover = handler.insertChemical(
+                            new mekanism.api.chemical.slurry.SlurryStack(slurryStack, insertAmount),
+                            Action.EXECUTE);
+                    yield insertAmount - leftover.getAmount();
+                }
+                default -> {
+                    diag("未知 form=" + form);
+                    yield 0;
+                }
+            };
+            if (fed <= 0 && form == MekanismKey.GAS) {
+                diag("机器拒收气体（尝试 " + insertAmount + " mB；槽满或不吃）");
             }
             return Math.max(0, fed);
         } catch (RuntimeException e) {
@@ -138,15 +211,15 @@ public final class MekanismGasCompat {
         }
     }
 
-    /** 查找机器气体 handler：指定面优先，找不到遍历其余面。 */
-    private static mekanism.api.chemical.gas.IGasHandler findGasHandler(
-            BlockEntity target, Direction primary) {
+    /** 查找机器化学 handler（泛型）：指定面优先，找不到遍历其余面。 */
+    private static <H> H findHandler(BlockEntity target, Direction primary,
+            net.minecraftforge.common.capabilities.Capability<H> cap) {
         if (target == null) {
             return null;
         }
-        var cap = target.getCapability(Capabilities.GAS_HANDLER, primary);
-        if (cap.isPresent()) {
-            var handler = cap.orElse(null);
+        var lo = target.getCapability(cap, primary);
+        if (lo.isPresent()) {
+            H handler = lo.orElse(null);
             if (handler != null) {
                 return handler;
             }
@@ -155,9 +228,9 @@ public final class MekanismGasCompat {
             if (side == primary) {
                 continue;
             }
-            var c = target.getCapability(Capabilities.GAS_HANDLER, side);
+            var c = target.getCapability(cap, side);
             if (c.isPresent()) {
-                var handler = c.orElse(null);
+                H handler = c.orElse(null);
                 if (handler != null) {
                     return handler;
                 }
