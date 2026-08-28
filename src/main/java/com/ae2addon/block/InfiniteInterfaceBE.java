@@ -424,6 +424,132 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return upgrades;
     }
 
+    // ── 网络入口（2026-08-28 sensei：接口当然要有入口）──
+    // 非正面暴露物品/流体能力：外界（管道/漏斗/其他 mod）塞进来的东西直接进网络。
+    // 正面保持喂机器。抽走暂不支持（虚拟槽不可见；要抽从网络其他口抽）。
+
+    private final net.minecraftforge.items.IItemHandler networkItemHandler =
+            new net.minecraftforge.items.IItemHandler() {
+                @Override
+                public int getSlots() {
+                    return 1;
+                }
+
+                @Override
+                public net.minecraft.world.item.ItemStack getStackInSlot(int slot) {
+                    return net.minecraft.world.item.ItemStack.EMPTY; // 虚拟槽：无预览
+                }
+
+                @Override
+                public net.minecraft.world.item.ItemStack insertItem(int slot,
+                        net.minecraft.world.item.ItemStack stack, boolean simulate) {
+                    if (stack.isEmpty()) {
+                        return net.minecraft.world.item.ItemStack.EMPTY;
+                    }
+                    IGrid grid = getMainNode().getGrid();
+                    if (grid == null) {
+                        return stack;
+                    }
+                    try {
+                        var key = appeng.api.stacks.AEItemKey.of(stack);
+                        if (key == null) {
+                            return stack;
+                        }
+                        long inserted = grid.getStorageService().getInventory().insert(
+                                key, stack.getCount(),
+                                simulate ? Actionable.SIMULATE : Actionable.MODULATE,
+                                actionSource);
+                        if (inserted <= 0) {
+                            return stack;
+                        }
+                        if (inserted >= stack.getCount()) {
+                            return net.minecraft.world.item.ItemStack.EMPTY;
+                        }
+                        net.minecraft.world.item.ItemStack rest = stack.copy();
+                        rest.setCount(stack.getCount() - (int) inserted);
+                        return rest;
+                    } catch (RuntimeException e) {
+                        return stack;
+                    }
+                }
+
+                @Override
+                public net.minecraft.world.item.ItemStack extractItem(int slot, int amount,
+                        boolean simulate) {
+                    return net.minecraft.world.item.ItemStack.EMPTY; // 不支持抽出
+                }
+
+                @Override
+                public int getSlotLimit(int slot) {
+                    return 64;
+                }
+
+                @Override
+                public boolean isItemValid(int slot, net.minecraft.world.item.ItemStack stack) {
+                    return !stack.isEmpty();
+                }
+            };
+
+    private final net.minecraftforge.fluids.capability.IFluidHandler networkFluidHandler =
+            new net.minecraftforge.fluids.capability.IFluidHandler() {
+                @Override
+                public int getTanks() {
+                    return 1;
+                }
+
+                @Override
+                public net.minecraftforge.fluids.FluidStack getFluidInTank(int tank) {
+                    return net.minecraftforge.fluids.FluidStack.EMPTY;
+                }
+
+                @Override
+                public int getTankCapacity(int tank) {
+                    return Integer.MAX_VALUE;
+                }
+
+                @Override
+                public boolean isFluidValid(int tank, net.minecraftforge.fluids.FluidStack stack) {
+                    return !stack.isEmpty();
+                }
+
+                @Override
+                public int fill(net.minecraftforge.fluids.FluidStack resource,
+                        net.minecraftforge.fluids.capability.IFluidHandler.FluidAction action) {
+                    if (resource.isEmpty()) {
+                        return 0;
+                    }
+                    IGrid grid = getMainNode().getGrid();
+                    if (grid == null) {
+                        return 0;
+                    }
+                    try {
+                        var key = appeng.api.stacks.AEFluidKey.of(resource.getFluid());
+                        long inserted = grid.getStorageService().getInventory().insert(
+                                key, resource.getAmount(),
+                                action.simulate() ? Actionable.SIMULATE : Actionable.MODULATE,
+                                actionSource);
+                        return (int) inserted;
+                    } catch (RuntimeException e) {
+                        return 0;
+                    }
+                }
+
+                @Override
+                public net.minecraftforge.fluids.FluidStack drain(
+                        net.minecraftforge.fluids.FluidStack resource,
+                        net.minecraftforge.fluids.capability.IFluidHandler.FluidAction action) {
+                    return net.minecraftforge.fluids.FluidStack.EMPTY; // 不支持抽出
+                }
+
+                @Override
+                public net.minecraftforge.fluids.FluidStack drain(int maxDrain,
+                        net.minecraftforge.fluids.capability.IFluidHandler.FluidAction action) {
+                    return net.minecraftforge.fluids.FluidStack.EMPTY; // 不支持抽出
+                }
+            };
+
+
+
     /** 容量卡数量（0-2）：每张样板槽+标记槽各加一行（3格）。 */
     public int capacityCards() {
         return upgrades.getInstalledUpgrades(
@@ -1280,6 +1406,15 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     public <T> LazyOptional<T> getCapability(Capability<T> cap, @Nullable Direction side) {
         if (cap == ForgeCapabilities.ITEM_HANDLER && side == getFront()) {
             return frontHandler.cast();
+        }
+        // 网络入口（非正面）：外界送入的物品/流体直接进网络
+        if (side != getFront()) {
+            if (cap == ForgeCapabilities.ITEM_HANDLER) {
+                return net.minecraftforge.common.util.LazyOptional.of(() -> networkItemHandler).cast();
+            }
+            if (cap == ForgeCapabilities.FLUID_HANDLER) {
+                return net.minecraftforge.common.util.LazyOptional.of(() -> networkFluidHandler).cast();
+            }
         }
         return super.getCapability(cap, side);
     }
