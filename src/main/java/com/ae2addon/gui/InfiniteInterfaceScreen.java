@@ -43,18 +43,18 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
 
     /** 蓄水池状态行（服务端 FeederStatusPacket → 主线程）。 */
-    private static boolean paramBoxesFilled = false;
+    private boolean paramBoxesFilled = false;
 
     public static void handleStatus(List<String> lines) {
         var mc = Minecraft.getInstance();
         if (mc.screen instanceof InfiniteInterfaceScreen screen) {
             screen.menu.statusLines = lines;
             // 首次收到时用每接口参数填充输入框（§7参数: 目标=.. 间隔=.. 预算=..）
-            if (!paramBoxesFilled) {
+            if (!screen.paramBoxesFilled) {
                 for (String line : lines) {
                     if (line.startsWith("§7参数:")) {
                         screen.fillParamBoxes(line);
-                        paramBoxesFilled = true;
+                        screen.paramBoxesFilled = true;
                         break;
                     }
                 }

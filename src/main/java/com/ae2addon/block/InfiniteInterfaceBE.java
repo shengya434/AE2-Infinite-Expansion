@@ -196,6 +196,33 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             super.setChanged();
             InfiniteInterfaceBE.this.onMarkersChanged();
         }
+
+        @Override
+        public boolean canPlaceItem(int index, ItemStack stack) {
+            // 标记槽只收虚拟标记（WGS）：真实物品一律拒绝（拖拽/放入不吞，
+            // 物品留在手上；标记请用左键/右键/JEI 拖取）
+            if (stack.isEmpty()) {
+                return true;
+            }
+            return stack.getItem() instanceof appeng.items.misc.WrappedGenericStack;
+        }
+
+        @Override
+        public void setItem(int index, ItemStack stack) {
+            // 防御（2026-08-28）：任何路径（拖拽/管道/代码）放入真实物品 →
+            // 自动转虚拟标记，绝不吞物品（容器只存 WrappedGenericStack）
+            if (!stack.isEmpty()
+                    && !(stack.getItem() instanceof appeng.items.misc.WrappedGenericStack)) {
+                AEKey key = com.ae2addon.block.InfiniteInterfaceBE.keyOfStack(stack);
+                if (key != null) {
+                    super.setItem(index, appeng.items.misc.WrappedGenericStack.wrap(key, 1));
+                    return;
+                }
+                super.setItem(index, ItemStack.EMPTY);
+                return;
+            }
+            super.setItem(index, stack);
+        }
     };
 
     private List<IPatternDetails> patterns = List.of();

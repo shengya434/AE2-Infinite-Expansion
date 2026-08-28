@@ -58,6 +58,11 @@ public class MemoryCardItemMixin {
                 tag.put(CFG_KEY, cfg);
                 tag.putString("ae2addon:name", "ME接口(无限级)");
                 ((MemoryCardItem) card.getItem()).notifyUser(player, appeng.api.implementations.items.MemoryCardMessages.SETTINGS_SAVED);
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon] 内存卡导出: 参数=({},{},{}) 开关=({},{}) 方向={} 标记数={} 目标数={}",
+                        feeder.pStockTarget, feeder.pRestockInterval, feeder.pFeedBudget,
+                        feeder.activeExtract, feeder.activeFeed, feeder.extractSide,
+                        cfg.getList("markers", 10).size(), cfg.getList("markerTargets", 10).size());
             } catch (RuntimeException e) {
                 com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon] 内存卡导出失败", e);
             }
@@ -135,6 +140,10 @@ public class MemoryCardItemMixin {
             }
         }
         feeder.setChanged();
-        com.ae2addon.AE2Addon.LOGGER.info("[ae2addon] 内存卡导入完成（ME接口无限级配置）");
+        com.ae2addon.AE2Addon.LOGGER.info(
+                "[ae2addon] 内存卡导入: 参数=({},{},{}) 开关=({},{}) 方向={} 标记数={} 目标数={}",
+                feeder.pStockTarget, feeder.pRestockInterval, feeder.pFeedBudget,
+                feeder.activeExtract, feeder.activeFeed, feeder.extractSide,
+                cfg.getList("markers", 10).size(), cfg.getList("markerTargets", 10).size());
     }
 }
