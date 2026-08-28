@@ -55,8 +55,9 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             // 首次收到时用每接口参数填充输入框（§7参数: 目标=.. 间隔=.. 预算=..）
             if (!screen.paramBoxesFilled) {
                 for (String line : lines) {
-                    if (line.startsWith("§7参数:")) {
-                        screen.fillParamBoxes(line);
+                    String text = deserialize(line).getString();
+                    if (text.contains("目标=") || text.contains("Target=")) {
+                        screen.fillParamBoxes(text);
                         screen.paramBoxesFilled = true;
                         break;
                     }
@@ -65,17 +66,32 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         }
     }
 
-    /** 解析「§7参数: 目标=1000000 间隔=4 预算=4096」填充三个输入框。 */
+    /** 状态行 JSON → Component（失败回退纯文本）。 */
+    private static Component deserialize(String json) {
+        try {
+            return Component.Serializer.fromJson(json);
+        } catch (Exception e) {
+            return Component.literal(json);
+        }
+    }
+
+    /** 解析「参数: 目标=1000000 间隔=4 预算=4096」填充三个输入框。 */
     private void fillParamBoxes(String line) {
         String plain = line.replaceAll("§.", "");
         String[] parts = plain.split(" ");
         for (String part : parts) {
             if (part.startsWith("目标=")) {
                 if (boxes[0] != null) boxes[0].setValue(part.substring(3));
+            } else if (part.startsWith("Target=")) {
+                if (boxes[0] != null) boxes[0].setValue(part.substring(6));
             } else if (part.startsWith("间隔=")) {
                 if (boxes[1] != null) boxes[1].setValue(part.substring(3));
+            } else if (part.startsWith("Interval=")) {
+                if (boxes[1] != null) boxes[1].setValue(part.substring(9));
             } else if (part.startsWith("预算=")) {
                 if (boxes[2] != null) boxes[2].setValue(part.substring(3));
+            } else if (part.startsWith("Budget=")) {
+                if (boxes[2] != null) boxes[2].setValue(part.substring(7));
             }
         }
     }
@@ -308,12 +324,12 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         List<String> lines = menu.statusLines;
         int lineY = STATUS_Y;
         for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
-            String line = lines.get(i);
-            String stripped = line.replaceAll("§.", "");
+            Component comp = deserialize(lines.get(i));
+            String stripped = comp.getString().replaceAll("§.", "");
             if (font.width(stripped) > W - 16) {
-                line = font.plainSubstrByWidth(line, W - 20) + "…";
+                comp = Component.literal(font.plainSubstrByWidth(stripped, W - 20) + "…");
             }
-            g.drawString(font, Component.literal(line), 8, lineY, 0xFFFFFF, false);
+            g.drawString(font, comp, 8, lineY, 0xFFFFFF, false);
             lineY += 7; // 行距 7：3 行（139/146/153）不压背包（161）
         }
         // 标记槽图标叠加（WrappedGenericStack 流体/物品）

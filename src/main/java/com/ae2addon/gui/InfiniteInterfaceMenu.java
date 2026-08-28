@@ -8,6 +8,7 @@ import com.ae2addon.init.ModMenuTypes;
 import com.ae2addon.network.FeederStatusPacket;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -285,49 +286,45 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         super.broadcastChanges();
     }
 
-    /** 相对面中文名（开关行显示用）。 */
-    private static String sideName(appeng.api.orientation.RelativeSide side) {
-        return switch (side) {
-            case FRONT -> "正";
-            case BACK -> "后";
-            case LEFT -> "左";
-            case RIGHT -> "右";
-            case TOP -> "上";
-            case BOTTOM -> "下";
-        };
-    }
-
-    /** 服务端构建蓄水池状态行（§ 着色，客户端直接渲染）。 */
+    /** 服务端构建蓄水池状态行（Component 序列化 JSON，客户端按语言渲染）。 */
     private List<String> buildStatusLines() {
         List<String> lines = new ArrayList<>();
         var summary = feeder.reservoirSummary();
-        lines.add("§e蓄水池: §f" + summary[0] + " §7种 / §f合计 " + summary[1]
-                + " §8| §e已喂出: §f"
-                + com.ae2addon.block.InfiniteInterfaceBE.fmt(feeder.totalFed())
-                + " §8| §b推送 "
-                + com.ae2addon.block.InfiniteInterfaceBE.fmt(
-                        java.math.BigInteger.valueOf(feeder.feedRatePerSecond()))
-                + "§7/s");
+        lines.add(json(Component.translatable("gui.ae2addon.feeder.status",
+                summary[0], summary[1],
+                com.ae2addon.block.InfiniteInterfaceBE.fmt(feeder.totalFed()),
+                com.ae2addon.block.InfiniteInterfaceBE.fmt(
+                        java.math.BigInteger.valueOf(feeder.feedRatePerSecond())))));
         var front = feeder.getFront();
-        String machine = "§7无相邻机器";
+        net.minecraft.network.chat.MutableComponent machine =
+                Component.translatable("gui.ae2addon.feeder.no_machine");
         if (front != null && feeder.getLevel() != null) {
             var target = feeder.getLevel().getBlockEntity(feeder.getBlockPos().relative(front));
             if (target != null) {
-                machine = "§a" + target.getBlockState().getBlock().getName().getString()
-                        + " §7(" + front.getName() + ")";
+                machine = Component.literal("§a")
+                        .append(target.getBlockState().getBlock().getName())
+                        .append(Component.literal(" §7(" + front.getName() + ")"));
             }
         }
         long rejects = feeder.rejectRatePerSecond();
         if (rejects > 0) {
-            machine += " §c[拒收 " + rejects + "/s]";
+            machine.append(Component.translatable("gui.ae2addon.feeder.reject", rejects));
         }
-        lines.add("§7喂出目标: " + machine);
-        lines.add("§7开关: §e抽取[" + (feeder.activeExtract ? "§a开" : "§c关") + "§e] "
-                + "§7方向[§e" + sideName(feeder.extractSide) + "§7] §8| §e喂出["
-                + (feeder.activeFeed ? "§a开" : "§c关") + "§e] §7←点击切换");
-        lines.add("§7参数: 目标=" + feeder.stockTargetValue()
-                + " 间隔=" + feeder.restockIntervalValue()
-                + " 预算=" + feeder.feedBudgetValue());
+        lines.add(json(Component.translatable("gui.ae2addon.feeder.target", machine)));
+        lines.add(json(Component.translatable("gui.ae2addon.feeder.switch",
+                Component.translatable(feeder.activeExtract
+                        ? "gui.ae2addon.feeder.on" : "gui.ae2addon.feeder.off"),
+                Component.translatable("gui.ae2addon.side."
+                        + feeder.extractSide.name().toLowerCase(java.util.Locale.ROOT)),
+                Component.translatable(feeder.activeFeed
+                        ? "gui.ae2addon.feeder.on" : "gui.ae2addon.feeder.off"))));
+        lines.add(json(Component.translatable("gui.ae2addon.feeder.params",
+                feeder.stockTargetValue(), feeder.restockIntervalValue(), feeder.feedBudgetValue())));
         return lines;
+    }
+
+    /** Component → JSON（客户端反序列化按语言渲染）。 */
+    private static String json(net.minecraft.network.chat.Component c) {
+        return net.minecraft.network.chat.Component.Serializer.toJson(c);
     }
 }
