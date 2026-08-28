@@ -1789,6 +1789,44 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 drops.add(stack);
             }
         }
+        // 配置（标记/目标/开关/方向）写入掉落的方块本体，重放自动恢复
+        for (ItemStack drop : drops) {
+            if (drop.getItem() == com.ae2addon.init.ModItems.INFINITE_INTERFACE_ITEM.get()) {
+                writeConfigToStack(drop);
+                break;
+            }
+        }
+    }
+
+    /**
+     * 配置写入掉落方块 NBT（2026-08-28 sensei）：标记槽/缓存目标/开关/抽取方向
+     * 随方块掉落，重新放置自动恢复（loadAdditional 同键读取）。
+     * 蓄水池缓存不进 NBT（属于网络/CPU，防刷）。
+     */
+    private void writeConfigToStack(ItemStack stack) {
+        CompoundTag tag = stack.getOrCreateTag();
+        ListTag markerList = new ListTag();
+        for (int i = 0; i < markerInv.getContainerSize(); i++) {
+            ItemStack st = markerInv.getItem(i);
+            if (!st.isEmpty()) {
+                CompoundTag ent = new CompoundTag();
+                ent.putInt("Slot", i);
+                st.save(ent);
+                markerList.add(ent);
+            }
+        }
+        tag.put("markers", markerList);
+        ListTag targetList = new ListTag();
+        for (var e : markerTargets.entrySet()) {
+            CompoundTag ent = new CompoundTag();
+            ent.put("Key", appeng.items.misc.WrappedGenericStack.wrap(e.getKey(), 1).save(new CompoundTag()));
+            ent.putLong("Target", e.getValue());
+            targetList.add(ent);
+        }
+        tag.put("markerTargets", targetList);
+        tag.putBoolean("activeExtract", activeExtract);
+        tag.putBoolean("activeFeed", activeFeed);
+        tag.putString("extractSide", extractSide.name());
     }
 
     private void onPatternsChanged() {
