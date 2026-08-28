@@ -65,12 +65,12 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         // 玩家背包 9×3
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
-                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 96 + row * 18));
+                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 120 + row * 18));
             }
         }
         // 快捷栏 1×9
         for (int col = 0; col < 9; col++) {
-            addSlot(new Slot(playerInventory, col, 8 + col * 18, 156));
+            addSlot(new Slot(playerInventory, col, 8 + col * 18, 176));
         }
     }
 
@@ -171,19 +171,6 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 + com.ae2addon.block.InfiniteInterfaceBE.fmt(
                         java.math.BigInteger.valueOf(feeder.feedRatePerSecond()))
                 + "§7/s");
-        int markers = feeder.markerCount();
-        String restock = markers <= 0
-                ? "§7自动补货: §7无标记 §e[✎]"
-                : "§7自动补货: §f" + markers + " §7种→§f"
-                        + com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET + " §7/种"
-                        + (com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET <= 0 ? " §c(关闭)" : "")
-                        + " §e[✎]";
-        lines.add(restock);
-        lines.add("§7补货间隔: §f"
-                + com.ae2addon.block.InfiniteInterfaceBE.RESTOCK_INTERVAL
-                + "§7t §e[✎] §7预算: §f"
-                + com.ae2addon.block.InfiniteInterfaceBE.FEED_BUDGET
-                + " §e[✎]");
         var front = feeder.getFront();
         String machine = "§7无相邻机器";
         if (front != null && feeder.getLevel() != null) {
@@ -193,15 +180,11 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                         + " §7(" + front.getName() + ")";
             }
         }
-        lines.add("§7喂出目标: " + machine);
         long rejects = feeder.rejectRatePerSecond();
         if (rejects > 0) {
-            lines.set(lines.size() - 1,
-                    lines.get(lines.size() - 1) + " §c[拒收 " + rejects + "/s — 机器满或不吃]");
+            machine += " §c[拒收 " + rejects + "/s]";
         }
-        for (var item : feeder.topItems(1)) {
-            lines.add("§b" + item);
-        }
+        lines.add("§7喂出目标: " + machine);
         return lines;
     }
 }

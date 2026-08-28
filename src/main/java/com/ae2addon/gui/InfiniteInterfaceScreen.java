@@ -1,40 +1,42 @@
 package com.ae2addon.gui;
 
 import com.ae2addon.AE2Addon;
+import com.ae2addon.config.AE2AddonConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.Slot;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * ME 接口（无限级）配置界面：
- * 3×3 样板槽（左）+ 3×3 标记槽（右）+ 蓄水池状态行（可点击 [✎] 内联改参数）。
+ * ME 接口（无限级）配置界面（v4 常驻编辑版）：
+ * 3×3 样板槽（左）+ 3×3 标记槽（右）+ 三行「输入框+保存」参数区 + 状态行 + 背包。
  * <p>
- * 内联设置（2026-08-28 sensei 要求）：状态行带 §e[✎] 标记的行可点击，
- * 弹出输入框（支持 MAX / 1e12 / K/M/G/T/P/E 后缀），回车发送 FeederSettingPacket
- * 到服务端改配置 + 热加载，无需进 mods 配置界面。
+ * 2026-08-28 10:21 教训：点击弹框方案（[✎] → 临时 EditBox）在用户环境
+ * 输入框不可见/不可用（原因未明，ModernUI MixinEditBox 只加撤销不影响渲染），
+ * 改为常驻 EditBox + 保存按钮（与 Mode2ConfigScreen 同款，必然可见可点）。
+ * <p>
+ * 参数：补货目标（feederStockTarget）/ 补货间隔（feederRestockInterval）/
+ * 喂出预算（feederFeedBudget）。回车或点保存 → FeederSettingPacket → 服务端写盘热加载。
+ * 输入支持 MAX / 1e12 / K/M/G/T/P/E 后缀。
  */
 public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInterfaceMenu> {
 
     private static final int W = 176;
-    private static final int H = 180;
-    private static final int STATUS_X = 8;
-    private static final int STATUS_Y = 58;
-    private static final int STATUS_LINE_H = 8;
-    private static final int MAX_STATUS_LINES = 5;
+    private static final int H = 194;
+    private static final int MAX_STATUS_LINES = 3;
 
-    /** 当前编辑中的设置项 key（null = 未编辑）。 */
-    private String editingKey;
-    private EditBox editBox;
+    private static final String[] KEYS = {"stockTarget", "restockInterval", "feedBudget"};
+    private static final String[] LABELS = {"§7补货目标", "§7补货间隔", "§7喂出预算"};
+
+    private final EditBox[] boxes = new EditBox[3];
+    private final Button[] buttons = new Button[3];
 
     /** 蓄水池状态行（服务端 FeederStatusPacket → 主线程）。 */
     public static void handleStatus(List<String> lines) {
@@ -54,192 +56,46 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     }
 
     @Override
-    protected void renderBg(GuiGraphics g, float partialTick, int mouseX, int mouseY) {
-        renderBackground(g);
-        int x = leftPos;
-        int y = topPos;
+    protected void init() {
+        super.init();
+        // 三行参数：标签 + 输入框 + 保存按钮（常驻，行高 14，位于样板槽下方）
+        int[] rowYs = {64, 78, 92};
+        long[] values = {
+                AE2AddonConfig.feederStockTarget(),
+                AE2AddonConfig.feederRestockInterval(),
+                AE2AddonConfig.feederFeedBudget()
+        };
+        for (int i = 0; i < 3; i++) {
+            final int idx = i;
+            EditBox box = new EditBox(font, leftPos + 48, topPos + rowYs[i], 70, 14,
+                    Component.literal(KEYS[i]));
+            box.setMaxLength(40);
+            box.setValue(String.valueOf(values[i]));
+            box.setResponder(s -> { });
+            addRenderableWidget(box);
+            boxes[i] = box;
 
-        // 面板底
-        g.fill(x, y, x + W, y + H, 0xF0101010);
-        g.fill(x, y, x + W, y + 1, 0xFF555555);
-        g.fill(x, y + H - 1, x + W, y + H, 0xFF555555);
-        g.fill(x, y, x + 1, y + H, 0xFF555555);
-        g.fill(x + W - 1, y, x + W, y + H, 0xFF555555);
-
-        // 槽位底框（样板槽 + 标记槽 + 玩家背包槽）——renderBg 无 translate，须手动加 leftPos/topPos
-        for (Slot slot : menu.getSlotList()) {
-            if (slot.isActive()) {
-                drawSlotBg(g, x + slot.x - 1, y + slot.y - 1);
-            }
+            Button button = Button.builder(Component.literal("保存"),
+                    b -> saveSetting(idx)
+            ).bounds(leftPos + 122, topPos + rowYs[i] - 1, 32, 16).build();
+            addRenderableWidget(button);
+            buttons[i] = button;
         }
     }
 
-    private void drawSlotBg(GuiGraphics g, int sx, int sy) {
-        g.fill(sx, sy, sx + 18, sy + 18, 0xFF8B8B8B);
-        g.fill(sx + 1, sy + 1, sx + 17, sy + 17, 0xFF373737);
-    }
-
-    @Override
-    protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
-        g.drawString(font, title, titleLabelX, titleLabelY, 0xFFFFAA, false);
-
-        g.drawString(font,
-                Component.translatable("gui.ae2addon.infinite_interface.patterns"),
-                26, 6, 0xAAAAAA, false);
-        g.drawString(font,
-                Component.translatable("gui.ae2addon.infinite_interface.markers"),
-                96, 6, 0xAAAAAA, false);
-
-        // 蓄水池状态行（最多 5 行，超长截断）
-        List<String> lines = menu.statusLines;
-        int lineY = STATUS_Y;
-        for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
-            String line = lines.get(i);
-            String stripped = line.replaceAll("§.", "");
-            if (font.width(stripped) > W - 16) {
-                line = font.plainSubstrByWidth(line, W - 20) + "…";
-            }
-            g.drawString(font, Component.literal(line), STATUS_X, lineY, 0xFFFFFF, false);
-            lineY += STATUS_LINE_H;
-        }
-    }
-
-    @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        // ⚠️ 不能自己先调 renderBg：AbstractContainerScreen.render 内部会调（背景画两遍）；
-        // 也不能重复 renderTooltip（super 统一处理）
-        super.render(g, mouseX, mouseY, partialTick);
-    }
-
-    // ── 内联设置编辑 ──
-
-    @Override
-    public boolean mouseClicked(double mx, double my, int button) {
-        if (editBox != null) {
-            return super.mouseClicked(mx, my, button); // 输入框交互优先
-        }
-        if (button == 0) {
-            String key = hitEditMarker(mx, my);
-            if (key != null) {
-                startEdit(key, my);
-                return true;
-            }
-        }
-        return super.mouseClicked(mx, my, button);
-    }
-
-    @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (editBox != null && editBox.isFocused()) {
-            com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][gui] 按键(编辑中): keyCode={} focused={}", keyCode, editBox.isFocused());
-            if (keyCode == 257 || keyCode == 335) { // Enter / Numpad Enter
-                applyEdit();
-                return true;
-            }
-            if (keyCode == 256) { // Esc
-                cancelEdit();
-                return true;
-            }
-        }
-        return super.keyPressed(keyCode, scanCode, modifiers);
-    }
-
-    /** 命中可编辑行 → 返回设置 key（stockTarget/restockInterval/feedBudget），未命中返回 null。 */
-    private String hitEditMarker(double mx, double my) {
-        // ⚠️ 鼠标坐标是屏幕坐标，状态行绘制是 GUI 相对坐标（renderLabels 在 translate 后）
-        double rx = mx - leftPos;
-        double ry = my - topPos;
-        List<String> lines = menu.statusLines;
-        String hit = null;
-        for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
-            int lineY = STATUS_Y + i * STATUS_LINE_H;
-            if (ry < lineY || ry >= lineY + STATUS_LINE_H) {
-                continue;
-            }
-            // 整行可点（目标区域大）：第 1 行=补货目标，第 2 行左半=补货间隔/右半=预算
-            switch (i) {
-                case 1 -> hit = "stockTarget";
-                case 2 -> hit = (rx >= STATUS_X + 80) ? "feedBudget" : "restockInterval";
-                default -> { }
-            }
-            break;
-        }
-        com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon][gui] 点击检测: mx={} my={} rx={} ry={} 行数={} 命中={}",
-                (int) mx, (int) my, (int) rx, (int) ry, lines.size(),
-                hit == null ? "无" : hit);
-        return hit;
-    }
-
-    private void startEdit(String key, double my) {
-        String current = extractCurrentValue(key);
-        editingKey = key;
-        editBox = new EditBox(font, leftPos + 30, (int) my - 8, 120, 14,
-                Component.literal(key));
-        editBox.setMaxLength(40);
-        editBox.setValue(current);
-        editBox.setFocused(true);
-        // ⚠️ 必须把屏幕焦点交给输入框，否则 Screen.keyPressed 不会转发按键（输入无效）
-        setFocused(editBox);
-        addWidget(editBox);
-        com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon][gui] 输入框已创建: key={} 初始值={} 位置=({},{}) leftPos={} topPos={}",
-                key, current, editBox.getX(), editBox.getY(), leftPos, topPos);
-    }
-
-    /** 从状态行文本提取当前值（服务端固定格式）。 */
-    private String extractCurrentValue(String key) {
-        List<String> lines = menu.statusLines;
-        if (lines.size() > 1) {
-            String line = lines.get(1).replaceAll("§.", "");
-            if ("stockTarget".equals(key)) {
-                Matcher m = Pattern.compile("(\\d+)").matcher(line);
-                if (m.find()) {
-                    return m.group(1);
-                }
-            }
-        }
-        if (lines.size() > 2) {
-            String line = lines.get(2).replaceAll("§.", "");
-            if ("restockInterval".equals(key)) {
-                Matcher m = Pattern.compile("间隔:\\s*(\\d+)").matcher(line);
-                if (m.find()) {
-                    return m.group(1);
-                }
-            }
-            if ("feedBudget".equals(key)) {
-                Matcher m = Pattern.compile("预算:\\s*(\\d+)").matcher(line);
-                if (m.find()) {
-                    return m.group(1);
-                }
-            }
-        }
-        return "";
-    }
-
-    private void applyEdit() {
-        if (editBox == null || editingKey == null) {
+    /** 读取输入框 → 解析 → 发送到服务端。 */
+    private void saveSetting(int idx) {
+        if (idx < 0 || idx >= KEYS.length || boxes[idx] == null) {
             return;
         }
-        String text = editBox.getValue().trim();
+        String text = boxes[idx].getValue().trim();
         try {
             long value = parseSetting(text);
-            com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][gui] 应用设置: key={} 文本={} 解析值={}", editingKey, text, value);
-            AE2Addon.NETWORK.sendToServer(new com.ae2addon.network.FeederSettingPacket(editingKey, value));
+            AE2Addon.LOGGER.info("[ae2addon][gui] 保存设置: {} = {}（文本 {}）", KEYS[idx], value, text);
+            AE2Addon.NETWORK.sendToServer(
+                    new com.ae2addon.network.FeederSettingPacket(KEYS[idx], value));
         } catch (NumberFormatException e) {
-            com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][gui] 解析失败: key={} 文本={}", editingKey, text);
-        }
-        cancelEdit();
-    }
-
-    private void cancelEdit() {
-        editingKey = null;
-        if (editBox != null) {
-            removeWidget(editBox);
-            editBox = null;
+            AE2Addon.LOGGER.info("[ae2addon][gui] 解析失败: {} 文本={}", KEYS[idx], text);
         }
     }
 
@@ -275,8 +131,77 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     }
 
     @Override
-    public void onClose() {
-        cancelEdit();
-        super.onClose();
+    protected void renderBg(GuiGraphics g, float partialTick, int mouseX, int mouseY) {
+        renderBackground(g);
+        int x = leftPos;
+        int y = topPos;
+
+        // 面板底
+        g.fill(x, y, x + W, y + H, 0xF0101010);
+        g.fill(x, y, x + W, y + 1, 0xFF555555);
+        g.fill(x, y + H - 1, x + W, y + H, 0xFF555555);
+        g.fill(x, y, x + 1, y + H, 0xFF555555);
+        g.fill(x + W - 1, y, x + W, y + H, 0xFF555555);
+
+        // 槽位底框（renderBg 无 translate，须手动加 leftPos/topPos）
+        for (Slot slot : menu.getSlotList()) {
+            if (slot.isActive()) {
+                drawSlotBg(g, x + slot.x - 1, y + slot.y - 1);
+            }
+        }
+    }
+
+    private void drawSlotBg(GuiGraphics g, int sx, int sy) {
+        g.fill(sx, sy, sx + 18, sy + 18, 0xFF8B8B8B);
+        g.fill(sx + 1, sy + 1, sx + 17, sy + 17, 0xFF373737);
+    }
+
+    @Override
+    protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
+        g.drawString(font, title, titleLabelX, titleLabelY, 0xFFFFAA, false);
+        g.drawString(font,
+                Component.translatable("gui.ae2addon.infinite_interface.patterns"),
+                26, 6, 0xAAAAAA, false);
+        g.drawString(font,
+                Component.translatable("gui.ae2addon.infinite_interface.markers"),
+                96, 6, 0xAAAAAA, false);
+
+        // 参数行标签（输入框左侧）
+        int[] rowYs = {64, 78, 92};
+        for (int i = 0; i < 3; i++) {
+            g.drawString(font, Component.literal(LABELS[i]), 8, rowYs[i] + 3, 0xFFFFFF, false);
+        }
+
+        // 状态行（参数区下方；最多 3 行，超长截断）
+        List<String> lines = menu.statusLines;
+        int lineY = 110;
+        for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
+            String line = lines.get(i);
+            String stripped = line.replaceAll("§.", "");
+            if (font.width(stripped) > W - 16) {
+                line = font.plainSubstrByWidth(line, W - 20) + "…";
+            }
+            g.drawString(font, Component.literal(line), 8, lineY, 0xFFFFFF, false);
+            lineY += 8;
+        }
+    }
+
+    @Override
+    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        // ⚠️ 不能自己先调 renderBg（super 内部会调，画两遍）；renderTooltip 同理
+        super.render(g, mouseX, mouseY, partialTick);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // 输入框聚焦时回车 = 保存
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] != null && boxes[i].isFocused()
+                    && (keyCode == 257 || keyCode == 335)) {
+                saveSetting(i);
+                return true;
+            }
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 }
