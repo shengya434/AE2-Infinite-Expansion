@@ -258,6 +258,32 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     /** 主动喂出（蓄水池 → 正面机器）。 */
     public boolean activeFeed = true;
 
+    /** 主动抽取方向（相对面，跟随方块朝向；默认正面保持原行为）。 */
+    public appeng.api.orientation.RelativeSide extractSide = appeng.api.orientation.RelativeSide.FRONT;
+
+    /** 循环切换抽取方向（正→后→左→右→上→下）。 */
+    public void cycleExtractSide() {
+        var all = appeng.api.orientation.RelativeSide.values();
+        int idx = java.util.Arrays.asList(all).indexOf(extractSide);
+        extractSide = all[(idx + 1) % all.length];
+        setChanged();
+        com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 主动抽取方向 → {}", extractSide.name());
+    }
+
+    /** 抽取方向的实际世界方向（null = 无法解析）。 */
+    @Nullable
+    public Direction getExtractDir() {
+        BlockState state = getBlockState();
+        if (state == null) {
+            return null;
+        }
+        try {
+            return BlockOrientation.get(state).getSide(extractSide);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /** GUI 开关切换。 */
     public void toggleActive(String which) {
         if ("extract".equals(which)) {
@@ -266,6 +292,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         } else if ("feed".equals(which)) {
             activeFeed = !activeFeed;
             com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 主动喂出 {}", activeFeed ? "开" : "关");
+        } else if ("dir".equals(which)) {
+            cycleExtractSide();
+            return; // 已在 cycle 内 setChanged
         }
         setChanged();
     }
@@ -1431,11 +1460,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         if (level == null || level.isClientSide) {
             return;
         }
-        Direction front = getFront();
-        if (front == null) {
+        Direction extractDir = getExtractDir();
+        if (extractDir == null) {
             return;
         }
-        BlockEntity target = level.getBlockEntity(worldPosition.relative(front));
+        BlockEntity target = level.getBlockEntity(worldPosition.relative(extractDir));
         if (target == null) {
             return;
         }
@@ -1444,7 +1473,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             return;
         }
         MEStorage storage = grid.getStorageService().getInventory();
-        Direction side = front.getOpposite();
+        Direction side = extractDir.getOpposite();
         try {
             // 物品：抽第一个槽（产物）；标记材料跳过
             var itemCap = target.getCapability(ForgeCapabilities.ITEM_HANDLER, side);
@@ -2063,6 +2092,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         tag.put("markerTargets", targetList);
         tag.putBoolean("activeExtract", activeExtract);
         tag.putBoolean("activeFeed", activeFeed);
+        tag.putString("extractSide", extractSide.name());
 
         ListTag reservoirList = new ListTag();
         for (var entry : reservoir.entrySet()) {
@@ -2105,6 +2135,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         activeExtract = tag.getBoolean("activeExtract");
         activeFeed = tag.getBoolean("activeFeed");
+        try {
+            extractSide = appeng.api.orientation.RelativeSide.valueOf(
+                    tag.getString("extractSide"));
+        } catch (RuntimeException ignored) {
+            extractSide = appeng.api.orientation.RelativeSide.FRONT;
+        }
         markerTargets.clear();
         ListTag targetList = tag.getList("markerTargets", Tag.TAG_COMPOUND);
         for (int i = 0; i < targetList.size(); i++) {

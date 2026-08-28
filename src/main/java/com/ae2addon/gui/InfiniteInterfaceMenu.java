@@ -285,6 +285,18 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         super.broadcastChanges();
     }
 
+    /** 相对面中文名（开关行显示用）。 */
+    private static String sideName(appeng.api.orientation.RelativeSide side) {
+        return switch (side) {
+            case FRONT -> "正";
+            case BACK -> "后";
+            case LEFT -> "左";
+            case RIGHT -> "右";
+            case TOP -> "上";
+            case BOTTOM -> "下";
+        };
+    }
+
     /** 服务端构建蓄水池状态行（§ 着色，客户端直接渲染）。 */
     private List<String> buildStatusLines() {
         List<String> lines = new ArrayList<>();
@@ -310,7 +322,8 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             machine += " §c[拒收 " + rejects + "/s]";
         }
         lines.add("§7喂出目标: " + machine);
-        lines.add("§7开关: §e抽取[" + (feeder.activeExtract ? "§a开" : "§c关") + "§e] §8| §e喂出["
+        lines.add("§7开关: §e抽取[" + (feeder.activeExtract ? "§a开" : "§c关") + "§e] "
+                + "§7方向[§e" + sideName(feeder.extractSide) + "§7] §8| §e喂出["
                 + (feeder.activeFeed ? "§a开" : "§c关") + "§e] §7←点击切换");
         return lines;
     }
