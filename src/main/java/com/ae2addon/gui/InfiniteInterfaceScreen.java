@@ -25,8 +25,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
     private static final int W = 176;
     private static final int H = 237;
-    private static final int MAX_STATUS_LINES = 2;
-    private static final int STATUS_Y = 142;
+    private static final int MAX_STATUS_LINES = 3;
+    private static final int STATUS_Y = 139;
 
     private static final String[] KEYS = {"stockTarget", "restockInterval", "feedBudget"};
     private static final String[] LABELS = {"§7补货目标", "§7补货间隔", "§7喂出预算"};
@@ -283,14 +283,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                 line = font.plainSubstrByWidth(line, W - 20) + "…";
             }
             g.drawString(font, Component.literal(line), 8, lineY, 0xFFFFFF, false);
-            lineY += 8;
-        }
-
-        // 【临时诊断】悬浮槽物品名（tooltip 排查用；确认后移除）
-        if (hoveredSlot != null && hoveredSlot.hasItem()) {
-            String hoverName = hoveredSlot.getItem().getHoverName().getString();
-            g.drawString(font, Component.literal("§f悬浮: §e" + hoverName),
-                    8, lineY + 1, 0xFFFFFF, false);
+            lineY += 7; // 行距 7：3 行（139/146/153）不压背包（161）
         }
         // 标记槽图标叠加（WrappedGenericStack 流体/物品）
         renderMarkerIcons(g);
@@ -350,7 +343,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         // 状态行第 3 行（开关行）点击切换：左半=抽取，右半=喂出
         int relX = (int) mouseX - leftPos;
         int relY = (int) mouseY - topPos;
-        if (button == 0 && relY >= 156 && relY <= 163 && relX >= 8 && relX < 170) {
+        if (button == 0 && relY >= 152 && relY <= 161 && relX >= 8 && relX < 170) {
             AE2Addon.NETWORK.sendToServer(
                     new com.ae2addon.network.FeederTogglePacket(
                             getMenu().getFeeder().getBlockPos(),

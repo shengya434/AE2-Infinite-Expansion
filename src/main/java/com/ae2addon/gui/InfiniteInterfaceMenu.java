@@ -43,7 +43,7 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
 
         // 分页布局（2026-08-28）：样板/标记槽固定 3×3 每页，容量卡加页；
         // 当前页 = 客户端视图状态（currentPage），槽位按页显隐
-        final int gridY = 83;
+        final int gridY = 80; // 上移 3px：给状态行 3 行（含开关行）腾空间
         // 样板槽（左 3×3×5页；每页9格，容量卡最多4→45格）
         var patternInv = feeder.getPatternInventory();
         for (int i = 0; i < 45; i++) {
