@@ -325,6 +325,9 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         lines.add("§7开关: §e抽取[" + (feeder.activeExtract ? "§a开" : "§c关") + "§e] "
                 + "§7方向[§e" + sideName(feeder.extractSide) + "§7] §8| §e喂出["
                 + (feeder.activeFeed ? "§a开" : "§c关") + "§e] §7←点击切换");
+        lines.add("§7参数: 目标=" + feeder.stockTargetValue()
+                + " 间隔=" + feeder.restockIntervalValue()
+                + " 预算=" + feeder.feedBudgetValue());
         return lines;
     }
 }

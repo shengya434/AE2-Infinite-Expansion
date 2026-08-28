@@ -14,49 +14,36 @@ import java.util.function.Supplier;
  */
 public class FeederSettingPacket {
 
+    private final net.minecraft.core.BlockPos pos;
     private final String key;
     private final long value;
 
-    public FeederSettingPacket(String key, long value) {
+    public FeederSettingPacket(net.minecraft.core.BlockPos pos, String key, long value) {
+        this.pos = pos;
         this.key = key;
         this.value = value;
     }
 
     public static void encode(FeederSettingPacket msg, FriendlyByteBuf buf) {
+        buf.writeBlockPos(msg.pos);
         buf.writeUtf(msg.key);
         buf.writeLong(msg.value);
     }
 
     public static FeederSettingPacket decode(FriendlyByteBuf buf) {
-        return new FeederSettingPacket(buf.readUtf(), buf.readLong());
+        return new FeederSettingPacket(buf.readBlockPos(), buf.readUtf(), buf.readLong());
     }
 
     public static void handle(FeederSettingPacket msg, Supplier<NetworkEvent.Context> ctx) {
         if (ctx.get().getDirection().getReceptionSide().isServer()) {
             ctx.get().enqueueWork(() -> {
-                boolean applied = switch (msg.key) {
-                    case "stockTarget" -> {
-                        var v = AE2AddonConfig.FEEDER_STOCK_TARGET;
-                        v.set(Math.max(0L, Math.min(Long.MAX_VALUE, msg.value)));
-                        yield true;
-                    }
-                    case "restockInterval" -> {
-                        var v = AE2AddonConfig.FEEDER_RESTOCK_INTERVAL;
-                        v.set((int) Math.max(1, Math.min(200, msg.value)));
-                        yield true;
-                    }
-                    case "feedBudget" -> {
-                        var v = AE2AddonConfig.FEEDER_FEED_BUDGET;
-                        v.set((int) Math.max(1, Math.min(1_000_000, msg.value)));
-                        yield true;
-                    }
-                    default -> false;
-                };
-                if (applied) {
-                    AE2AddonConfig.SPEC.save();
-                    AE2AddonConfig.apply();
-                    com.ae2addon.AE2Addon.LOGGER.info(
-                            "[ae2addon][feeder] GUI设置更新 {} = {}", msg.key, msg.value);
+                var level = ctx.get().getSender() == null ? null : ctx.get().getSender().level();
+                if (level == null || !level.hasChunkAt(msg.pos)) {
+                    return;
+                }
+                if (level.getBlockEntity(msg.pos)
+                        instanceof com.ae2addon.block.InfiniteInterfaceBE be) {
+                    be.setPerBlockParam(msg.key, msg.value);
                 }
             });
         }

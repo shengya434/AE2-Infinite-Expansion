@@ -43,10 +43,37 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
 
     /** 蓄水池状态行（服务端 FeederStatusPacket → 主线程）。 */
+    private static boolean paramBoxesFilled = false;
+
     public static void handleStatus(List<String> lines) {
         var mc = Minecraft.getInstance();
         if (mc.screen instanceof InfiniteInterfaceScreen screen) {
             screen.menu.statusLines = lines;
+            // 首次收到时用每接口参数填充输入框（§7参数: 目标=.. 间隔=.. 预算=..）
+            if (!paramBoxesFilled) {
+                for (String line : lines) {
+                    if (line.startsWith("§7参数:")) {
+                        screen.fillParamBoxes(line);
+                        paramBoxesFilled = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /** 解析「§7参数: 目标=1000000 间隔=4 预算=4096」填充三个输入框。 */
+    private void fillParamBoxes(String line) {
+        String plain = line.replaceAll("§.", "");
+        String[] parts = plain.split(" ");
+        for (String part : parts) {
+            if (part.startsWith("目标=")) {
+                if (boxes[0] != null) boxes[0].setValue(part.substring(3));
+            } else if (part.startsWith("间隔=")) {
+                if (boxes[1] != null) boxes[1].setValue(part.substring(3));
+            } else if (part.startsWith("预算=")) {
+                if (boxes[2] != null) boxes[2].setValue(part.substring(3));
+            }
         }
     }
 
@@ -141,7 +168,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             long value = parseSetting(text);
             AE2Addon.LOGGER.info("[ae2addon][gui] 保存设置: {} = {}（文本 {}）", KEYS[idx], value, text);
             AE2Addon.NETWORK.sendToServer(
-                    new com.ae2addon.network.FeederSettingPacket(KEYS[idx], value));
+                    new com.ae2addon.network.FeederSettingPacket(
+                            getMenu().getFeeder().getBlockPos(), KEYS[idx], value));
         } catch (NumberFormatException e) {
             AE2Addon.LOGGER.info("[ae2addon][gui] 解析失败: {} 文本={}", KEYS[idx], text);
         }

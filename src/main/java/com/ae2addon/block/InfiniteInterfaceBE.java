@@ -259,6 +259,44 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     private boolean feederDiagLogged;
 
+    // ── 每接口独立参数（-1 = 用全局配置；内存卡可复制） ──
+
+    /** 独立补货目标（-1=全局）。 */
+    public long pStockTarget = -1;
+
+    /** 独立补货间隔 tick（-1=全局）。 */
+    public int pRestockInterval = -1;
+
+    /** 独立喂出预算（-1=全局）。 */
+    public int pFeedBudget = -1;
+
+    public long stockTargetValue() {
+        return pStockTarget >= 0 ? pStockTarget : com.ae2addon.config.AE2AddonConfig.feederStockTarget();
+    }
+
+    public int restockIntervalValue() {
+        return pRestockInterval > 0 ? pRestockInterval
+                : Math.max(1, com.ae2addon.config.AE2AddonConfig.feederRestockInterval());
+    }
+
+    public int feedBudgetValue() {
+        return pFeedBudget > 0 ? pFeedBudget : com.ae2addon.config.AE2AddonConfig.feederFeedBudget();
+    }
+
+    /** GUI 设置每接口参数（key: stockTarget/restockInterval/feedBudget）。 */
+    public void setPerBlockParam(String key, long value) {
+        switch (key) {
+            case "stockTarget" -> pStockTarget = Math.max(0, Math.min(Long.MAX_VALUE, value));
+            case "restockInterval" -> pRestockInterval = (int) Math.max(0, Math.min(10000, value));
+            case "feedBudget" -> pFeedBudget = (int) Math.max(0, Math.min(1_000_000, value));
+            default -> {
+                return;
+            }
+        }
+        setChanged();
+        com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 本接口参数 {} = {}", key, value);
+    }
+
     // ── 主动输入/输出开关（GUI 内切换；默认全开） ──
 
     /** 主动抽取（正面机器产物 → 网络）。 */
@@ -327,10 +365,13 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return appeng.api.stacks.AEItemKey.of(stack);
     }
 
-    /** 标记的补货目标（独立值优先，否则全局）。 */
+    /** 标记的补货目标（标记独立值 > 每接口参数 > 全局）。 */
     public long targetFor(AEKey key) {
         Long v = markerTargets.get(key);
-        return v != null && v > 0 ? v : STOCK_TARGET;
+        if (v != null && v > 0) {
+            return v;
+        }
+        return stockTargetValue();
     }
 
     /** 中键点击标记槽：循环切换该标记的缓存目标。 */
@@ -366,6 +407,21 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         setChanged();
         com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 标记 {} 缓存目标 → {}",
                 key, next == Long.MAX_VALUE ? "MAX" : next);
+    }
+
+    /** 内存卡导出用：markerTargets 只读快照。 */
+    public java.util.Map<AEKey, Long> markerTargetsSnapshot() {
+        return java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(markerTargets));
+    }
+
+    /** 内存卡导入用：清空独立目标。 */
+    public void markerTargetsClear() {
+        markerTargets.clear();
+    }
+
+    /** 内存卡导入用：写入独立目标。 */
+    public void markerTargetsPut(AEKey key, long target) {
+        markerTargets.put(key, target);
     }
 
     /** 中键弹框输入：设置标记槽的独立缓存目标（target<=0 清除独立值回退全局）。 */
@@ -1048,7 +1104,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 && com.ae2addon.config.AE2AddonConfig.debugLogs()) {
             logFeederStatus("心跳"); // 每 64 tick（约 3 秒）一条，仅 debugLogs 开
         }
-        if ((lvl.getGameTime() & (RESTOCK_INTERVAL - 1)) == 0) {
+        if ((lvl.getGameTime() % restockIntervalValue()) == 0) {
             restockFromNetwork();
         }
         if ((lvl.getGameTime() % EXTRACT_INTERVAL) == 0) {
@@ -1061,7 +1117,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     /** ① 从网络无上限拉取：对每个待补物品一次拉满缺口（每 RESTOCK_INTERVAL tick）。 */
     private void restockFromNetwork() {
         cleanupStrayItems(); // 标记槽误存的真实物品退回网络（防吞材料）
-        if (STOCK_TARGET <= 0) {
+        if (stockTargetValue() <= 0) {
             return; // 配置关闭自动补货
         }
         IGrid grid = getMainNode().getGrid();
@@ -1361,7 +1417,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             return;
         }
         // 速度卡：每张喂出预算 ×2（最高 ×4）
-        int budget = Math.min(FEED_BUDGET, 1_000_000);
+        int budget = Math.min(feedBudgetValue(), 1_000_000);
         int perItemBudget = Math.max(1, budget / feedable);
         int totalBudget = budget;
         long fedAll = 0;
@@ -1827,6 +1883,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         tag.putBoolean("activeExtract", activeExtract);
         tag.putBoolean("activeFeed", activeFeed);
         tag.putString("extractSide", extractSide.name());
+        tag.putLong("pStockTarget", pStockTarget);
+        tag.putInt("pRestockInterval", pRestockInterval);
+        tag.putInt("pFeedBudget", pFeedBudget);
+        tag.putLong("pStockTarget", pStockTarget);
+        tag.putInt("pRestockInterval", pRestockInterval);
+        tag.putInt("pFeedBudget", pFeedBudget);
     }
 
     private void onPatternsChanged() {
@@ -2206,6 +2268,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         activeExtract = tag.getBoolean("activeExtract");
         activeFeed = tag.getBoolean("activeFeed");
+        pStockTarget = tag.getLong("pStockTarget");
+        pRestockInterval = tag.getInt("pRestockInterval");
+        pFeedBudget = tag.getInt("pFeedBudget");
         try {
             extractSide = appeng.api.orientation.RelativeSide.valueOf(
                     tag.getString("extractSide"));

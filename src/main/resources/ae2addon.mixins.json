@@ -12,6 +12,7 @@
     "CraftingCpuLogicMixin",
     "CraftingServiceMixin",
     "GridMixin",
+    "MemoryCardItemMixin",
     "TooltipsMixin"
   ],
   "client": [],
