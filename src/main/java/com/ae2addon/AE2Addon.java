@@ -136,6 +136,17 @@ public class AE2Addon {
             appeng.api.upgrades.Upgrades.add(
                     ModBlocks.INFINITE_INTERFACE.get(), inductionCard, 1);
         }
+        // ExtendedAE+ 频道卡（无线连网） + 虚拟合成卡（末批即完成）
+        var channelCard = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
+        if (channelCard != null) {
+            appeng.api.upgrades.Upgrades.add(
+                    ModBlocks.INFINITE_INTERFACE.get(), channelCard, 1);
+        }
+        var virtualCard = com.ae2addon.compat.ExtendedAEPlusCompat.virtualCraftingCard();
+        if (virtualCard != null) {
+            appeng.api.upgrades.Upgrades.add(
+                    ModBlocks.INFINITE_INTERFACE.get(), virtualCard, 1);
+        }
 
         LOGGER.info("✅ AE2 Addon loaded! Universal Storage Cells ready!");
     }

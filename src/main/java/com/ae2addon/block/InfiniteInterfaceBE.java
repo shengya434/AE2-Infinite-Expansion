@@ -292,12 +292,14 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     @Override
     public void onChunkUnloaded() {
         ACTIVE.remove(this);
+        disconnectChannelLink();
         super.onChunkUnloaded();
     }
 
     @Override
     public void setRemoved() {
         ACTIVE.remove(this);
+        disconnectChannelLink();
         super.setRemoved();
     }
 
@@ -462,6 +464,72 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return card != null && upgrades.getInstalledUpgrades(card) > 0;
     }
 
+    /** ExtendedAE+ 频道卡（无线连网）。 */
+    public boolean hasChannelCard() {
+        var card = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
+        return card != null && upgrades.getInstalledUpgrades(card) > 0;
+    }
+
+    /** ExtendedAE+ 虚拟合成卡（最后一次发配即完成）。 */
+    public boolean hasVirtualCraftingCard() {
+        var card = com.ae2addon.compat.ExtendedAEPlusCompat.virtualCraftingCard();
+        return card != null && upgrades.getInstalledUpgrades(card) > 0;
+    }
+
+    // ── 频道卡无线链路（ExtendedAE+） ──
+
+    /** 无线从端链路（WirelessSlaveLink；仅装卡且 mod 加载时非 null）。 */
+    private com.extendedae_plus.ae.wireless.WirelessSlaveLink channelLink;
+
+    private void updateChannelLink() {
+        if (!com.ae2addon.compat.ExtendedAEPlusCompat.isLoaded()) {
+            return;
+        }
+        var card = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
+        long channel = -1;
+        java.util.UUID owner = null;
+        if (card != null) {
+            for (int i = 0; i < upgrades.size(); i++) {
+                var stack = upgrades.getStackInSlot(i);
+                if (stack.getItem() == card) {
+                    channel = com.extendedae_plus.items.materials.ChannelCardItem.getChannel(stack);
+                    owner = com.extendedae_plus.items.materials.ChannelCardItem.getOwnerUUID(stack);
+                    break;
+                }
+            }
+        }
+        try {
+            if (channel < 0) {
+                // 无卡/无效卡：断开
+                if (channelLink != null) {
+                    com.extendedae_plus.util.wireless.ChannelCardLinkHelper.disconnect(channelLink);
+                    channelLink = null;
+                }
+                return;
+            }
+            if (channelLink == null) {
+                var endpoint = new com.extendedae_plus.ae.wireless.endpoint.GenericNodeEndpointImpl(
+                        () -> this, () -> getMainNode().getNode());
+                channelLink = new com.extendedae_plus.ae.wireless.WirelessSlaveLink(endpoint);
+            }
+            channelLink.setPlacerId(owner);
+            channelLink.setFrequency(channel);
+            channelLink.updateStatus();
+        } catch (RuntimeException ignored) {
+            // 无线系统异常不影响主功能
+        }
+    }
+
+    private void disconnectChannelLink() {
+        if (channelLink != null) {
+            try {
+                channelLink.onUnloadOrRemove();
+            } catch (RuntimeException ignored) {
+            }
+            channelLink = null;
+        }
+    }
+
     /** 红石门控：感应卡安装时，信号高=喂出（反向卡则反转）。 */
     private boolean redstoneAllowsFeed() {
         if (!hasRedstoneCard()) {
@@ -473,6 +541,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     private void onUpgradesChanged() {
         setChanged();
+        updateChannelLink();
     }
 
     // ── PatternContainer（样板管理终端兼容） ──
@@ -539,6 +608,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         if (patternDirty) {
             rebuildPatterns();
+        }
+        if ((lvl.getGameTime() & 0x3F) == 0 && hasChannelCard()) {
+            updateChannelLink(); // 每 3 秒刷新无线链路（主端变动/延迟连接）
         }
         if ((lvl.getGameTime() & 19) == 0) {
             currentFeedRate = rateWindowFed;
@@ -1168,6 +1240,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             totalFed = BigInteger.ZERO;
         }
         upgrades.readFromNBT(tag, "upgrades");
+        updateChannelLink();
     }
 
     /** 蓄水池概览（GUI 状态用）。返回 [物品种类数, 合计(字符串)]。 */
