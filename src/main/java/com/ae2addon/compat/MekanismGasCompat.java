@@ -26,8 +26,20 @@ public final class MekanismGasCompat {
 
     private static boolean checked;
     private static boolean loaded;
+    /** 诊断日志节流：距上次日志的毫秒数。 */
+    private static long lastDiagLog;
 
     private MekanismGasCompat() {
+    }
+
+    /** 节流诊断日志（每 5 秒最多一条）。 */
+    private static void diag(String msg) {
+        long now = System.currentTimeMillis();
+        if (now - lastDiagLog < 5000) {
+            return;
+        }
+        lastDiagLog = now;
+        com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon][feeder] 气体喂出失败: {}", msg);
     }
 
     public static boolean isLoaded() {
@@ -76,7 +88,7 @@ public final class MekanismGasCompat {
     }
 
     /** 喂出：把气体的 amount 量插入机器气体槽；返回实际喂出量（0=机器满/拒收）。
-     * 指定面优先，找不到气体槽时遍历机器所有面。 */
+     * 指定面优先，找不到气体槽时遍历机器所有面。带失败原因诊断（节流）。 */
     public static long feed(BlockEntity target, Direction side, AEKey key, long amount) {
         if (!isFeedable(key) || amount <= 0) {
             return 0;
@@ -84,11 +96,17 @@ public final class MekanismGasCompat {
         try {
             MekanismKey mekKey = (MekanismKey) key;
             var handler = findGasHandler(target, side);
-            if (handler == null || handler.getTanks() <= 0) {
+            if (handler == null) {
+                diag("机器无气体槽（" + machineName(target) + " side=" + side + "）");
+                return 0;
+            }
+            if (handler.getTanks() <= 0) {
+                diag("机器气体槽数为0（" + machineName(target) + "）");
                 return 0;
             }
             var stack = mekKey.getStack();
             if (!(stack instanceof GasStack gasStack) || gasStack.isEmpty()) {
+                diag("key 内部不是 GasStack: " + (stack == null ? "null" : stack.getClass().getSimpleName()));
                 return 0;
             }
             long insertAmount = Math.min(amount, Integer.MAX_VALUE);
@@ -96,9 +114,22 @@ public final class MekanismGasCompat {
             var insert = new GasStack(gasStack, insertAmount);
             var leftover = handler.insertChemical(insert, Action.EXECUTE);
             long fed = insertAmount - leftover.getAmount();
+            if (fed <= 0) {
+                diag("机器拒收气体 " + gasStack.getType() + "（尝试 " + insertAmount
+                        + " mB；槽满或不吃该气体）");
+            }
             return Math.max(0, fed);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException e) {
+            diag("异常: " + e);
             return 0;
+        }
+    }
+
+    private static String machineName(BlockEntity target) {
+        try {
+            return target.getBlockState().getBlock().getName().getString();
+        } catch (RuntimeException e) {
+            return "?";
         }
     }
 
