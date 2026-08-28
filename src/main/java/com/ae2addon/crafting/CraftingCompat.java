@@ -49,4 +49,15 @@ public final class CraftingCompat {
      * 避免无时间片保护的高线程单 tick 循环爆炸（gtlcore/gtocore 共存场景）。
      */
     public static volatile boolean timeSliceActive;
+
+    /**
+     * 当前正在执行 pushPattern 推送的 CPU 簇（CraftingCPUCluster，Object 引用避免
+     * 耦合）。由 CraftingCpuLogicMixin.pushBatch 在调用 provider.pushPattern 前后置位/清空；
+     * 无限接口（InfiniteInterfaceBE）的 pushPattern 据此记录「哪个簇推了什么」，
+     * 供任务取消时回退材料（2026-08-28 sensei 需求）。
+     * <p>
+     * MC 服务端单线程，普通 static 即可；非本 mod CPU（如 AE2-VM）的推送不置位
+     * → 不参与回退跟踪（可接受的边界）。
+     */
+    public static volatile Object currentPushingCluster;
 }

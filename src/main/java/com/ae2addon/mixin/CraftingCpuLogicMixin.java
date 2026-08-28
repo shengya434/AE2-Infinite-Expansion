@@ -310,10 +310,14 @@ public abstract class CraftingCpuLogicMixin {
         if (ae2addon$budgetActive) {
             Object currentJob = ae2addon$getJob();
             if (ae2addon$diagLastJob != currentJob) {
-                // 新任务：重置批量自适应状态，避免旧任务的 N/锁定泄漏
+                // 新任务：重置批量自适应状态 + 清除无限接口的推送归属记录
+                // （材料保留在接口=正常交付；归属只服务于当前任务的取消回退）
                 ae2addon$diagLastJob = currentJob;
                 ae2addon$batchNext.clear();
                 ae2addon$batchLocked.clear();
+                if (currentJob != null) {
+                    com.ae2addon.block.InfiniteInterfaceBE.resetPushedFor(cluster);
+                }
             }
             ae2addon$budgetNanos = ae2addon$getAdaptiveBudgetNanos();
             ae2addon$deadlineNanos = System.nanoTime() + ae2addon$budgetNanos;
@@ -520,12 +524,21 @@ public abstract class CraftingCpuLogicMixin {
                     "[ae2addon][debug] extractBatch详情(节流): 产出={} taskRemaining={} batchMultiplier={} n={}",
                     io, taskRemaining, ae2addon$getBatchMultiplier(patternDetails), n);
         }
-        // 2026-08-22：合成样板（AECraftingPattern）强制 1× 推送。
-        // 合成机器（ExtendedAE PatternCore/普通样板供应器）按单次配方执行，
-        // N× ScaledPattern 输入会导致拒收/错乱（sensei 实测：AECraftingPattern
-        // 单 tick 206 次拒收、任务值卡 1、CPU 永久 busy，阻塞全部后续订单）。
-        // 处理样板（AEProcessingPattern）保留批量推送。
-        if (ae2addon$isCraftingPattern(patternDetails)) {
+        // 2026-08-28：同网格存在无限接口声明该样板 → 跳过自适应爬坡直接全量推。
+        // 无限接口无条件收 N×，一次 push 交付整个任务（多 lane 并行 = 并行推送）。
+        if (ae2addon$hasFeederFor(patternDetails)) {
+            n = Math.min(taskRemaining, ae2addon$batchMaxMultiplier());
+            if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][debug] 无限接口全量推送: pattern={} n={} taskRemaining={}",
+                        patternDetails.getClass().getSimpleName(), n, taskRemaining);
+            }
+        } else if (ae2addon$isCraftingPattern(patternDetails)) {
+            // 2026-08-22：合成样板（AECraftingPattern）强制 1× 推送。
+            // 合成机器（ExtendedAE PatternCore/普通样板供应器）按单次配方执行，
+            // N× ScaledPattern 输入会导致拒收/错乱（sensei 实测：AECraftingPattern
+            // 单 tick 206 次拒收、任务值卡 1、CPU 永久 busy，阻塞全部后续订单）。
+            // 处理样板（AEProcessingPattern）保留批量推送。
             n = 1;
             if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
                 com.ae2addon.AE2Addon.LOGGER.info(
@@ -614,6 +627,32 @@ public abstract class CraftingCpuLogicMixin {
         return pattern.getClass().getName().endsWith("AECraftingPattern");
     }
 
+    /**
+     * 同网格是否存在无限接口声明了该样板（全量推送判定）。
+     * 只查同网格：跨网络误判会导致全量推给不相干的 provider 全部拒收卡任务。
+     */
+    @Unique
+    private boolean ae2addon$hasFeederFor(IPatternDetails pattern) {
+        appeng.api.networking.IGrid grid = null;
+        try {
+            grid = cluster.getGrid();
+        } catch (RuntimeException ignored) {
+        }
+        if (grid == null || pattern == null) {
+            return false;
+        }
+        return com.ae2addon.block.InfiniteInterfaceBE.hasFeederFor(grid, pattern);
+    }
+
+    /**
+     * 任务取消钩子（CraftingCPUCluster.cancelJob → CraftingCpuLogic.cancel）：
+     * 通知无限接口把该簇推送的未喂出材料回退网络（2026-08-28 sensei 需求）。
+     */
+    @Inject(method = "cancel", at = @At("HEAD"), require = 0)
+    private void ae2addon$onCraftingCancelled(CallbackInfo callback) {
+        com.ae2addon.block.InfiniteInterfaceBE.returnPushedFor(cluster);
+    }
+
     // ── 批量推送：push 阶段 ──
 
     /**
@@ -635,7 +674,13 @@ public abstract class CraftingCpuLogicMixin {
                 || !ae2addon$batchBasePattern.equals(patternDetails)
                 || ae2addon$batchScaledPattern == null
                 || ae2addon$batchMultiplier <= 1) {
-            boolean accepted = provider.pushPattern(patternDetails, inputs);
+            com.ae2addon.crafting.CraftingCompat.currentPushingCluster = cluster;
+            boolean accepted;
+            try {
+                accepted = provider.pushPattern(patternDetails, inputs);
+            } finally {
+                com.ae2addon.crafting.CraftingCompat.currentPushingCluster = null;
+            }
             if (CraftingCompat.debugLogs) {
                 // 节流：push 高频，全量打印掉刻（sensei 实测 20:00）。每 200 次打一条。
                 if ((++ae2addon$diagPushCalls & 0xFF) == 0) {
@@ -660,9 +705,11 @@ public abstract class CraftingCpuLogicMixin {
         boolean temporarilyAdded = ae2addon$temporarilyRegisterScaledPattern(
                 provider, patternDetails, dispatchPattern);
         boolean accepted;
+        com.ae2addon.crafting.CraftingCompat.currentPushingCluster = cluster;
         try {
             accepted = provider.pushPattern(dispatchPattern, inputs);
         } finally {
+            com.ae2addon.crafting.CraftingCompat.currentPushingCluster = null;
             if (temporarilyAdded) {
                 ae2addon$removeTemporarilyAddedPattern(provider, dispatchPattern);
             }

@@ -63,6 +63,65 @@ import java.util.Set;
  */
 public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICraftingProvider {
 
+    // ── 全局注册表（供 CPU mixin 查询：全量推送判定 / 取消回退） ──
+
+    private static final java.util.Set<InfiniteInterfaceBE> ACTIVE =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** 当前 CPU 任务推送到本接口的材料归属：CPU簇 → 物品 → 数量。 */
+    private final Map<Object, Map<AEKey, BigInteger>> pushedByCluster = new HashMap<>();
+
+    /**
+     * 是否有同网格的无限接口声明了该样板（CPU mixin 全量推送判定用）。
+     * 只查同网格：避免跨网络误判导致全量推给不相干的 provider 全部拒收卡任务。
+     */
+    public static boolean hasFeederFor(appeng.api.networking.IGrid grid, IPatternDetails pattern) {
+        if (grid == null || pattern == null) {
+            return false;
+        }
+        for (var be : ACTIVE) {
+            if (be.isRemoved()) {
+                continue;
+            }
+            try {
+                if (be.getMainNode().getGrid() != grid) {
+                    continue;
+                }
+                if (be.patterns.contains(pattern)) {
+                    return true;
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return false;
+    }
+
+    /** CPU 任务取消：所有接口把该簇推送的未喂出材料插回网络。 */
+    public static void returnPushedFor(Object cluster) {
+        if (cluster == null) {
+            return;
+        }
+        for (var be : ACTIVE) {
+            if (be.isRemoved()) {
+                continue;
+            }
+            be.returnPushedForCluster(cluster);
+        }
+    }
+
+    /** 新任务开始：清空该簇的归属记录（材料保留在接口，正常交付语义）。 */
+    public static void resetPushedFor(Object cluster) {
+        if (cluster == null) {
+            return;
+        }
+        for (var be : ACTIVE) {
+            if (be.isRemoved()) {
+                continue;
+            }
+            be.pushedByCluster.remove(cluster);
+        }
+    }
+
     // ── 配置（AE2AddonConfig.apply 热加载） ──
 
     /** 每个物品的蓄水池目标保有量（0 = 不自动补货，只收 CPU 推送）。 */
@@ -144,6 +203,24 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
                 tag, worldPosition, facing, front, targetName, summary[0], summary[1]);
     }
 
+    @Override
+    public void onReady() {
+        super.onReady();
+        ACTIVE.add(this);
+    }
+
+    @Override
+    public void onChunkUnloaded() {
+        ACTIVE.remove(this);
+        super.onChunkUnloaded();
+    }
+
+    @Override
+    public void setRemoved() {
+        ACTIVE.remove(this);
+        super.setRemoved();
+    }
+
     // ── 网格节点：注册为合成 provider（CPU 才能找到我们推样板） ──
 
     @Override
@@ -168,6 +245,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
     public boolean pushPattern(IPatternDetails patternDetails, KeyCounter[] inputs) {
         long inputCount = 0;
         long inputTypes = 0;
+        Object pusher = com.ae2addon.crafting.CraftingCompat.currentPushingCluster;
+        Map<AEKey, BigInteger> perCluster = null;
+        if (pusher != null) {
+            perCluster = pushedByCluster.computeIfAbsent(pusher, k -> new HashMap<>());
+        }
         if (inputs != null) {
             for (var counter : inputs) {
                 if (counter == null) {
@@ -180,17 +262,60 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
                         addReservoir(key, BigInteger.valueOf(amount));
                         inputCount += amount;
                         inputTypes++;
+                        if (perCluster != null) {
+                            perCluster.merge(key, BigInteger.valueOf(amount), BigInteger::add);
+                        }
                     }
                 }
             }
         }
         var summary = reservoirSummary();
         com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon][feeder] pushPattern 接收 pattern={} 本次{}种/{}个 → 蓄水池={}种/合计{}",
+                "[ae2addon][feeder] pushPattern 接收 pattern={} 本次{}种/{}个 → 蓄水池={}种/合计{}（推送源={}）",
                 patternDetails == null ? "null" : patternDetails.getClass().getSimpleName(),
-                inputTypes, inputCount, summary[0], summary[1]);
+                inputTypes, inputCount, summary[0], summary[1],
+                pusher == null ? "外部/未知" : pusher.getClass().getSimpleName());
         setChanged();
         return true;
+    }
+
+    /** 取消回退：把指定 CPU 簇推送、尚未喂出的材料插回网络。 */
+    private void returnPushedForCluster(Object cluster) {
+        Map<AEKey, BigInteger> pushed = pushedByCluster.remove(cluster);
+        if (pushed == null || pushed.isEmpty()) {
+            return;
+        }
+        appeng.api.networking.IGrid grid = getMainNode().getGrid();
+        appeng.api.storage.MEStorage storage = grid == null
+                ? null : grid.getStorageService().getInventory();
+        BigInteger returned = BigInteger.ZERO;
+        for (var entry : pushed.entrySet()) {
+            AEKey key = entry.getKey();
+            long have = reservoirAmount(key);
+            long back = entry.getValue()
+                    .min(BigInteger.valueOf(have))
+                    .min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
+            if (back <= 0) {
+                continue;
+            }
+            if (storage != null) {
+                long inserted = storage.insert(key, back, Actionable.MODULATE, actionSource);
+                if (inserted > 0) {
+                    subtractReservoir(key, inserted);
+                    returned = returned.add(BigInteger.valueOf(inserted));
+                }
+            } else {
+                subtractReservoir(key, back);
+                returned = returned.add(BigInteger.valueOf(back));
+            }
+        }
+        if (returned.signum() > 0) {
+            setChanged();
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][feeder] CPU任务取消，材料回退网络 {} 个（{}种），剩余蓄水池={}种/合计{}",
+                    fmt(returned), pushed.size(), reservoirSummary()[0],
+                    fmt(totalAmount()));
+        }
     }
 
     /** 永不拒收（蓄水池无限）。 */
