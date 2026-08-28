@@ -55,10 +55,10 @@ public class AE2AddonConfigScreen extends Screen {
         entries.add(new Entry("feederFeedBudget — 接口喂出尝试/tick（发送速度主旋钮）", AE2AddonConfig.FEEDER_FEED_BUDGET, 1, 1_000_000));
         entries.add(new Entry("feederFeedStack — 接口单次喂出堆叠（默认64，大堆叠机器可调大）", AE2AddonConfig.FEEDER_FEED_STACK, 1, Integer.MAX_VALUE));
         entries.add(new Entry("feederRestockInterval — 接口补货间隔 tick（1=最快）", AE2AddonConfig.FEEDER_RESTOCK_INTERVAL, 1, 200));
-        entries.add(new Entry("feederExtractInterval — 主动抽取间隔 tick（1=每tick最快）", AE2AddonConfig.FEEDER_EXTRACT_INTERVAL, 1, 200));
-        entries.add(new Entry("feederExtractStack — 主动抽取每次物品数（默认64，调大提速）", AE2AddonConfig.FEEDER_EXTRACT_STACK, 1, 1_000_000));
-        entries.add(new Entry("feederExtractFluid — 主动抽取每次流体 mB（默认1000）", AE2AddonConfig.FEEDER_EXTRACT_FLUID, 1, 1_000_000));
-        entries.add(new Entry("feederExtractGas — 主动抽取每次气体量（默认1000）", AE2AddonConfig.FEEDER_EXTRACT_GAS, 1, 1_000_000));
+        entries.add(new Entry("feederExtractInterval — 主动抽取间隔 tick（1=每tick最快）", AE2AddonConfig.FEEDER_EXTRACT_INTERVAL, 1, 10000));
+        entries.add(new Entry("feederExtractStack — 主动抽取每次物品数（默认64，调大提速）", AE2AddonConfig.FEEDER_EXTRACT_STACK, 1, Integer.MAX_VALUE));
+        entries.add(new Entry("feederExtractFluid — 主动抽取每次流体 mB（默认1000）", AE2AddonConfig.FEEDER_EXTRACT_FLUID, 1, Integer.MAX_VALUE));
+        entries.add(new Entry("feederExtractGas — 主动抽取每次气体量（默认1000）", AE2AddonConfig.FEEDER_EXTRACT_GAS, 1, Integer.MAX_VALUE));
         entries.add(new Entry("feederStockTarget — 接口补货目标/种（0=关）", AE2AddonConfig.FEEDER_STOCK_TARGET, 0, Long.MAX_VALUE));
         entries.add(new Entry("debugLogs — 调试日志", AE2AddonConfig.DEBUG_LOGS, 0, 0));
     }

@@ -116,25 +116,25 @@ public final class AE2AddonConfig {
     public static final ForgeConfigSpec.IntValue FEEDER_EXTRACT_INTERVAL = BUILDER
             .comment("ME接口(无限级)主动抽取间隔 tick（1=每tick抽最快；默认4）",
                     "Infinite Interface active-extract interval ticks (1 = fastest)")
-            .defineInRange("feederExtractInterval", 4, 1, 200);
+            .defineInRange("feederExtractInterval", 4, 1, 10000);
 
     /** 主动抽取每次物品数量（默认64；大槽机器可调大提速）。 */
     public static final ForgeConfigSpec.IntValue FEEDER_EXTRACT_STACK = BUILDER
             .comment("ME接口(无限级)主动抽取每次物品数量（默认64=原版堆叠；调大提速）",
                     "Infinite Interface items per extract (64=vanilla cap; raise for speed)")
-            .defineInRange("feederExtractStack", 64, 1, 1_000_000);
+            .defineInRange("feederExtractStack", 64, 1, Integer.MAX_VALUE);
 
     /** 主动抽取每次流体 mB（默认1000=1桶）。 */
     public static final ForgeConfigSpec.IntValue FEEDER_EXTRACT_FLUID = BUILDER
             .comment("ME接口(无限级)主动抽取每次流体量 mB（默认1000=1桶）",
                     "Infinite Interface fluid mB per extract (1000=1 bucket)")
-            .defineInRange("feederExtractFluid", 1000, 1, 1_000_000);
+            .defineInRange("feederExtractFluid", 1000, 1, Integer.MAX_VALUE);
 
     /** 主动抽取每次气体量（默认1000）。 */
     public static final ForgeConfigSpec.IntValue FEEDER_EXTRACT_GAS = BUILDER
             .comment("ME接口(无限级)主动抽取每次气体量（默认1000）",
                     "Infinite Interface gas units per extract (default 1000)")
-            .defineInRange("feederExtractGas", 1000, 1, 1_000_000);
+            .defineInRange("feederExtractGas", 1000, 1, Integer.MAX_VALUE);
 
     // ── 调试 ──
 
