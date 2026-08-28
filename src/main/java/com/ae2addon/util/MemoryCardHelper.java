@@ -49,8 +49,8 @@ public final class MemoryCardHelper {
         }
         CompoundTag tag = card.getOrCreateTag();
         if (!tag.contains(CFG_KEY)) {
-            player.displayClientMessage(net.minecraft.network.chat.Component.literal(
-                    "§c[ae2addon] 卡是空的，先右键接口复制配置"), false);
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    "message.ae2addon.config.empty"), false);
             return true;
         }
         try {
@@ -76,8 +76,8 @@ public final class MemoryCardHelper {
                     ? appeng.api.implementations.items.MemoryCardMessages.SETTINGS_LOADED
                     : appeng.api.implementations.items.MemoryCardMessages.SETTINGS_SAVED);
         } else {
-            player.displayClientMessage(net.minecraft.network.chat.Component.literal(
-                    loaded ? "§a[ae2addon] 配置已载入" : "§a[ae2addon] 配置已保存"), false);
+            player.displayClientMessage(net.minecraft.network.chat.Component.translatable(
+                    loaded ? "message.ae2addon.config.loaded" : "message.ae2addon.config.saved"), false);
         }
     }
 

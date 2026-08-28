@@ -12,7 +12,6 @@
   "gui.ae2addon.infinite_interface.player_inv": "背包",
   "gui.ae2addon.infinite_interface.patterns": "§7样板槽",
   "gui.ae2addon.infinite_interface.markers": "§7标记槽 §8右键",
-
   "gui.ae2addon.cell.name": "§5万能无限 [%s]",
   "gui.ae2addon.mode.unlimited": "§a无限制",
   "gui.ae2addon.mode.custom": "§e自定义",
@@ -28,7 +27,6 @@
   "gui.ae2addon.cell.types": "§7类型: §b%s",
   "gui.ae2addon.cell.limit": "§7限制: §e仅物品和流体类型",
   "gui.ae2addon.cell.switch_hint": "§7右键切换模式",
-
   "gui.ae2addon.cmd.player_only": "§c该指令只能由玩家执行",
   "gui.ae2addon.cmd.hold_item": "§c✗ 请手持一个物品",
   "gui.ae2addon.cmd.title": "§e§l═══ 物品信息 ═══",
@@ -40,14 +38,12 @@
   "gui.ae2addon.cmd.tags_count": "§aTags: §7共 %s 个，点击复制 ↓",
   "gui.ae2addon.cmd.tag_line": "§7  - §f%s",
   "gui.ae2addon.cmd.divider": "§8────────────────",
-
   "gui.ae2addon.chat.ok": "§a✔ %s",
   "gui.ae2addon.chat.err": "§c✗ %s",
   "gui.ae2addon.cpu.form_ok": "CPU 成型成功！",
   "gui.ae2addon.cpu.form_fail": "CPU 结构不匹配，无法成型",
   "gui.ae2addon.cpu.air_expected": "§b✗ %s 应为空气，但找到了 %s",
   "gui.ae2addon.cpu.block_mismatch": "应为 %s，但找到了 %s",
-
   "gui.ae2addon.cpu.title": "集成CPU",
   "gui.ae2addon.cpu.quantum_split": "§e⚡量子分裂线程",
   "gui.ae2addon.cpu.infinite_status": "存储 ∞ · 并行 ∞",
@@ -60,13 +56,11 @@
   "gui.ae2addon.cpu.lane.idle": "%s：空闲",
   "gui.ae2addon.cpu.lane.working": "%s：工作中",
   "gui.ae2addon.cpu.lane.progress": "%s：%s %s%%",
-
   "gui.ae2addon.mode_select.title": "§l选择存储模式",
   "gui.ae2addon.mode_select.hint": "§7右键可配置自定义模式",
   "gui.ae2addon.mode_select.btn1": "§a【无限制存储】",
   "gui.ae2addon.mode_select.btn2": "§e【自定义无限】",
   "gui.ae2addon.mode_select.btn3": "§d【全类型无限】",
-
   "gui.ae2addon.mode2.title": "§e✦ 自定义无限配置",
   "gui.ae2addon.mode2.select_title": "§l✦ 选择工作模式",
   "gui.ae2addon.mode2.back": "§7← 返回",
@@ -107,10 +101,8 @@
   "gui.ae2addon.mode2.tag_not_found": "§c✗ tag 不存在: %s",
   "gui.ae2addon.mode2.mod_not_found": "§c✗ mod 未加载: %s",
   "gui.ae2addon.mode2.rule_added": "§a✔ 已添加 %s: %s",
-
   "gui.ae2addon.mode2.blacklist_added": "§c✗ 已加入黑名单: %s",
   "gui.ae2addon.mode2.blacklist_removed": "§a✔ 已移出黑名单: %s",
-
   "item.ae2addon.matter_ball": "§d物质球",
   "gui.ae2addon.matter_ball.given": "§a已将 %s 个 %s 打包为物质球（右键展开取回）",
   "gui.ae2addon.matter_ball.dropped": "§a背包已满，%s 个 %s 打包为物质球掉落在脚边（右键展开取回）",
@@ -120,11 +112,9 @@
   "gui.ae2addon.matter_ball.tooltip": "§7内含: §f%s §7× §e%s",
   "gui.ae2addon.matter_ball.tooltip_empty": "§7空球",
   "gui.ae2addon.matter_ball.hint": "§7右键展开取回物品",
-
   "gui.ae2addon.type.items": "物品",
   "gui.ae2addon.type.fluids": "流体",
   "gui.ae2addon.type.gas": "气体",
-
   "gui.ae2addon.jei.cpu_structure": "集成 CPU 结构",
   "gui.ae2addon.jei.materials": "材料:",
   "gui.ae2addon.jei.mat.purple_concrete": "紫混凝土",
@@ -159,5 +149,13 @@
   "gui.ae2addon.order.failed": "失败",
   "gui.ae2addon.order.cancelled": "已取消",
   "gui.ae2addon.order.cancel": "Shift+取消",
-  "item.ae2addon.config_card": "配置存储卡"
+  "item.ae2addon.config_card": "配置存储卡",
+  "gui.ae2addon.feeder.label.stock": "补货目标",
+  "gui.ae2addon.feeder.label.interval": "补货间隔",
+  "gui.ae2addon.feeder.label.budget": "喂出预算",
+  "gui.ae2addon.feeder.save": "保存",
+  "gui.ae2addon.feeder.marker_target": "标记缓存目标",
+  "message.ae2addon.config.saved": "§a配置已保存",
+  "message.ae2addon.config.loaded": "§a配置已载入",
+  "message.ae2addon.config.empty": "§c卡是空的，先右键接口复制配置"
 }

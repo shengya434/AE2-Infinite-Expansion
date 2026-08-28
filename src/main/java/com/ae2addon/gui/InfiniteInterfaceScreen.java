@@ -29,7 +29,10 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     private static final int STATUS_Y = 139;
 
     private static final String[] KEYS = {"stockTarget", "restockInterval", "feedBudget"};
-    private static final String[] LABELS = {"§7补货目标", "§7补货间隔", "§7喂出预算"};
+    private static final String[] LABELS = {
+            "gui.ae2addon.feeder.label.stock",
+            "gui.ae2addon.feeder.label.interval",
+            "gui.ae2addon.feeder.label.budget"};
     /** 参数行 Y（顶部，位于样板槽上方）。 */
     private static final int[] ROW_YS = {17, 31, 45};
 
@@ -110,7 +113,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             addRenderableWidget(box);
             boxes[i] = box;
 
-            addRenderableWidget(Button.builder(Component.literal("保存"),
+            addRenderableWidget(Button.builder(Component.translatable("gui.ae2addon.feeder.save"),
                     b -> saveSetting(idx)
             ).bounds(leftPos + 122, topPos + ROW_YS[i] - 1, 32, 16).build());
         }
@@ -283,7 +286,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
         // 参数行标签（顶部，输入框左侧）
         for (int i = 0; i < 3; i++) {
-            g.drawString(font, Component.literal(LABELS[i]), 8, ROW_YS[i] + 3, 0xFFFFFF, false);
+            g.drawString(font, Component.translatable(LABELS[i]), 8, ROW_YS[i] + 3, 0xFFFFFF, false);
         }
 
         // 升级槽整行（9格，x=8..152；无标签，卡片自明）
