@@ -385,6 +385,11 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        // 容量卡增减后翻页范围变化：钳制当前页回合法范围
+        int max = menu.getFeeder().maxPage();
+        if (menu.currentPage > max) {
+            menu.currentPage = max;
+        }
         // ⚠️ 不能自己先调 renderBg（super 内部会调，画两遍）；renderTooltip 同理
         super.render(g, mouseX, mouseY, partialTick);
         // 2026-08-28 tooltip 修复：反编译实锤 1.20.1 render() 链不调用

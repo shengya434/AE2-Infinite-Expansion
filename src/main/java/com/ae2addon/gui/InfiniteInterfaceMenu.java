@@ -54,6 +54,10 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             addSlot(new PageSlot(patternInv, i, 26 + col * 18, gridY + row * 18, page) {
                 @Override
                 public boolean mayPlace(ItemStack stack) {
+                    // 页授权（服务端兜底 + 客户端即时提示）：越界页拒绝放入
+                    if (index >= 9 + feeder.capacityCards() * 9) {
+                        return false;
+                    }
                     return PatternDetailsHelper.isEncodedPattern(stack);
                 }
             });
@@ -64,7 +68,17 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             int page = i / 9;
             int col = (i % 9) % 3;
             int row = (i % 9) / 3;
-            addSlot(new PageSlot(markerInv, i, 96 + col * 18, gridY + row * 18, page));
+            addSlot(new PageSlot(markerInv, i, 96 + col * 18, gridY + row * 18, page) {
+                @Override
+                public boolean mayPlace(ItemStack stack) {
+                    // 页授权：越界页拒绝放入；标记槽只收虚拟标记（WGS）
+                    if (index >= 9 + feeder.capacityCards() * 9) {
+                        return false;
+                    }
+                    return stack.isEmpty()
+                            || stack.getItem() instanceof appeng.items.misc.WrappedGenericStack;
+                }
+            });
         }
         // 升级槽（9个，参数区下方整行；容量/速度/红石/反向/感应/频道/虚拟合成全部可同时插）
         var upgradeInv = feeder.getUpgrades().toContainer();

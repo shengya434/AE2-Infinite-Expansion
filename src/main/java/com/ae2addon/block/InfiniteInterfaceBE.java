@@ -184,6 +184,15 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             super.setChanged();
             InfiniteInterfaceBE.this.onPatternsChanged();
         }
+
+        @Override
+        public boolean canPlaceItem(int index, ItemStack stack) {
+            // 页授权：未插容量卡只有第 1 页（9 格），每张卡 +9 格
+            if (index >= 9 + capacityCards() * 9) {
+                return false;
+            }
+            return appeng.api.crafting.PatternDetailsHelper.isEncodedPattern(stack);
+        }
     };
 
     // ── 标记槽（3×3，声明自动补货物品；与样板定量语义解耦） ──
@@ -199,6 +208,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
         @Override
         public boolean canPlaceItem(int index, ItemStack stack) {
+            // 页授权：未插容量卡只有第 1 页（9 格），每张卡 +9 格
+            if (index >= 9 + capacityCards() * 9) {
+                return false;
+            }
             // 标记槽只收虚拟标记（WGS）：真实物品一律拒绝（拖拽/放入不吞，
             // 物品留在手上；标记请用左键/右键/JEI 拖取）
             if (stack.isEmpty()) {
@@ -1935,7 +1948,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         Level lvl = level;
         List<IPatternDetails> list = new ArrayList<>();
         if (lvl != null) {
-            for (int i = 0; i < patternInv.getContainerSize(); i++) {
+            int limit = Math.min(patternInv.getContainerSize(), activePatternSlots());
+            for (int i = 0; i < limit; i++) {
                 ItemStack stack = patternInv.getItem(i);
                 if (stack.isEmpty()) {
                     continue;
