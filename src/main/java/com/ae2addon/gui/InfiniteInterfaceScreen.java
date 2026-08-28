@@ -35,6 +35,12 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
     private final EditBox[] boxes = new EditBox[3];
 
+    /** 中键弹框：标记缓存目标输入框（隐藏时不可见）。 */
+    private EditBox targetBox;
+
+    /** 中键当前编辑的标记槽容器 index（-1 = 未编辑）。 */
+    private int targetBoxMarker = -1;
+
     /** 蓄水池状态行（服务端 FeederStatusPacket → 主线程）。 */
     public static void handleStatus(List<String> lines) {
         var mc = Minecraft.getInstance();
@@ -80,6 +86,48 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                     b -> saveSetting(idx)
             ).bounds(leftPos + 122, topPos + ROW_YS[i] - 1, 32, 16).build());
         }
+        // 中键弹框：标记缓存目标输入（默认隐藏；中键点击标记槽时显示）
+        targetBox = new EditBox(font, leftPos + 26, topPos + 128, 120, 14,
+                Component.literal("target"));
+        targetBox.setMaxLength(40);
+        targetBox.setVisible(false);
+        targetBox.setCanLoseFocus(false);
+        addRenderableWidget(targetBox);
+    }
+
+    /** 中键点击标记槽：显示目标输入框并预填当前值。 */
+    private void openTargetBox(int markerIndex) {
+        if (targetBox == null || markerIndex < 0) {
+            return;
+        }
+        targetBoxMarker = markerIndex;
+        var stack = getMenu().getFeeder().getMarkerInventory().getItem(markerIndex);
+        long cur = getMenu().getFeeder().targetFor(
+                com.ae2addon.block.InfiniteInterfaceBE.keyOfStack(stack));
+        targetBox.setValue(cur == Long.MAX_VALUE ? "MAX" : String.valueOf(cur));
+        targetBox.setVisible(true);
+        targetBox.setFocused(true);
+    }
+
+    /** 确认输入 → 发送到服务端 → 隐藏输入框。 */
+    private void saveTargetBox() {
+        if (targetBox == null || targetBoxMarker < 0) {
+            return;
+        }
+        try {
+            long value = parseSetting(targetBox.getValue().trim());
+            var be = getMenu().getFeeder();
+            AE2Addon.NETWORK.sendToServer(
+                    new com.ae2addon.network.FeederTargetPacket(
+                            be.getBlockPos(), targetBoxMarker, value));
+            AE2Addon.LOGGER.info("[ae2addon][gui] 标记 {} 缓存目标 = {}（文本 {}）",
+                    targetBoxMarker, value, targetBox.getValue().trim());
+        } catch (NumberFormatException e) {
+            AE2Addon.LOGGER.info("[ae2addon][gui] 标记目标解析失败: {}", targetBox.getValue());
+        }
+        targetBoxMarker = -1;
+        targetBox.setVisible(false);
+        targetBox.setFocused(false);
     }
 
     /** 读取输入框 → 解析 → 发送到服务端。 */
@@ -270,6 +318,37 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         renderTooltip(g, mouseX, mouseY);
     }
 
+    /** 中键命中检测：鼠标下当前页的槽位（AbstractContainerScreen 的 isHovering 是 private）。 */
+    private Slot findMarkerSlot(double mouseX, double mouseY) {
+        for (Slot slot : menu.getSlotList()) {
+            if (slot.isActive()
+                    && mouseX >= leftPos + slot.x - 1 && mouseX < leftPos + slot.x + 17
+                    && mouseY >= topPos + slot.y - 1 && mouseY < topPos + slot.y + 17) {
+                return slot;
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        // 中键点击标记槽 = 弹输入框（拦截创造模式默认的拾取功能）
+        if (button == 2 && targetBox != null) {
+            if (targetBox.isVisible()) {
+                // 输入框开着时中键 = 确认
+                saveTargetBox();
+                return true;
+            }
+            Slot hovered = findMarkerSlot(mouseX, mouseY);
+            if (hovered != null && hovered.index >= menu.markerSlotStart()
+                    && hovered.index < menu.markerSlotEnd() && hovered.isActive()) {
+                openTargetBox(hovered.index - menu.markerSlotStart());
+                return true;
+            }
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         // 输入框聚焦时回车 = 保存
@@ -279,6 +358,12 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                 saveSetting(i);
                 return true;
             }
+        }
+        // 标记目标输入框回车 = 确认
+        if (targetBox != null && targetBox.isVisible() && targetBox.isFocused()
+                && (keyCode == 257 || keyCode == 335)) {
+            saveTargetBox();
+            return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }

@@ -258,6 +258,17 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     /** 中键循环档位：1K → 10K → 100K → 1M → MAX → 1K… */
     private static final long[] TARGET_STEPS = {1_000L, 10_000L, 100_000L, 1_000_000L, Long.MAX_VALUE};
 
+    /** 槽内堆叠 → AEKey（WrappedGenericStack 解包；普通物品转 itemKey）。 */
+    public static AEKey keyOfStack(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return null;
+        }
+        if (stack.getItem() instanceof appeng.items.misc.WrappedGenericStack wgs) {
+            return wgs.unwrapWhat(stack);
+        }
+        return appeng.api.stacks.AEItemKey.of(stack);
+    }
+
     /** 标记的补货目标（独立值优先，否则全局）。 */
     public long targetFor(AEKey key) {
         Long v = markerTargets.get(key);
@@ -297,6 +308,36 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         setChanged();
         com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 标记 {} 缓存目标 → {}",
                 key, next == Long.MAX_VALUE ? "MAX" : next);
+    }
+
+    /** 中键弹框输入：设置标记槽的独立缓存目标（target<=0 清除独立值回退全局）。 */
+    public void setMarkerTarget(int markerIndex, long target) {
+        if (markerIndex < 0 || markerIndex >= markerInv.getContainerSize()) {
+            return;
+        }
+        ItemStack stack = markerInv.getItem(markerIndex);
+        if (stack.isEmpty()) {
+            return;
+        }
+        AEKey key = null;
+        if (stack.getItem() instanceof appeng.items.misc.WrappedGenericStack wgs) {
+            key = wgs.unwrapWhat(stack);
+        } else {
+            key = appeng.api.stacks.AEItemKey.of(stack);
+        }
+        if (key == null) {
+            return;
+        }
+        if (target <= 0) {
+            markerTargets.remove(key);
+            com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 标记 {} 缓存目标 → 全局({})",
+                    key, STOCK_TARGET);
+        } else {
+            markerTargets.put(key, target);
+            com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 标记 {} 缓存目标 → {}",
+                    key, target == Long.MAX_VALUE ? "MAX" : target);
+        }
+        setChanged();
     }
 
     // ── 虚拟合成卡（CRAFTING_CARD）：补货提取失败且可合成时请求 CPU 合成 ──
