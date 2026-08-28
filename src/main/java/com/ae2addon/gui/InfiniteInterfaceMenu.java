@@ -65,12 +65,12 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         // 玩家背包 9×3
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
-                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 92 + row * 18));
+                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 96 + row * 18));
             }
         }
         // 快捷栏 1×9
         for (int col = 0; col < 9; col++) {
-            addSlot(new Slot(playerInventory, col, 8 + col * 18, 152));
+            addSlot(new Slot(playerInventory, col, 8 + col * 18, 156));
         }
     }
 
@@ -173,11 +173,17 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 + "§7/s");
         int markers = feeder.markerCount();
         String restock = markers <= 0
-                ? "§7无标记（仅样板定量）"
-                : "§f" + markers + " §7种 → §f"
+                ? "§7自动补货: §7无标记（仅样板定量）"
+                : "§7自动补货: §f" + markers + " §7种→§f"
                         + com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET + " §7/种"
-                        + (com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET <= 0 ? " §c(关闭)" : "");
-        lines.add("§7自动补货: " + restock);
+                        + (com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET <= 0 ? " §c(关闭)" : "")
+                        + " §e[✎]";
+        lines.add(restock);
+        lines.add("§7补货间隔: §f"
+                + com.ae2addon.block.InfiniteInterfaceBE.RESTOCK_INTERVAL
+                + "§7t §e[✎] §8| §7预算: §f"
+                + com.ae2addon.block.InfiniteInterfaceBE.FEED_BUDGET
+                + " §7/tick §e[✎]");
         var front = feeder.getFront();
         String machine = "§7无相邻机器";
         if (front != null && feeder.getLevel() != null) {
