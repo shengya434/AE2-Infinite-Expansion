@@ -100,6 +100,26 @@ public final class MekanismGasCompat {
         return isLoaded() && key instanceof MekanismKey;
     }
 
+    /** 是否气体形态（侧面抽取预览用）。 */
+    public static boolean isGas(AEKey key) {
+        if (!isLoaded() || !(key instanceof MekanismKey mk)) {
+            return false;
+        }
+        try {
+            return mk.getForm() == MekanismKey.GAS;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** AEKey → MekanismKey（无/非化学返回 null）。 */
+    public static MekanismKey mekKeyOf(AEKey key) {
+        if (!isLoaded() || !(key instanceof MekanismKey mk)) {
+            return null;
+        }
+        return mk;
+    }
+
     /** 化学物 JEI 拖取 → AEKey（MekanismKey.of，气体/灌注/颜料/泥浆均可）。 */
     public static AEKey keyOfChemical(mekanism.api.chemical.ChemicalStack<?> stack) {
         if (!isLoaded() || stack == null || stack.isEmpty()) {

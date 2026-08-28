@@ -186,6 +186,13 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 return; // 已作为标记处理，跳过原版拆分/放置
             }
         }
+        // 中键点击标记槽 = 循环切换该标记的独立缓存目标
+        if (slotId >= markerSlotStart() && slotId < markerSlotEnd()
+                && clickType == net.minecraft.world.inventory.ClickType.PICKUP
+                && button == 2) {
+            feeder.cycleMarkerTarget(slotId - markerSlotStart());
+            return;
+        }
         // 升级槽数量上限兜底（服务端）：vanilla 容器插入不过滤 mayPlace
         if (slotId >= 90 && slotId < 99 && !getCarried().isEmpty()
                 && (clickType == net.minecraft.world.inventory.ClickType.PICKUP

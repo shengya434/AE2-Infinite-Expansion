@@ -250,6 +250,55 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     private boolean feederDiagLogged;
 
+    // ── 每标记独立缓存目标（中键循环切换；缺省用全局 STOCK_TARGET） ──
+
+    /** 标记 key → 独立补货目标（0 = 用全局配置）。 */
+    private final java.util.Map<AEKey, Long> markerTargets = new java.util.LinkedHashMap<>();
+
+    /** 中键循环档位：1K → 10K → 100K → 1M → MAX → 1K… */
+    private static final long[] TARGET_STEPS = {1_000L, 10_000L, 100_000L, 1_000_000L, Long.MAX_VALUE};
+
+    /** 标记的补货目标（独立值优先，否则全局）。 */
+    public long targetFor(AEKey key) {
+        Long v = markerTargets.get(key);
+        return v != null && v > 0 ? v : STOCK_TARGET;
+    }
+
+    /** 中键点击标记槽：循环切换该标记的缓存目标。 */
+    public void cycleMarkerTarget(int markerIndex) {
+        if (markerIndex < 0 || markerIndex >= markerInv.getContainerSize()) {
+            return;
+        }
+        ItemStack stack = markerInv.getItem(markerIndex);
+        if (stack.isEmpty()) {
+            return;
+        }
+        AEKey key = null;
+        if (stack.getItem() instanceof appeng.items.misc.WrappedGenericStack wgs) {
+            key = wgs.unwrapWhat(stack);
+        } else {
+            key = appeng.api.stacks.AEItemKey.of(stack);
+        }
+        if (key == null) {
+            return;
+        }
+        long cur = markerTargets.getOrDefault(key, STOCK_TARGET);
+        long next = TARGET_STEPS[0];
+        for (long step : TARGET_STEPS) {
+            if (cur < step) {
+                next = step;
+                break;
+            }
+        }
+        if (cur >= TARGET_STEPS[TARGET_STEPS.length - 1]) {
+            next = TARGET_STEPS[0];
+        }
+        markerTargets.put(key, next);
+        setChanged();
+        com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 标记 {} 缓存目标 → {}",
+                key, next == Long.MAX_VALUE ? "MAX" : next);
+    }
+
     // ── 虚拟合成卡（CRAFTING_CARD）：补货提取失败且可合成时请求 CPU 合成 ──
 
     /** key → 上次发起合成请求的 gameTime（防重复请求节流）。 */
@@ -907,7 +956,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         MEStorage storage = grid.getStorageService().getInventory();
         for (AEKey key : wantedKeys()) {
             long have = reservoirAmount(key);
-            long want = STOCK_TARGET - have;
+            long want = targetFor(key) - have;
             if (want <= 0) {
                 continue;
             }
@@ -1494,6 +1543,154 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return orientation.getSide(RelativeSide.FRONT);
     }
 
+    // ── 气体侧面抽取（Mekanism GAS_HANDLER；drain 从蓄水池扣气体） ──
+
+    private final mekanism.api.chemical.gas.IGasHandler networkGasHandler =
+            new mekanism.api.chemical.gas.IGasHandler() {
+                @Override
+                public int getTanks() {
+                    return 1;
+                }
+
+                @Override
+                public mekanism.api.chemical.gas.GasStack getChemicalInTank(int tank) {
+                    if (tank != 0) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    var best = largestGas();
+                    if (best == null) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                    if (mk == null || !(mk.getStack() instanceof mekanism.api.chemical.gas.GasStack gs)) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    long amt = best.getValue().min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                    return new mekanism.api.chemical.gas.GasStack(gs.getType(), (int) Math.max(1, amt));
+                }
+
+                @Override
+                public void setChemicalInTank(int tank, mekanism.api.chemical.gas.GasStack stack) {
+                    // 只读（蓄水池视图），忽略写入
+                }
+
+                @Override
+                public long getTankCapacity(int tank) {
+                    return Integer.MAX_VALUE;
+                }
+
+                @Override
+                public boolean isValid(int tank, mekanism.api.chemical.gas.GasStack stack) {
+                    return !stack.isEmpty();
+                }
+
+                @Override
+                public mekanism.api.chemical.gas.GasStack insertChemical(int tank,
+                        mekanism.api.chemical.gas.GasStack resource, mekanism.api.Action action) {
+                    return insertChemical(resource, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.gas.GasStack extractChemical(int tank, long amount,
+                        mekanism.api.Action action) {
+                    return extractChemical(amount, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.gas.GasStack insertChemical(
+                        mekanism.api.chemical.gas.GasStack resource, mekanism.api.Action action) {
+                    if (resource.isEmpty()) {
+                        return resource;
+                    }
+                    IGrid grid = getMainNode().getGrid();
+                    if (grid == null) {
+                        return resource;
+                    }
+                    try {
+                        AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(resource);
+                        if (key == null) {
+                            return resource;
+                        }
+                        long inserted = grid.getStorageService().getInventory().insert(
+                                key, resource.getAmount(),
+                                action.simulate() ? Actionable.SIMULATE : Actionable.MODULATE,
+                                actionSource);
+                        if (inserted <= 0) {
+                            return resource;
+                        }
+                        if (inserted >= resource.getAmount()) {
+                            return mekanism.api.chemical.gas.GasStack.EMPTY;
+                        }
+                        return new mekanism.api.chemical.gas.GasStack(resource.getType(),
+                                resource.getAmount() - (int) inserted);
+                    } catch (RuntimeException e) {
+                        return resource;
+                    }
+                }
+
+                @Override
+                public mekanism.api.chemical.gas.GasStack extractChemical(long amount, mekanism.api.Action action) {
+                    if (amount <= 0) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    var best = largestGas();
+                    if (best == null) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                    if (mk == null || !(mk.getStack() instanceof mekanism.api.chemical.gas.GasStack gs)) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    long take = best.getValue().min(BigInteger.valueOf(amount))
+                            .min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                    if (take <= 0) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    if (!action.simulate()) {
+                        subtractReservoir(best.getKey(), take);
+                        setChanged();
+                    }
+                    return new mekanism.api.chemical.gas.GasStack(gs.getType(), (int) take);
+                }
+
+                @Override
+                public mekanism.api.chemical.gas.GasStack extractChemical(
+                        mekanism.api.chemical.gas.GasStack stack, mekanism.api.Action action) {
+                    if (stack.isEmpty()) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(stack);
+                    if (key == null) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    long have = reservoirAmount(key);
+                    long take = Math.min(have, stack.getAmount());
+                    if (take <= 0) {
+                        return mekanism.api.chemical.gas.GasStack.EMPTY;
+                    }
+                    if (!action.simulate()) {
+                        subtractReservoir(key, take);
+                        setChanged();
+                    }
+                    return new mekanism.api.chemical.gas.GasStack(stack.getType(), (int) take);
+                }
+            };
+
+    /** 蓄水池中数量最多的气体（侧面抽取预览用）。 */
+    private Map.Entry<AEKey, BigInteger> largestGas() {
+        Map.Entry<AEKey, BigInteger> best = null;
+        for (var entry : reservoir.entrySet()) {
+            if (!com.ae2addon.compat.MekanismGasCompat.isGas(entry.getKey())
+                    || entry.getValue().signum() <= 0) {
+                continue;
+            }
+            if (best == null || entry.getValue().compareTo(best.getValue()) > 0) {
+                best = entry;
+            }
+        }
+        return best;
+    }
+
     // ── 正面 IItemHandler：机器/漏斗从这里抽 ──
 
     @Override
@@ -1508,6 +1705,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             }
             if (cap == ForgeCapabilities.FLUID_HANDLER) {
                 return net.minecraftforge.common.util.LazyOptional.of(() -> networkFluidHandler).cast();
+            }
+            if (com.ae2addon.compat.MekanismGasCompat.isLoaded()
+                    && cap == mekanism.common.capabilities.Capabilities.GAS_HANDLER) {
+                return net.minecraftforge.common.util.LazyOptional.of(() -> networkGasHandler).cast();
             }
         }
         return super.getCapability(cap, side);
@@ -1615,6 +1816,15 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             }
         }
         tag.put("markers", markerList);
+        // 每标记独立缓存目标
+        ListTag targetList = new ListTag();
+        for (var e : markerTargets.entrySet()) {
+            CompoundTag ent = new CompoundTag();
+            ent.put("Key", appeng.items.misc.WrappedGenericStack.wrap(e.getKey(), 1).save(new CompoundTag()));
+            ent.putLong("Target", e.getValue());
+            targetList.add(ent);
+        }
+        tag.put("markerTargets", targetList);
 
         ListTag reservoirList = new ListTag();
         for (var entry : reservoir.entrySet()) {
@@ -1653,6 +1863,22 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             int slot = entry.getInt("Slot");
             if (slot >= 0 && slot < markerInv.getContainerSize() && !stack.isEmpty()) {
                 markerInv.setItem(slot, stack);
+            }
+        }
+        markerTargets.clear();
+        ListTag targetList = tag.getList("markerTargets", Tag.TAG_COMPOUND);
+        for (int i = 0; i < targetList.size(); i++) {
+            CompoundTag entry = targetList.getCompound(i);
+            try {
+                var stack = net.minecraft.world.item.ItemStack.of(entry.getCompound("Key"));
+                AEKey wrapped = null;
+                if (stack.getItem() instanceof appeng.items.misc.WrappedGenericStack wgs) {
+                    wrapped = wgs.unwrapWhat(stack);
+                }
+                if (wrapped != null) {
+                    markerTargets.put(wrapped, entry.getLong("Target"));
+                }
+            } catch (RuntimeException ignored) {
             }
         }
 
