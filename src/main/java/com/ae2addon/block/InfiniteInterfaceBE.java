@@ -1475,23 +1475,47 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         MEStorage storage = grid.getStorageService().getInventory();
         Direction side = extractDir.getOpposite();
         try {
-            // 物品：抽第一个槽（产物）；标记材料跳过
+            // 物品：遍历所有槽找产物（标记材料跳过）；抽到即停
             var itemCap = target.getCapability(ForgeCapabilities.ITEM_HANDLER, side);
             if (itemCap.isPresent()) {
                 IItemHandler handler = itemCap.orElse(null);
                 if (handler != null && handler.getSlots() > 0) {
-                    var extracted = handler.extractItem(0, 64, true);
-                    if (!extracted.isEmpty()) {
-                        var key = appeng.api.stacks.AEItemKey.of(extracted);
-                        if (key != null && !isMarkedMaterial(key)) {
-                            long inserted = storage.insert(
-                                    key, extracted.getCount(), Actionable.MODULATE, actionSource);
-                            if (inserted > 0) {
-                                handler.extractItem(0, (int) inserted, false);
-                                com.ae2addon.AE2Addon.LOGGER.info(
-                                        "[ae2addon][feeder] 主动抽取: {} x{} → 网络", key, inserted);
-                            }
+                    boolean found = false;
+                    for (int slot = 0; slot < handler.getSlots(); slot++) {
+                        var extracted = handler.extractItem(slot, 64, true);
+                        if (extracted.isEmpty()) {
+                            continue;
                         }
+                        var key = appeng.api.stacks.AEItemKey.of(extracted);
+                        if (key == null) {
+                            continue;
+                        }
+                        if (isMarkedMaterial(key)) {
+                            continue; // 材料不抽（防回流）
+                        }
+                        long inserted = storage.insert(
+                                key, extracted.getCount(), Actionable.MODULATE, actionSource);
+                        if (inserted > 0) {
+                            handler.extractItem(slot, (int) inserted, false);
+                            found = true;
+                            com.ae2addon.AE2Addon.LOGGER.info(
+                                    "[ae2addon][feeder] 主动抽取: {} x{} → 网络（槽{}）",
+                                    key, inserted, slot);
+                        }
+                        break;
+                    }
+                    if (!found && (level.getGameTime() & 0xFF) == 0) {
+                        // 节流诊断：为什么抽不到
+                        StringBuilder info = new StringBuilder();
+                        for (int slot = 0; slot < Math.min(handler.getSlots(), 6); slot++) {
+                            var st = handler.getStackInSlot(slot);
+                            info.append(st.isEmpty() ? "[空]" : st.getHoverName().getString() + "x" + st.getCount());
+                            info.append(' ');
+                        }
+                        com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ae2addon][feeder] 抽取诊断: 机器{} 槽{} 内容: {} (方向{} side={})",
+                                target.getBlockState().getBlock().getDescriptionId(),
+                                handler.getSlots(), info, extractDir, side);
                     }
                 }
             }
