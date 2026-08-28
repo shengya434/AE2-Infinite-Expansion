@@ -72,12 +72,15 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
         g.drawString(font, title, titleLabelX, titleLabelY, 0xFFFFAA, false);
 
-        // 样板槽标签（右上角，3×3 格右侧空位；防误认成投掷器）
+        // 左侧：样板槽标签；右侧：标记槽标签（防误认成投掷器）
         g.drawString(font,
                 Component.translatable("gui.ae2addon.infinite_interface.patterns"),
-                104, 6, 0xAAAAAA, false);
+                26, 6, 0xAAAAAA, false);
+        g.drawString(font,
+                Component.translatable("gui.ae2addon.infinite_interface.markers"),
+                96, 6, 0xAAAAAA, false);
 
-        // 蓄水池状态行（样板槽下方、背包上方；最多 4 行，超长截断）
+        // 蓄水池状态行（双槽下方、背包上方；最多 4 行，超长截断）
         List<String> lines = menu.statusLines;
         int lineY = STATUS_Y;
         for (int i = 0; i < Math.min(lines.size(), 4); i++) {

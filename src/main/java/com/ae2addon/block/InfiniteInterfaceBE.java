@@ -87,13 +87,25 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
     /** 累计已喂出总量（机器/漏斗实际收到的物品数；供料站流量可见性）。 */
     private BigInteger totalFed = BigInteger.ZERO;
 
-    // ── 样板槽（3×3，声明可处理的配方；输入 = 自动补货清单） ──
+    // ── 样板槽（3×3，声明可处理的配方；CPU 路由靠它） ──
 
     private final SimpleContainer patternInv = new SimpleContainer(9) {
         @Override
         public void setChanged() {
             super.setChanged();
             InfiniteInterfaceBE.this.onPatternsChanged();
+        }
+    };
+
+    // ── 标记槽（3×3，声明自动补货物品；与样板定量语义解耦） ──
+    // 样板 = 定量（CPU 推多少发多少，发完停）；标记 = 无限供料（标记的物品
+    // 持续从网络补到 feederStockTarget，机器永远有货）。
+
+    private final SimpleContainer markerInv = new SimpleContainer(9) {
+        @Override
+        public void setChanged() {
+            super.setChanged();
+            InfiniteInterfaceBE.this.onMarkersChanged();
         }
     };
 
@@ -252,19 +264,17 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         }
     }
 
-    /** 待补物品 = 样板输入 ∪ 蓄水池已有物品（机器抽过什么就持续补什么）。 */
+    /** 待补物品 = 标记槽物品（样板输入不再自动补货——定量语义）。 */
     private Set<AEKey> wantedKeys() {
-        Set<AEKey> keys = new HashSet<>(reservoir.keySet());
-        for (var pattern : patterns) {
-            for (var input : pattern.getInputs()) {
-                if (input == null) {
-                    continue;
-                }
-                for (var possible : input.getPossibleInputs()) {
-                    if (possible != null && possible.what() != null) {
-                        keys.add(possible.what());
-                    }
-                }
+        Set<AEKey> keys = new HashSet<>();
+        for (int i = 0; i < markerInv.getContainerSize(); i++) {
+            ItemStack stack = markerInv.getItem(i);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            AEItemKey key = AEItemKey.of(stack);
+            if (key != null) {
+                keys.add(key);
             }
         }
         return keys;
@@ -380,6 +390,25 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
 
     public SimpleContainer getPatternInventory() {
         return patternInv;
+    }
+
+    public SimpleContainer getMarkerInventory() {
+        return markerInv;
+    }
+
+    /** 标记槽中已放置的物品种数（GUI 状态用）。 */
+    public int markerCount() {
+        int count = 0;
+        for (int i = 0; i < markerInv.getContainerSize(); i++) {
+            if (!markerInv.getItem(i).isEmpty()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void onMarkersChanged() {
+        setChanged();
     }
 
     /** 方块拆除时掉落样板槽物品（玩家资源；蓄水池物品属于网络/CPU，不返还防刷）。 */
@@ -553,6 +582,18 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         }
         tag.put("patterns", patternList);
 
+        ListTag markerList = new ListTag();
+        for (int i = 0; i < markerInv.getContainerSize(); i++) {
+            ItemStack stack = markerInv.getItem(i);
+            if (!stack.isEmpty()) {
+                CompoundTag entry = new CompoundTag();
+                stack.save(entry);
+                entry.putInt("Slot", i);
+                markerList.add(entry);
+            }
+        }
+        tag.put("markers", markerList);
+
         ListTag reservoirList = new ListTag();
         for (var entry : reservoir.entrySet()) {
             CompoundTag entryTag = new CompoundTag();
@@ -580,6 +621,17 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
             }
         }
         patternDirty = true; // level 可能为 null，解码延迟到首个 tick
+
+        ListTag markerList = tag.getList("markers", Tag.TAG_COMPOUND);
+        markerInv.clearContent();
+        for (int i = 0; i < markerList.size(); i++) {
+            CompoundTag entry = markerList.getCompound(i);
+            ItemStack stack = ItemStack.of(entry);
+            int slot = entry.getInt("Slot");
+            if (slot >= 0 && slot < markerInv.getContainerSize() && !stack.isEmpty()) {
+                markerInv.setItem(slot, stack);
+            }
+        }
 
         ListTag reservoirList = tag.getList("reservoir", Tag.TAG_COMPOUND);
         for (int i = 0; i < reservoirList.size(); i++) {

@@ -41,11 +41,11 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         this.feeder = feeder;
         this.opener = playerInventory.player;
 
-        // 样板槽 3×3（中心区域）
+        // 样板槽 3×3（左侧）
         var patternInv = feeder.getPatternInventory();
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 3; col++) {
-                addSlot(new Slot(patternInv, col + row * 3, 62 + col * 18, 17 + row * 18) {
+                addSlot(new Slot(patternInv, col + row * 3, 26 + col * 18, 17 + row * 18) {
                     @Override
                     public boolean mayPlace(ItemStack stack) {
                         return PatternDetailsHelper.isEncodedPattern(stack);
@@ -54,7 +54,15 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             }
         }
 
-        // 玩家背包 9×3（样板槽+状态行下方）
+        // 标记槽 3×3（右侧，任意物品 = 自动补货清单）
+        var markerInv = feeder.getMarkerInventory();
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 3; col++) {
+                addSlot(new Slot(markerInv, col + row * 3, 96 + col * 18, 17 + row * 18));
+            }
+        }
+
+        // 玩家背包 9×3
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
                 addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 92 + row * 18));
@@ -100,20 +108,28 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         ItemStack original = stack.copy();
         if (slotIndex < 9) {
             // 样板槽 → 玩家背包
-            if (!moveItemStackTo(stack, 9, 45, true)) {
+            if (!moveItemStackTo(stack, 18, 54, true)) {
+                return ItemStack.EMPTY;
+            }
+        } else if (slotIndex < 18) {
+            // 标记槽 → 玩家背包
+            if (!moveItemStackTo(stack, 18, 54, true)) {
                 return ItemStack.EMPTY;
             }
         } else {
-            // 玩家背包 → 样板槽（仅已编码样板）
+            // 玩家背包 → 样板槽（仅已编码样板）或标记槽（任意物品）
             if (PatternDetailsHelper.isEncodedPattern(stack)
                     && !moveItemStackTo(stack, 0, 9, false)) {
                 return ItemStack.EMPTY;
             }
-            // 非样板物品在背包内移动（避免卡死）
-            if (!stack.isEmpty() && slotIndex >= 36 && !moveItemStackTo(stack, 9, 36, false)) {
+            if (!stack.isEmpty() && !moveItemStackTo(stack, 9, 18, false)) {
                 return ItemStack.EMPTY;
             }
-            if (!stack.isEmpty() && slotIndex < 36 && !moveItemStackTo(stack, 36, 45, false)) {
+            // 背包内移动（避免卡死）
+            if (!stack.isEmpty() && slotIndex >= 45 && !moveItemStackTo(stack, 18, 45, false)) {
+                return ItemStack.EMPTY;
+            }
+            if (!stack.isEmpty() && slotIndex < 45 && !moveItemStackTo(stack, 45, 54, false)) {
                 return ItemStack.EMPTY;
             }
         }
@@ -151,8 +167,13 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         lines.add("§e蓄水池: §f" + summary[0] + " §7种 / §f合计 " + summary[1]
                 + " §8| §e已喂出: §f"
                 + com.ae2addon.block.InfiniteInterfaceBE.fmt(feeder.totalFed()));
-        lines.add("§7自动补货目标: §f" + com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET + " §7/种"
-                + (com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET <= 0 ? " §c(关闭)" : ""));
+        int markers = feeder.markerCount();
+        String restock = markers <= 0
+                ? "§7无标记（仅样板定量）"
+                : "§f" + markers + " §7种 → §f"
+                        + com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET + " §7/种"
+                        + (com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET <= 0 ? " §c(关闭)" : "");
+        lines.add("§7自动补货: " + restock);
         var front = feeder.getFront();
         String machine = "§7无相邻机器";
         if (front != null && feeder.getLevel() != null) {
@@ -163,7 +184,7 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             }
         }
         lines.add("§7喂出目标: " + machine);
-        for (var item : feeder.topItems(4)) {
+        for (var item : feeder.topItems(1)) {
             lines.add("§b" + item);
         }
         return lines;
