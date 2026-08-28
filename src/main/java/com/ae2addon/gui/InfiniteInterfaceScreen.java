@@ -165,8 +165,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         int markerStart = menu.markerSlotStart();
         int markerEnd = menu.markerSlotEnd();
         for (Slot slot : menu.getSlotList()) {
-            if (slot.index < markerStart || slot.index >= markerEnd) {
-                continue;
+            if (slot.index < markerStart || slot.index >= markerEnd || !slot.isActive()) {
+                continue; // 只画当前页（分页同步 bug 修复：非当前页图标不得叠加）
             }
             var stack = slot.getItem();
             if (stack.getItem() instanceof appeng.items.misc.WrappedGenericStack wgs) {
