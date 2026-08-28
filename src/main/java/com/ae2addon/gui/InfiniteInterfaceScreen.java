@@ -247,6 +247,20 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         renderMarkerIcons(g);
     }
 
+    /** 悬浮槽物品名诊断行渲染计数（tooltip 排查用）。 */
+    private static int tooltipProbeCount = 0;
+
+    /** 【临时探针】确认 renderTooltip 是否被调用（排查 tooltip 不显示）。 */
+    @Override
+    protected void renderTooltip(GuiGraphics g, int mouseX, int mouseY) {
+        if (hoveredSlot != null && hoveredSlot.hasItem() && (++tooltipProbeCount & 63) == 1) {
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][tooltip] renderTooltip 被调用: {} (hoveredSlot 有物品)",
+                    hoveredSlot.getItem().getHoverName().getString());
+        }
+        super.renderTooltip(g, mouseX, mouseY);
+    }
+
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
         // ⚠️ 不能自己先调 renderBg（super 内部会调，画两遍）；renderTooltip 同理
