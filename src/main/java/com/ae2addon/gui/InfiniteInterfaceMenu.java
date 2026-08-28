@@ -41,37 +41,60 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         this.feeder = feeder;
         this.opener = playerInventory.player;
 
-        // 样板槽 3×3（左侧）
+        // 布局随容量卡动态变化：gridRows = 3 + 容量卡数
+        int gridRows = 3 + feeder.capacityCards();
+        int gridY = 83;
+        int patternSlots = feeder.activePatternSlots();
+        int markerSlots = feeder.activeMarkerSlots();
+
+        // 样板槽（左，3列 × gridRows 行）
         var patternInv = feeder.getPatternInventory();
-        for (int row = 0; row < 3; row++) {
-            for (int col = 0; col < 3; col++) {
-                addSlot(new Slot(patternInv, col + row * 3, 26 + col * 18, 64 + row * 18) {
-                    @Override
-                    public boolean mayPlace(ItemStack stack) {
-                        return PatternDetailsHelper.isEncodedPattern(stack);
-                    }
-                });
-            }
+        for (int i = 0; i < patternSlots; i++) {
+            int col = i % 3;
+            int row = i / 3;
+            addSlot(new Slot(patternInv, i, 26 + col * 18, gridY + row * 18) {
+                @Override
+                public boolean mayPlace(ItemStack stack) {
+                    return PatternDetailsHelper.isEncodedPattern(stack);
+                }
+            });
         }
 
-        // 标记槽 3×3（右侧，任意物品 = 自动补货清单）
+        // 标记槽（右，3列 × gridRows 行；任意物品 = 自动补货清单）
         var markerInv = feeder.getMarkerInventory();
-        for (int row = 0; row < 3; row++) {
-            for (int col = 0; col < 3; col++) {
-                addSlot(new Slot(markerInv, col + row * 3, 96 + col * 18, 64 + row * 18));
-            }
+        for (int i = 0; i < markerSlots; i++) {
+            int col = i % 3;
+            int row = i / 3;
+            addSlot(new Slot(markerInv, i, 96 + col * 18, gridY + row * 18));
         }
 
-        // 玩家背包 9×3
+        // 升级槽（4个，参数区下方；只收 AE2 升级卡）
+        var upgradeInv = feeder.getUpgrades().toContainer();
+        for (int i = 0; i < 4; i++) {
+            addSlot(new Slot(upgradeInv, i, 44 + i * 18, 59));
+        }
+
+        // 玩家背包 9×3 + 快捷栏（随布局下移）
+        int statusY = gridY + gridRows * 18 + 5;
+        int invY = statusY + 19;
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
-                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 136 + row * 18));
+                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, invY + row * 18));
             }
         }
-        // 快捷栏 1×9
         for (int col = 0; col < 9; col++) {
-            addSlot(new Slot(playerInventory, col, 8 + col * 18, 194));
+            addSlot(new Slot(playerInventory, col, 8 + col * 18, invY + 54));
         }
+    }
+
+    /** 标记槽 slotId 起点（= 样板槽数）。 */
+    public int markerSlotStart() {
+        return feeder.activePatternSlots();
+    }
+
+    /** 标记槽 slotId 终点（不含）。 */
+    public int markerSlotEnd() {
+        return feeder.activePatternSlots() + feeder.activeMarkerSlots();
     }
 
     public static InfiniteInterfaceMenu fromNetwork(int id, Inventory playerInventory,
@@ -106,8 +129,8 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
     public void clicked(int slotId, int button,
             net.minecraft.world.inventory.ClickType clickType, Player player) {
         if (clickType == net.minecraft.world.inventory.ClickType.PICKUP
-                && button == 1 && slotId >= 9 && slotId < 18) {
-            if (feeder.handleMarkerRightClick(slotId - 9, getCarried())) {
+                && button == 1 && slotId >= markerSlotStart() && slotId < markerSlotEnd()) {
+            if (feeder.handleMarkerRightClick(slotId - markerSlotStart(), getCarried())) {
                 return; // 已作为标记处理，跳过原版拆分/放置
             }
         }
@@ -122,30 +145,41 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         }
         ItemStack stack = slot.getItem();
         ItemStack original = stack.copy();
-        if (slotIndex < 9) {
+        int patternEnd = feeder.activePatternSlots();
+        int markerEnd = patternEnd + feeder.activeMarkerSlots();
+        int upgradeEnd = markerEnd + 4;
+        int invEnd = upgradeEnd + 36;
+        int hotbarEnd = invEnd + 9;
+
+        if (slotIndex < patternEnd) {
             // 样板槽 → 玩家背包
-            if (!moveItemStackTo(stack, 18, 54, true)) {
+            if (!moveItemStackTo(stack, upgradeEnd, hotbarEnd, true)) {
                 return ItemStack.EMPTY;
             }
-        } else if (slotIndex < 18) {
+        } else if (slotIndex < markerEnd) {
             // 标记槽 → 玩家背包
-            if (!moveItemStackTo(stack, 18, 54, true)) {
+            if (!moveItemStackTo(stack, upgradeEnd, hotbarEnd, true)) {
+                return ItemStack.EMPTY;
+            }
+        } else if (slotIndex < upgradeEnd) {
+            // 升级槽 → 玩家背包
+            if (!moveItemStackTo(stack, upgradeEnd, hotbarEnd, true)) {
                 return ItemStack.EMPTY;
             }
         } else {
             // 玩家背包 → 样板槽（仅已编码样板）或标记槽（任意物品）
             if (PatternDetailsHelper.isEncodedPattern(stack)
-                    && !moveItemStackTo(stack, 0, 9, false)) {
+                    && !moveItemStackTo(stack, 0, patternEnd, false)) {
                 return ItemStack.EMPTY;
             }
-            if (!stack.isEmpty() && !moveItemStackTo(stack, 9, 18, false)) {
+            if (!stack.isEmpty() && !moveItemStackTo(stack, patternEnd, markerEnd, false)) {
                 return ItemStack.EMPTY;
             }
             // 背包内移动（避免卡死）
-            if (!stack.isEmpty() && slotIndex >= 45 && !moveItemStackTo(stack, 18, 45, false)) {
+            if (!stack.isEmpty() && slotIndex >= invEnd && !moveItemStackTo(stack, upgradeEnd, invEnd, false)) {
                 return ItemStack.EMPTY;
             }
-            if (!stack.isEmpty() && slotIndex < 45 && !moveItemStackTo(stack, 45, 54, false)) {
+            if (!stack.isEmpty() && slotIndex < invEnd && !moveItemStackTo(stack, invEnd, hotbarEnd, false)) {
                 return ItemStack.EMPTY;
             }
         }

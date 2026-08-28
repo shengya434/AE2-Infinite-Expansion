@@ -34,12 +34,14 @@ public class FeederGhostHandler implements IGhostIngredientHandler<InfiniteInter
         if (!isSupported(ing)) {
             return targets;
         }
-        // 标记槽（菜单 slot 9-17）
+        // 标记槽（区间随容量卡动态）
         InfiniteInterfaceMenu menu = screen.getMenu();
+        int markerStart = menu.markerSlotStart();
+        int markerEnd = menu.markerSlotEnd();
         for (var slot : menu.getSlotList()) {
-            if (slot.index >= 9 && slot.index < 18) {
+            if (slot.index >= markerStart && slot.index < markerEnd) {
                 targets.add(new MarkTarget<>(screen.getGuiLeft() + slot.x,
-                        screen.getGuiTop() + slot.y, slot.index - 9));
+                        screen.getGuiTop() + slot.y, slot.index - markerStart));
             }
         }
         return targets;

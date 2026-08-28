@@ -114,6 +114,14 @@ public class AE2Addon {
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.crafting.BatchedCraftingQueue.class);
 
+        // ME接口（无限级）升级卡注册：容量卡（双槽各+1行/张，最多2）+ 速度卡（喂出预算×2/张，最多2）
+        appeng.api.upgrades.Upgrades.add(
+                ModBlocks.INFINITE_INTERFACE.get(),
+                appeng.core.definitions.AEItems.CAPACITY_CARD.asItem(), 2);
+        appeng.api.upgrades.Upgrades.add(
+                ModBlocks.INFINITE_INTERFACE.get(),
+                appeng.core.definitions.AEItems.SPEED_CARD.asItem(), 2);
+
         LOGGER.info("✅ AE2 Addon loaded! Universal Storage Cells ready!");
     }
 

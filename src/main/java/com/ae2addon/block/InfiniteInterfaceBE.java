@@ -67,7 +67,8 @@ import java.util.Set;
  *         网络 ──无上限拉取─────────► [蓄水池] ◄──extractItem── 机器/漏斗
  */
 public class InfiniteInterfaceBE extends AENetworkBlockEntity
-        implements ICraftingProvider, appeng.helpers.patternprovider.PatternContainer {
+        implements ICraftingProvider, appeng.helpers.patternprovider.PatternContainer,
+        appeng.api.upgrades.IUpgradeableObject {
 
     // ── 全局注册表（供 CPU mixin 查询：全量推送判定 / 取消回退） ──
 
@@ -189,6 +190,13 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     private List<IPatternDetails> patterns = List.of();
     private boolean patternDirty = false;
+
+    // ── 升级槽（容量卡=双槽各+1行；加速卡=喂出预算×2） ──
+
+    private final appeng.api.upgrades.IUpgradeInventory upgrades =
+            appeng.api.upgrades.UpgradeInventories.forMachine(
+                    com.ae2addon.init.ModBlocks.INFINITE_INTERFACE.get(), 4,
+                    this::onUpgradesChanged);
 
     /**
      * 样板管理终端（Pattern Access Terminal）兼容适配器：终端通过 PatternContainer
@@ -394,6 +402,39 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     @Override
     public boolean isBusy() {
         return false;
+    }
+
+    // ── 升级（IUpgradeableObject） ──
+
+    @Override
+    public appeng.api.upgrades.IUpgradeInventory getUpgrades() {
+        return upgrades;
+    }
+
+    /** 容量卡数量（0-2）：每张样板槽+标记槽各加一行（3格）。 */
+    public int capacityCards() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.CAPACITY_CARD.asItem());
+    }
+
+    /** 速度卡数量（0-2）：每张喂出预算 ×2。 */
+    public int speedCards() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.SPEED_CARD.asItem());
+    }
+
+    /** 当前活动的样板槽数（9 + 容量卡×3）。 */
+    public int activePatternSlots() {
+        return 9 + capacityCards() * 3;
+    }
+
+    /** 当前活动的标记槽数（9 + 容量卡×3）。 */
+    public int activeMarkerSlots() {
+        return 9 + capacityCards() * 3;
+    }
+
+    private void onUpgradesChanged() {
+        setChanged();
     }
 
     // ── PatternContainer（样板管理终端兼容） ──
@@ -612,8 +653,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         if (feedable <= 0) {
             return;
         }
-        int perItemBudget = Math.max(1, FEED_BUDGET / feedable);
-        int totalBudget = FEED_BUDGET;
+        // 速度卡：每张喂出预算 ×2（最高 ×4）
+        int budget = Math.min(FEED_BUDGET << speedCards(), 1_000_000);
+        int perItemBudget = Math.max(1, budget / feedable);
+        int totalBudget = budget;
         long fedAll = 0;
         for (var it = reservoir.entrySet().iterator(); it.hasNext() && totalBudget > 0; ) {
             var entry = it.next();
@@ -821,11 +864,17 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         markByKey(markerIndex, null);
     }
 
-    /** 方块拆除时掉落样板槽物品（玩家资源；蓄水池物品属于网络/CPU，不返还防刷）。 */
+    /** 方块拆除时掉落样板槽物品 + 升级卡（玩家资源；蓄水池物品属于网络/CPU，不返还防刷）。 */
     @Override
     public void addAdditionalDrops(Level level, BlockPos pos, List<ItemStack> drops) {
         for (int i = 0; i < patternInv.getContainerSize(); i++) {
             ItemStack stack = patternInv.getItem(i);
+            if (!stack.isEmpty()) {
+                drops.add(stack);
+            }
+        }
+        for (int i = 0; i < upgrades.size(); i++) {
+            ItemStack stack = upgrades.getStackInSlot(i);
             if (!stack.isEmpty()) {
                 drops.add(stack);
             }
@@ -1013,6 +1062,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         tag.put("reservoir", reservoirList);
         tag.putString("totalFed", totalFed.toString());
+        upgrades.writeToNBT(tag, "upgrades");
     }
 
     @Override
@@ -1061,6 +1111,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         } catch (RuntimeException ignored) {
             totalFed = BigInteger.ZERO;
         }
+        upgrades.readFromNBT(tag, "upgrades");
     }
 
     /** 蓄水池概览（GUI 状态用）。返回 [物品种类数, 合计(字符串)]。 */
