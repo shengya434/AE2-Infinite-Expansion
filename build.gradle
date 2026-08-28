@@ -116,6 +116,9 @@ dependencies {
     // Mekanism + Applied Mekanistics（可选集成：气体样板喂出/标记；运行时无则跳过）
     compileOnly fg.deobf(files("libs/Mekanism-1.20.1-10.4.16.80.jar"))
     compileOnly fg.deobf(files("libs/Applied-Mekanistics-1.4.3.jar"))
+
+    // AppFlux（可选集成：感应卡=接口给机器供电）
+    compileOnly fg.deobf(files("libs/AppliedFlux-1.20-1.3.7-forge.jar"))
 }
 
 jar {

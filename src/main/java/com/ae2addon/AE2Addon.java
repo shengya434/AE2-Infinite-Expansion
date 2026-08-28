@@ -130,6 +130,12 @@ public class AE2Addon {
         appeng.api.upgrades.Upgrades.add(
                 ModBlocks.INFINITE_INTERFACE.get(),
                 appeng.core.definitions.AEItems.CRAFTING_CARD.asItem(), 1);
+        // AppFlux 感应卡（供电卡；未装 AppFlux 时为 null 跳过）
+        var inductionCard = com.ae2addon.compat.AppFluxPowerCompat.inductionCard();
+        if (inductionCard != null) {
+            appeng.api.upgrades.Upgrades.add(
+                    ModBlocks.INFINITE_INTERFACE.get(), inductionCard, 1);
+        }
 
         LOGGER.info("✅ AE2 Addon loaded! Universal Storage Cells ready!");
     }

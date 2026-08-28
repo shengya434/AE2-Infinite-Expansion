@@ -456,6 +456,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 appeng.core.definitions.AEItems.CRAFTING_CARD.asItem()) > 0;
     }
 
+    /** AppFlux 感应卡（给机器供电）。 */
+    public boolean hasInductionCard() {
+        var card = com.ae2addon.compat.AppFluxPowerCompat.inductionCard();
+        return card != null && upgrades.getInstalledUpgrades(card) > 0;
+    }
+
     /** 红石门控：感应卡安装时，信号高=喂出（反向卡则反转）。 */
     private boolean redstoneAllowsFeed() {
         if (!hasRedstoneCard()) {
@@ -780,6 +786,18 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         handler != null, fluidHandler != null,
                         com.ae2addon.compat.MekanismGasCompat.isLoaded(),
                         reservoirSummary()[0], fmt(totalAmount()));
+            }
+        }
+        // AppFlux 感应卡：网络 FE → 机器能量槽（供电）
+        if (hasInductionCard()) {
+            try {
+                long fe = com.ae2addon.compat.AppFluxPowerCompat.feedEnergy(
+                        target, front.getOpposite(), getMainNode().getGrid(), actionSource);
+                if (fe > 0 && (level.getGameTime() & 0x3F) == 0) {
+                    com.ae2addon.AE2Addon.LOGGER.info(
+                            "[ae2addon][feeder] 供电 {} FE/tick（感应卡）", fe);
+                }
+            } catch (RuntimeException ignored) {
             }
         }
     }
