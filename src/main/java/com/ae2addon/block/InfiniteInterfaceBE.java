@@ -389,8 +389,31 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     @Override
     public appeng.api.implementations.blockentities.PatternContainerGroup getTerminalGroup() {
-        return appeng.api.implementations.blockentities.PatternContainerGroup.fromMachine(
-                level, worldPosition, net.minecraft.core.Direction.UP);
+        // 优先显示正面贴着的机器（2026-08-28 sensei 要求）
+        Direction front = getFront();
+        if (front != null && level != null) {
+            var machine = level.getBlockEntity(worldPosition.relative(front));
+            if (machine != null) {
+                // ICraftingMachine 机器（ExtendedAE 等）→ 官方信息；否则取方块图标+名称
+                var group = appeng.api.implementations.blockentities.PatternContainerGroup
+                        .fromMachine(level, machine.getBlockPos(), front.getOpposite());
+                if (group != null) {
+                    return group;
+                }
+                net.minecraft.world.level.block.Block machineBlock =
+                        machine.getBlockState().getBlock();
+                return new appeng.api.implementations.blockentities.PatternContainerGroup(
+                        appeng.api.stacks.AEItemKey.of(machineBlock),
+                        machineBlock.getName(),
+                        java.util.List.of());
+            }
+        }
+        // 兜底：本方块
+        return new appeng.api.implementations.blockentities.PatternContainerGroup(
+                appeng.api.stacks.AEItemKey.of(com.ae2addon.init.ModBlocks.INFINITE_INTERFACE.get()),
+                net.minecraft.network.chat.Component.translatable(
+                        getBlockState().getBlock().getDescriptionId()),
+                java.util.List.of());
     }
 
     /** 样板输出 = 网络「可发射物品」声明（终端可见，不影响实际功能）。 */
