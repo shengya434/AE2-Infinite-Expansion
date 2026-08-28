@@ -162,7 +162,7 @@
   "gui.ae2addon.feeder.target": "§7目标: %s",
   "gui.ae2addon.feeder.no_machine": "§7无相邻机器",
   "gui.ae2addon.feeder.reject": " §c[拒收 %s/s]",
-  "gui.ae2addon.feeder.switch": "§7开关: §e抽[§a%s§e] §7向[§e%s§7] §8| §e喂[§a%s§e] §7←点击",
+  "gui.ae2addon.feeder.switch": "§7开关: §e输入[§a%s§e] §7方向[§e%s§7] §8| §e输出[§a%s§e] §7←点击",
   "gui.ae2addon.feeder.params": "§7参数: 目标=%s 间隔=%s 预算=%s",
   "gui.ae2addon.feeder.on": "§a开",
   "gui.ae2addon.feeder.off": "§c关",

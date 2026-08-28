@@ -162,7 +162,7 @@
   "gui.ae2addon.feeder.target": "§7Target: %s",
   "gui.ae2addon.feeder.no_machine": "§7No adjacent machine",
   "gui.ae2addon.feeder.reject": " §c[reject %s/s]",
-  "gui.ae2addon.feeder.switch": "§7Sw: §eEx[§a%s§e] §7Dir[§e%s§7] §8| §eFe[§a%s§e] §7←click",
+  "gui.ae2addon.feeder.switch": "§7Sw: §eIn[§a%s§e] §7Dir[§e%s§7] §8| §eOut[§a%s§e] §7←click",
   "gui.ae2addon.feeder.params": "§7Params: Target=%s Interval=%s Budget=%s",
   "gui.ae2addon.feeder.on": "§aON",
   "gui.ae2addon.feeder.off": "§cOFF",
