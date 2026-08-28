@@ -173,7 +173,7 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 + "§7/s");
         int markers = feeder.markerCount();
         String restock = markers <= 0
-                ? "§7自动补货: §7无标记（仅样板定量）"
+                ? "§7自动补货: §7无标记 §e[✎]"
                 : "§7自动补货: §f" + markers + " §7种→§f"
                         + com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET + " §7/种"
                         + (com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET <= 0 ? " §c(关闭)" : "")

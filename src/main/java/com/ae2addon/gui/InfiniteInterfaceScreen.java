@@ -143,51 +143,31 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
-    /** 命中 [✎] 标记 → 返回设置 key（stockTarget/restockInterval/feedBudget），未命中返回 null。 */
+    /** 命中可编辑行 → 返回设置 key（stockTarget/restockInterval/feedBudget），未命中返回 null。 */
     private String hitEditMarker(double mx, double my) {
         // ⚠️ 鼠标坐标是屏幕坐标，状态行绘制是 GUI 相对坐标（renderLabels 在 translate 后）
         double rx = mx - leftPos;
         double ry = my - topPos;
         List<String> lines = menu.statusLines;
+        String hit = null;
         for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
             int lineY = STATUS_Y + i * STATUS_LINE_H;
             if (ry < lineY || ry >= lineY + STATUS_LINE_H) {
                 continue;
             }
-            String stripped = lines.get(i).replaceAll("§.", "");
-            // 逐字符定位所有 [✎] 的 x 坐标（相对坐标）
-            List<Integer> markerXs = new ArrayList<>();
-            int x = STATUS_X;
-            for (int c = 0; c < stripped.length(); c++) {
-                if (stripped.startsWith("[✎]", c)) {
-                    markerXs.add(x);
-                    x += font.width("[✎]");
-                    c += 2;
-                    continue;
-                }
-                x += font.width(String.valueOf(stripped.charAt(c)));
+            // 整行可点（目标区域大）：第 1 行=补货目标，第 2 行左半=补货间隔/右半=预算
+            switch (i) {
+                case 1 -> hit = "stockTarget";
+                case 2 -> hit = (rx >= STATUS_X + 80) ? "feedBudget" : "restockInterval";
+                default -> { }
             }
-            if (markerXs.isEmpty()) {
-                continue;
-            }
-            String key = switch (i) {
-                case 1 -> "stockTarget";
-                case 2 -> {
-                    // 两个标记：第一个 = 补货间隔，第二个 = 喂出预算
-                    yield markerXs.size() >= 2 && rx >= markerXs.get(1) - 6
-                            ? "feedBudget" : "restockInterval";
-                }
-                default -> null;
-            };
-            if (key != null) {
-                for (int markerX : markerXs) {
-                    if (rx >= markerX - 6 && rx <= markerX + 18) {
-                        return key;
-                    }
-                }
-            }
+            break;
         }
-        return null;
+        com.ae2addon.AE2Addon.LOGGER.info(
+                "[ae2addon][gui] 点击检测: mx={} my={} rx={} ry={} 行数={} 命中={}",
+                (int) mx, (int) my, (int) rx, (int) ry, lines.size(),
+                hit == null ? "无" : hit);
+        return hit;
     }
 
     private void startEdit(String key, double my) {
@@ -198,7 +178,11 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         editBox.setMaxLength(40);
         editBox.setValue(current);
         editBox.setFocused(true);
+        // ⚠️ 必须把屏幕焦点交给输入框，否则 Screen.keyPressed 不会转发按键（输入无效）
+        setFocused(editBox);
         addWidget(editBox);
+        com.ae2addon.AE2Addon.LOGGER.info(
+                "[ae2addon][gui] 打开编辑框: key={} 初始值={}", key, current);
     }
 
     /** 从状态行文本提取当前值（服务端固定格式）。 */
