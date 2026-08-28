@@ -568,6 +568,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     /** 升级卡诊断（每 64 tick 或升级变化时打一次）。 */
     private void dumpUpgradeCards() {
+        com.ae2addon.AE2Addon.ensureCompatUpgrades(); // 幂等补注册（BE 构造失败时重试）
         try {
             var block = com.ae2addon.init.ModBlocks.INFINITE_INTERFACE.get();
             var cap = appeng.core.definitions.AEItems.CAPACITY_CARD.asItem();
