@@ -74,11 +74,17 @@ public class InfiniteInterfaceBlock extends AEBaseEntityBlock<InfiniteInterfaceB
         }
         // AE2 内存卡 doesSneakBypassUse=true：shift+右键绕过物品交互走到这里。
         // 检测内存卡 → 复制/粘贴配置（与正常右键 useOn 路径同一套逻辑）
-        if (heldStack.getItem() instanceof appeng.items.tools.MemoryCardItem) {
+        // Forge 交互链：block.use 先于 item.useOn —— 配置卡/内存卡必须在
+        // 这里处理（右键=复制，shift+右键=粘贴），否则会被 GUI 打开抢走
+        if (heldStack.getItem() instanceof com.ae2addon.item.ConfigCardItem
+                || heldStack.getItem() instanceof appeng.items.tools.MemoryCardItem) {
             var be = getBlockEntity(level, pos);
             if (be != null) {
-                // shift+右键（bypass useOn）= 粘贴；正常右键走 useOn 复制
-                if (com.ae2addon.util.MemoryCardHelper.handlePaste(be, player, heldStack)) {
+                boolean paste = player.isShiftKeyDown();
+                boolean handled = paste
+                        ? com.ae2addon.util.MemoryCardHelper.handlePaste(be, player, heldStack)
+                        : com.ae2addon.util.MemoryCardHelper.handleCopy(be, player, heldStack);
+                if (handled) {
                     return InteractionResult.SUCCESS;
                 }
             }
