@@ -154,6 +154,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     /** 累计已喂出总量（机器/漏斗实际收到的物品数；供料站流量可见性）。 */
     private BigInteger totalFed = BigInteger.ZERO;
 
+    /** 补货提取失败计数（诊断节流用）。 */
+    private long restockFailCount;
+
     /** 推送速率统计：当前 1 秒窗口内喂出数 / 上一秒速率（items/s）。 */
     private long rateWindowFed;
     private long currentFeedRate;
@@ -249,9 +252,27 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         String targetName = target == null
                 ? "无" : target.getBlockState().getBlock().getName().getString();
         var summary = reservoirSummary();
+        // 蓄水池构成明细（物品/流体/气体/其他）
+        int items = 0, fluids = 0, gases = 0, others = 0;
+        for (var entry : reservoir.entrySet()) {
+            if (entry.getValue().signum() <= 0) {
+                continue;
+            }
+            if (entry.getKey() instanceof AEItemKey) {
+                items++;
+            } else if (entry.getKey() instanceof AEFluidKey) {
+                fluids++;
+            } else if (com.ae2addon.compat.MekanismGasCompat.isFeedable(entry.getKey())) {
+                gases++;
+            } else {
+                others++;
+            }
+        }
         com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon][feeder] {} pos={} facing={} front={} 目标方块={} 蓄水池={}种/合计{}",
-                tag, worldPosition, facing, front, targetName, summary[0], summary[1]);
+                "[ae2addon][feeder] {} pos={} facing={} front={} 目标方块={} 蓄水池={}种"
+                        + "（物品{} 流体{} 气体{} 其他{}）/合计{}",
+                tag, worldPosition, facing, front, targetName, summary[0],
+                items, fluids, gases, others, summary[1]);
     }
 
     @Override
@@ -479,6 +500,14 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if (got > 0) {
                 addReservoir(key, BigInteger.valueOf(got));
                 setChanged();
+            } else if (key instanceof AEFluidKey
+                    || com.ae2addon.compat.MekanismGasCompat.isFeedable(key)) {
+                // 流体/气体提取失败诊断（节流：每 100 次打一条）
+                if ((++restockFailCount & 99) == 0) {
+                    com.ae2addon.AE2Addon.LOGGER.warn(
+                            "[ae2addon][feeder] 补货提取失败: key={} 想要={} 网络无该流体/气体？",
+                            key, want);
+                }
             }
         }
     }

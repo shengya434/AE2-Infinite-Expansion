@@ -91,6 +91,11 @@ public final class MekanismGasCompat {
      * 指定面优先，找不到气体槽时遍历机器所有面。带失败原因诊断（节流）。 */
     public static long feed(BlockEntity target, Direction side, AEKey key, long amount) {
         if (!isFeedable(key) || amount <= 0) {
+            // 早退也诊断：key 类型/form 不对或蓄水池里根本没气体
+            diag("isFeedable=false 或 amount<=0: key="
+                    + (key == null ? "null" : key.getClass().getSimpleName())
+                    + (key instanceof MekanismKey mk ? " form=" + mk.getForm() : " 非MekanismKey")
+                    + " amount=" + amount + " loaded=" + isLoaded());
             return 0;
         }
         try {
