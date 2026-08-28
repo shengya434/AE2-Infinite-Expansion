@@ -135,9 +135,9 @@ public class AE2Addon {
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.crafting.BatchedCraftingQueue.class);
 
-        // 升级卡注册移到方块注册完成后（onBlocksRegistered）；AppFlux/ExtendedAE+
-        // 的卡在运行时懒注册（ensureCompatUpgrades，BE 构造时触发）
-        modBus.addListener(this::onBlocksRegistered);
+        // 升级卡注册统一在 ensureCompatUpgrades（BE 构造时触发）：此时所有注册表
+        // 就绪，block.asItem() 能正确解析——注册阶段执行会命中 asItem 毒缓存
+        // （物品未注册 → AIR）导致 Upgrades key 错位、卡片计数全 0（16:24 实锤）
 
         LOGGER.info("✅ AE2 Addon loaded! Universal Storage Cells ready!");
     }
@@ -146,31 +146,7 @@ public class AE2Addon {
         return new ResourceLocation(MODID, path);
     }
 
-    /**
-     * 方块注册完成后注册升级卡（2026-08-28 崩溃修复）：
-     * 构造期 ModBlocks.XXX.get() 会抛 "Registry Object not present" NPE
-     * （方块要等 REGISTER 事件才进注册表），必须延迟到这里。
-     */
-    private void onBlocksRegistered(net.minecraftforge.registries.RegisterEvent event) {
-        if (event.getRegistryKey() != net.minecraft.core.registries.Registries.BLOCK) {
-            return;
-        }
-        // AE2 自带卡片（AE2 物品始终可用）
-        appeng.api.upgrades.Upgrades.add(
-                ModBlocks.INFINITE_INTERFACE.get(),
-                appeng.core.definitions.AEItems.CAPACITY_CARD.asItem(), 4);
-        appeng.api.upgrades.Upgrades.add(
-                ModBlocks.INFINITE_INTERFACE.get(),
-                appeng.core.definitions.AEItems.REDSTONE_CARD.asItem(), 1);
-        appeng.api.upgrades.Upgrades.add(
-                ModBlocks.INFINITE_INTERFACE.get(),
-                appeng.core.definitions.AEItems.INVERTER_CARD.asItem(), 1);
-        appeng.api.upgrades.Upgrades.add(
-                ModBlocks.INFINITE_INTERFACE.get(),
-                appeng.core.definitions.AEItems.CRAFTING_CARD.asItem(), 1);
-    }
-
-    /** 跨 mod 升级卡懒注册（AppFlux 感应卡 / ExtendedAE+ 频道卡、虚拟合成卡）。 */
+    /** 升级卡统一懒注册（BE 构造时触发；所有注册表已就绪，asItem() 正确）。 */
     private static final java.util.concurrent.atomic.AtomicBoolean COMPAT_UPGRADES =
             new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -179,22 +155,29 @@ public class AE2Addon {
         if (COMPAT_UPGRADES.getAndSet(true)) {
             return; // 只注册一次
         }
+        var block = ModBlocks.INFINITE_INTERFACE.get();
+        // AE2 自带卡片（容量4/红石/反向/合成）
+        appeng.api.upgrades.Upgrades.add(
+                block, appeng.core.definitions.AEItems.CAPACITY_CARD.asItem(), 4);
+        appeng.api.upgrades.Upgrades.add(
+                block, appeng.core.definitions.AEItems.REDSTONE_CARD.asItem(), 1);
+        appeng.api.upgrades.Upgrades.add(
+                block, appeng.core.definitions.AEItems.INVERTER_CARD.asItem(), 1);
+        appeng.api.upgrades.Upgrades.add(
+                block, appeng.core.definitions.AEItems.CRAFTING_CARD.asItem(), 1);
         // AppFlux 感应卡（供电卡；未装 AppFlux 时为 null 跳过）
         var inductionCard = com.ae2addon.compat.AppFluxPowerCompat.inductionCard();
         if (inductionCard != null) {
-            appeng.api.upgrades.Upgrades.add(
-                    ModBlocks.INFINITE_INTERFACE.get(), inductionCard, 1);
+            appeng.api.upgrades.Upgrades.add(block, inductionCard, 1);
         }
         // ExtendedAE+ 频道卡（无线连网） + 虚拟合成卡（末批即完成）
         var channelCard = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
         if (channelCard != null) {
-            appeng.api.upgrades.Upgrades.add(
-                    ModBlocks.INFINITE_INTERFACE.get(), channelCard, 1);
+            appeng.api.upgrades.Upgrades.add(block, channelCard, 1);
         }
         var virtualCard = com.ae2addon.compat.ExtendedAEPlusCompat.virtualCraftingCard();
         if (virtualCard != null) {
-            appeng.api.upgrades.Upgrades.add(
-                    ModBlocks.INFINITE_INTERFACE.get(), virtualCard, 1);
+            appeng.api.upgrades.Upgrades.add(block, virtualCard, 1);
         }
     }
 }
