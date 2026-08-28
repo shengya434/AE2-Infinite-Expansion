@@ -41,60 +41,78 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         this.feeder = feeder;
         this.opener = playerInventory.player;
 
-        // 布局随容量卡动态变化：gridRows = 3 + 容量卡数
-        int gridRows = 3 + feeder.capacityCards();
-        int gridY = 83;
-        int patternSlots = feeder.activePatternSlots();
-        int markerSlots = feeder.activeMarkerSlots();
-
-        // 样板槽（左，3列 × gridRows 行）
+        // 分页布局（2026-08-28）：样板/标记槽固定 3×3 每页，容量卡加页；
+        // 当前页 = 客户端视图状态（currentPage），槽位按页显隐
+        final int gridY = 83;
+        // 样板槽（左 3×3×页；每页9格）
         var patternInv = feeder.getPatternInventory();
-        for (int i = 0; i < patternSlots; i++) {
-            int col = i % 3;
-            int row = i / 3;
-            addSlot(new Slot(patternInv, i, 26 + col * 18, gridY + row * 18) {
+        for (int i = 0; i < 27; i++) {
+            int page = i / 9;
+            int col = (i % 9) % 3;
+            int row = (i % 9) / 3;
+            addSlot(new PageSlot(patternInv, i, 26 + col * 18, gridY + row * 18, page) {
                 @Override
                 public boolean mayPlace(ItemStack stack) {
                     return PatternDetailsHelper.isEncodedPattern(stack);
                 }
             });
         }
-
-        // 标记槽（右，3列 × gridRows 行；任意物品 = 自动补货清单）
+        // 标记槽（右 3×3×页；任意物品 = 自动补货清单）
         var markerInv = feeder.getMarkerInventory();
-        for (int i = 0; i < markerSlots; i++) {
-            int col = i % 3;
-            int row = i / 3;
-            addSlot(new Slot(markerInv, i, 96 + col * 18, gridY + row * 18));
+        for (int i = 0; i < 27; i++) {
+            int page = i / 9;
+            int col = (i % 9) % 3;
+            int row = (i % 9) / 3;
+            addSlot(new PageSlot(markerInv, i, 96 + col * 18, gridY + row * 18, page));
         }
-
-        // 升级槽（4个，参数区下方；只收 AE2 升级卡）
+        // 升级槽（5个，参数区下方；只收 AE2 升级卡）
         var upgradeInv = feeder.getUpgrades().toContainer();
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 5; i++) {
             addSlot(new Slot(upgradeInv, i, 44 + i * 18, 59));
         }
-
-        // 玩家背包 9×3 + 快捷栏（随布局下移）
-        int statusY = gridY + gridRows * 18 + 5;
-        int invY = statusY + 19;
+        // 玩家背包 9×3 + 快捷栏（固定位置）
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
-                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, invY + row * 18));
+                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 161 + row * 18));
             }
         }
         for (int col = 0; col < 9; col++) {
-            addSlot(new Slot(playerInventory, col, 8 + col * 18, invY + 54));
+            addSlot(new Slot(playerInventory, col, 8 + col * 18, 215));
         }
     }
 
-    /** 标记槽 slotId 起点（= 样板槽数）。 */
-    public int markerSlotStart() {
-        return feeder.activePatternSlots();
+    /** 分页槽：仅当前页可见可点（isActive 客户端渲染用；服务端点击按位置处理）。 */
+    private class PageSlot extends Slot {
+        private final int page;
+
+        PageSlot(net.minecraft.world.Container inv, int index, int x, int y, int page) {
+            super(inv, index, x, y);
+            this.page = page;
+        }
+
+        @Override
+        public boolean isActive() {
+            return page == currentPage;
+        }
     }
 
-    /** 标记槽 slotId 终点（不含）。 */
+    /** 当前显示页（客户端视图状态；0 基，≤ maxPage）。 */
+    public volatile int currentPage = 0;
+
+    /** 翻页（客户端按钮用）。 */
+    public void flipPage(int delta) {
+        int max = feeder.maxPage();
+        currentPage = Math.max(0, Math.min(max, currentPage + delta));
+    }
+
+    /** 标记槽 slotId 起点（固定：样板槽 0-26）。 */
+    public int markerSlotStart() {
+        return 27;
+    }
+
+    /** 标记槽 slotId 终点（不含；固定 54）。 */
     public int markerSlotEnd() {
-        return feeder.activePatternSlots() + feeder.activeMarkerSlots();
+        return 54;
     }
 
     public static InfiniteInterfaceMenu fromNetwork(int id, Inventory playerInventory,
@@ -145,11 +163,11 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         }
         ItemStack stack = slot.getItem();
         ItemStack original = stack.copy();
-        int patternEnd = feeder.activePatternSlots();
-        int markerEnd = patternEnd + feeder.activeMarkerSlots();
-        int upgradeEnd = markerEnd + 4;
-        int invEnd = upgradeEnd + 36;
-        int hotbarEnd = invEnd + 9;
+        int patternEnd = 27;
+        int markerEnd = 54;
+        int upgradeEnd = 59;
+        int invEnd = 95;
+        int hotbarEnd = 104;
 
         if (slotIndex < patternEnd) {
             // 样板槽 → 玩家背包

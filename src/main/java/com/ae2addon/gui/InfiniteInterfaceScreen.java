@@ -24,11 +24,9 @@ import java.util.Locale;
 public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInterfaceMenu> {
 
     private static final int W = 176;
+    private static final int H = 237;
     private static final int MAX_STATUS_LINES = 2;
-    /** 布局随容量卡变化（构造时计算）。 */
-    private final int gridRows;
-    private final int gridY = 83;
-    private final int statusY;
+    private static final int STATUS_Y = 142;
 
     private static final String[] KEYS = {"stockTarget", "restockInterval", "feedBudget"};
     private static final String[] LABELS = {"§7补货目标", "§7补货间隔", "§7喂出预算"};
@@ -48,10 +46,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     public InfiniteInterfaceScreen(InfiniteInterfaceMenu menu, Inventory playerInventory,
             Component title) {
         super(menu, playerInventory, title);
-        this.gridRows = 3 + menu.getFeeder().capacityCards();
-        this.statusY = gridY + gridRows * 18 + 5;
         imageWidth = W;
-        imageHeight = statusY + 19 + 54 + 22; // 状态行 + 背包 + 快捷栏 + 边距
+        imageHeight = H;
         titleLabelY = 6;
         inventoryLabelY = -1000; // 隐藏原版「背包」标签（布局自明）
     }
@@ -59,6 +55,13 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     @Override
     protected void init() {
         super.init();
+        // 翻页按钮（右上角；容量卡≥1 时可用）
+        addRenderableWidget(Button.builder(Component.literal("◀"),
+                b -> getMenu().flipPage(-1)
+        ).bounds(leftPos + 122, topPos + 4, 16, 12).build());
+        addRenderableWidget(Button.builder(Component.literal("▶"),
+                b -> getMenu().flipPage(1)
+        ).bounds(leftPos + 158, topPos + 4, 16, 12).build());
         long[] values = {
                 AE2AddonConfig.feederStockTarget(),
                 AE2AddonConfig.feederRestockInterval(),
@@ -132,13 +135,12 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         int x = leftPos;
         int y = topPos;
 
-        // 面板底（高度随容量卡变化）
-        int h = imageHeight;
-        g.fill(x, y, x + W, y + h, 0xF0101010);
+        // 面板底
+        g.fill(x, y, x + W, y + H, 0xF0101010);
         g.fill(x, y, x + W, y + 1, 0xFF555555);
-        g.fill(x, y + h - 1, x + W, y + h, 0xFF555555);
-        g.fill(x, y, x + 1, y + h, 0xFF555555);
-        g.fill(x + W - 1, y, x + W, y + h, 0xFF555555);
+        g.fill(x, y + H - 1, x + W, y + H, 0xFF555555);
+        g.fill(x, y, x + 1, y + H, 0xFF555555);
+        g.fill(x + W - 1, y, x + W, y + H, 0xFF555555);
 
         // 槽位底框（renderBg 无 translate，须手动加 leftPos/topPos）
         for (Slot slot : menu.getSlotList()) {
@@ -210,17 +212,21 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         // 升级标签（升级槽左侧）
         g.drawString(font, Component.literal("§7升级"), 8, 64, 0xFFFFFF, false);
 
+        // 页标签（右上角 ◀ N/M ▶ 之间）
+        String pageLabel = "§7" + (menu.currentPage + 1) + "/" + (menu.getFeeder().maxPage() + 1);
+        g.drawString(font, Component.literal(pageLabel), 142, 6, 0xFFFFFF, false);
+
         // 样板槽/标记槽标签（格子正上方）
         g.drawString(font,
                 Component.translatable("gui.ae2addon.infinite_interface.patterns"),
-                26, gridY - 4, 0xAAAAAA, false);
+                26, 79, 0xAAAAAA, false);
         g.drawString(font,
                 Component.translatable("gui.ae2addon.infinite_interface.markers"),
-                96, gridY - 4, 0xAAAAAA, false);
+                96, 79, 0xAAAAAA, false);
 
         // 状态行（样板槽下方；最多 2 行，超长截断）
         List<String> lines = menu.statusLines;
-        int lineY = statusY;
+        int lineY = STATUS_Y;
         for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
             String line = lines.get(i);
             String stripped = line.replaceAll("§.", "");

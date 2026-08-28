@@ -168,7 +168,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     // ── 样板槽（3×3，声明可处理的配方；CPU 路由靠它） ──
 
-    private final SimpleContainer patternInv = new SimpleContainer(9) {
+    private final SimpleContainer patternInv = new SimpleContainer(27) {
         @Override
         public void setChanged() {
             super.setChanged();
@@ -180,7 +180,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     // 样板 = 定量（CPU 推多少发多少，发完停）；标记 = 无限供料（标记的物品
     // 持续从网络补到 feederStockTarget，机器永远有货）。
 
-    private final SimpleContainer markerInv = new SimpleContainer(9) {
+    private final SimpleContainer markerInv = new SimpleContainer(27) {
         @Override
         public void setChanged() {
             super.setChanged();
@@ -423,14 +423,46 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 appeng.core.definitions.AEItems.SPEED_CARD.asItem());
     }
 
-    /** 当前活动的样板槽数（9 + 容量卡×3）。 */
+    /** 当前活动的样板槽数（9 + 容量卡×9，分页显示）。 */
     public int activePatternSlots() {
-        return 9 + capacityCards() * 3;
+        return 9 + capacityCards() * 9;
     }
 
-    /** 当前活动的标记槽数（9 + 容量卡×3）。 */
+    /** 当前活动的标记槽数（9 + 容量卡×9，分页显示）。 */
     public int activeMarkerSlots() {
-        return 9 + capacityCards() * 3;
+        return 9 + capacityCards() * 9;
+    }
+
+    /** 最大页数（0 基）：容量卡数（基础页 + 每卡一页）。 */
+    public int maxPage() {
+        return capacityCards();
+    }
+
+    /** 感应卡（红石门控喂出）。 */
+    public boolean hasRedstoneCard() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.REDSTONE_CARD.asItem()) > 0;
+    }
+
+    /** 反向卡（反转红石信号；无感应卡时无效）。 */
+    public boolean hasInverterCard() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.INVERTER_CARD.asItem()) > 0;
+    }
+
+    /** 虚拟合成卡（补货不足时请求合成，待实现）。 */
+    public boolean hasCraftingCard() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.CRAFTING_CARD.asItem()) > 0;
+    }
+
+    /** 红石门控：感应卡安装时，信号高=喂出（反向卡则反转）。 */
+    private boolean redstoneAllowsFeed() {
+        if (!hasRedstoneCard()) {
+            return true;
+        }
+        boolean powered = level != null && level.hasNeighborSignal(worldPosition);
+        return hasInverterCard() ? !powered : powered;
     }
 
     private void onUpgradesChanged() {
@@ -620,6 +652,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     /** ③ 按机器容量分批喂出：insertItem 拒收的余量留在蓄水池。 */
     private void feedMachine() {
+        if (!redstoneAllowsFeed()) {
+            return; // 感应卡：红石信号不允许时暂停喂出
+        }
         Direction front = getFront();
         if (front == null) {
             return;
@@ -904,7 +939,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                     continue;
                 }
                 IPatternDetails details = PatternDetailsHelper.decodePattern(stack, lvl);
-                if (details != null) {
+                // 2026-08-28 兼容：接口不接合成样板（AECraftingPattern）——合成需分子
+                // 装配室/样板供应器执行，接口只能喂处理机器；接了会导致 CPU 把合成任务
+                // 推给接口而机器无法执行（sensei 提醒）
+                if (details != null && !details.getClass().getName().endsWith("AECraftingPattern")) {
                     list.add(details);
                 }
             }
