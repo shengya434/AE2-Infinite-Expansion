@@ -310,8 +310,8 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             machine += " §c[拒收 " + rejects + "/s]";
         }
         lines.add("§7喂出目标: " + machine);
-        lines.add("§7开关: 抽取:" + (feeder.activeExtract ? "开" : "关")
-                + " 喂出:" + (feeder.activeFeed ? "开" : "关"));
+        lines.add("§7开关: §e抽取[" + (feeder.activeExtract ? "§a开" : "§c关") + "§e] §8| §e喂出["
+                + (feeder.activeFeed ? "§a开" : "§c关") + "§e] §7←点击切换");
         return lines;
     }
 }

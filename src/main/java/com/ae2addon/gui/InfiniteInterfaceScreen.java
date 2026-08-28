@@ -41,25 +41,12 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     /** 中键当前编辑的标记槽容器 index（-1 = 未编辑）。 */
     private int targetBoxMarker = -1;
 
-    /** 主动输入/输出开关按钮。 */
-    private net.minecraft.client.gui.components.Button extractToggle;
-    private net.minecraft.client.gui.components.Button feedToggle;
 
     /** 蓄水池状态行（服务端 FeederStatusPacket → 主线程）。 */
     public static void handleStatus(List<String> lines) {
         var mc = Minecraft.getInstance();
         if (mc.screen instanceof InfiniteInterfaceScreen screen) {
             screen.menu.statusLines = lines;
-            // 同步开关按钮状态（服务端权威）
-            for (String line : lines) {
-                if (line.startsWith("§7开关")) {
-                    screen.extractToggle.setMessage(Component.literal(
-                            line.contains("抽取:开") ? "主动抽取: 开" : "主动抽取: 关"));
-                    screen.feedToggle.setMessage(Component.literal(
-                            line.contains("喂出:开") ? "主动喂出: 开" : "主动喂出: 关"));
-                    break;
-                }
-            }
         }
     }
 
@@ -100,26 +87,6 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                     b -> saveSetting(idx)
             ).bounds(leftPos + 122, topPos + ROW_YS[i] - 1, 32, 16).build());
         }
-        // 主动输入/输出开关（背包与热键栏之间）
-        extractToggle = Button.builder(Component.literal("主动抽取: 开"),
-                b -> {
-                    AE2Addon.NETWORK.sendToServer(
-                            new com.ae2addon.network.FeederTogglePacket(
-                                    getMenu().getFeeder().getBlockPos(), "extract"));
-                    b.setMessage(Component.literal("主动抽取: 关"));
-                }
-        ).bounds(leftPos + 8, topPos + 200, 62, 12).build();
-        feedToggle = Button.builder(Component.literal("主动喂出: 开"),
-                b -> {
-                    AE2Addon.NETWORK.sendToServer(
-                            new com.ae2addon.network.FeederTogglePacket(
-                                    getMenu().getFeeder().getBlockPos(), "feed"));
-                    b.setMessage(Component.literal("主动喂出: 关"));
-                }
-        ).bounds(leftPos + 74, topPos + 200, 62, 12).build();
-        addRenderableWidget(extractToggle);
-        addRenderableWidget(feedToggle);
-
         // 中键弹框：标记缓存目标输入（默认隐藏；中键点击标记槽时显示）
         targetBox = new EditBox(font, leftPos + 26, topPos + 128, 120, 14,
                 Component.literal("target"));
@@ -379,6 +346,16 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                 openTargetBox(hovered.index - menu.markerSlotStart());
                 return true;
             }
+        }
+        // 状态行第 3 行（开关行）点击切换：左半=抽取，右半=喂出
+        int relX = (int) mouseX - leftPos;
+        int relY = (int) mouseY - topPos;
+        if (button == 0 && relY >= 156 && relY <= 163 && relX >= 8 && relX < 170) {
+            AE2Addon.NETWORK.sendToServer(
+                    new com.ae2addon.network.FeederTogglePacket(
+                            getMenu().getFeeder().getBlockPos(),
+                            relX < 84 ? "extract" : "feed"));
+            return true;
         }
         return super.mouseClicked(mouseX, mouseY, button);
     }
