@@ -195,6 +195,16 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 return; // 超限，拒绝插入
             }
         }
+        // 标记槽普通放入 → 转虚拟标记（标记区不占真实存储）
+        if (slotId >= markerSlotStart() && slotId < markerSlotEnd()
+                && !getCarried().isEmpty()
+                && clickType == net.minecraft.world.inventory.ClickType.PICKUP) {
+            // 左键放入 = 标记（与右键一致）；不放物品进槽
+            if (button == 0 && feeder.handleMarkerRightClick(
+                    slotId - markerSlotStart(), getCarried())) {
+                return;
+            }
+        }
         super.clicked(slotId, button, clickType, player);
     }
 

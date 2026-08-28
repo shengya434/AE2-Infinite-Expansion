@@ -1103,8 +1103,40 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return count;
     }
 
+    /** 上次标记的 key 集合（变化检测：消失的标记 → 退回蓄水池缓存）。 */
+    private java.util.Set<AEKey> lastMarkedKeys = java.util.Collections.emptySet();
+
     private void onMarkersChanged() {
         setChanged();
+        // 标记区不占真实存储：标记取消 → 对应蓄水池缓存退回网络（2026-08-28 sensei）
+        java.util.Set<AEKey> now = wantedKeys();
+        if (level == null || level.isClientSide || now.equals(lastMarkedKeys)) {
+            lastMarkedKeys = now;
+            return;
+        }
+        IGrid grid = getMainNode().getGrid();
+        if (grid != null) {
+            MEStorage storage = grid.getStorageService().getInventory();
+            for (AEKey gone : lastMarkedKeys) {
+                if (now.contains(gone)) {
+                    continue;
+                }
+                java.math.BigInteger amount = reservoir.remove(gone);
+                if (amount != null && amount.signum() > 0 && storage != null) {
+                    try {
+                        long back = amount.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).longValue();
+                        long inserted = storage.insert(gone, back, Actionable.MODULATE, actionSource);
+                        com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ae2addon][feeder] 标记取消，退回缓存 {} x{}（蓄水池余 {}）",
+                                gone, inserted, reservoirAmount(gone));
+                    } catch (RuntimeException e) {
+                        com.ae2addon.AE2Addon.LOGGER.warn(
+                                "[ae2addon][feeder] 退回缓存失败 {} {}", gone, e);
+                    }
+                }
+            }
+        }
+        lastMarkedKeys = now;
     }
 
     /**
@@ -1132,11 +1164,13 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             markByKey(markerIndex, gasKey);
             return true;
         }
-        // 普通物品 → 标记物品
-        ItemStack single = carried.copy();
-        single.setCount(1);
-        markerInv.setItem(markerIndex, single);
-        return true;
+        // 普通物品 → 虚拟标记（WrappedGenericStack，不占用真实物品）
+        var itemKey = appeng.api.stacks.AEItemKey.of(carried);
+        if (itemKey != null) {
+            markByKey(markerIndex, itemKey);
+            return true;
+        }
+        return false;
     }
 
     /** 按 AEKey 直接标记（JEI 拖取/右键共用）；null key = 清空。 */
