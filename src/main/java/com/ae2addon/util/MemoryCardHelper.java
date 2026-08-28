@@ -21,8 +21,7 @@ public final class MemoryCardHelper {
 
     /** 内存卡处理入口：卡里有本 mod 配置 → 导入；否则导出。返回 true=已处理。 */
     public static boolean handleUse(InfiniteInterfaceBE feeder, Player player, ItemStack card) {
-        if (feeder == null || player == null || card.isEmpty()
-                || !(card.getItem() instanceof MemoryCardItem)) {
+        if (feeder == null || player == null || card.isEmpty()) {
             return false;
         }
         CompoundTag tag = card.getOrCreateTag();
@@ -31,8 +30,7 @@ public final class MemoryCardHelper {
             try {
                 CompoundTag cfg = tag.getCompound(CFG_KEY);
                 importConfig(feeder, cfg);
-                ((MemoryCardItem) card.getItem()).notifyUser(
-                        player, appeng.api.implementations.items.MemoryCardMessages.SETTINGS_LOADED);
+                notify(player, card, true);
                 com.ae2addon.AE2Addon.LOGGER.info(
                         "[ae2addon] 内存卡导入: 参数=({},{},{}) 开关=({},{}) 方向={} 标记数={} 目标数={}",
                         feeder.pStockTarget, feeder.pRestockInterval, feeder.pFeedBudget,
@@ -48,8 +46,7 @@ public final class MemoryCardHelper {
                 exportConfig(feeder, cfg);
                 tag.put(CFG_KEY, cfg);
                 tag.putString("ae2addon:name", "ME接口(无限级)");
-                ((MemoryCardItem) card.getItem()).notifyUser(
-                        player, appeng.api.implementations.items.MemoryCardMessages.SETTINGS_SAVED);
+                notify(player, card, false);
                 com.ae2addon.AE2Addon.LOGGER.info(
                         "[ae2addon] 内存卡导出: 参数=({},{},{}) 开关=({},{}) 方向={} 标记数={} 目标数={}",
                         feeder.pStockTarget, feeder.pRestockInterval, feeder.pFeedBudget,
@@ -60,6 +57,18 @@ public final class MemoryCardHelper {
             }
         }
         return true;
+    }
+
+    /** 操作提示：AE2 内存卡用原版气泡，配置存储卡用聊天消息。 */
+    private static void notify(Player player, ItemStack card, boolean loaded) {
+        if (card.getItem() instanceof MemoryCardItem mci) {
+            mci.notifyUser(player, loaded
+                    ? appeng.api.implementations.items.MemoryCardMessages.SETTINGS_LOADED
+                    : appeng.api.implementations.items.MemoryCardMessages.SETTINGS_SAVED);
+        } else {
+            player.displayClientMessage(net.minecraft.network.chat.Component.literal(
+                    loaded ? "§a[ae2addon] 配置已载入" : "§a[ae2addon] 配置已保存"), false);
+        }
     }
 
     private static void exportConfig(InfiniteInterfaceBE feeder, CompoundTag cfg) {
