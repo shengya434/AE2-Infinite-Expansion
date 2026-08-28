@@ -95,6 +95,12 @@ public class AE2AddonJEIPlugin implements IModPlugin {
                 Mode2ConfigScreen.class,
                 new Mode2ConfigGhostHandler()
         );
+
+        // ME接口（无限级）标记槽：JEI 拖取物品/流体/气体直接标记
+        registration.addGhostIngredientHandler(
+                com.ae2addon.gui.InfiniteInterfaceScreen.class,
+                new FeederGhostHandler()
+        );
     }
 
 }

@@ -708,16 +708,13 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         // 流体容器 → 标记流体
         var contained = FluidUtil.getFluidContained(carried);
         if (contained.isPresent() && !contained.get().isEmpty()) {
-            markerInv.setItem(markerIndex,
-                    appeng.items.misc.WrappedGenericStack.wrap(
-                            AEFluidKey.of(contained.get()), 1));
+            markByKey(markerIndex, AEFluidKey.of(contained.get()));
             return true;
         }
         // 气体容器（气罐/气桶）→ 标记气体
         AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.chemicalInContainer(carried);
         if (gasKey != null) {
-            markerInv.setItem(markerIndex,
-                    appeng.items.misc.WrappedGenericStack.wrap(gasKey, 1));
+            markByKey(markerIndex, gasKey);
             return true;
         }
         // 普通物品 → 标记物品
@@ -725,6 +722,24 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         single.setCount(1);
         markerInv.setItem(markerIndex, single);
         return true;
+    }
+
+    /** 按 AEKey 直接标记（JEI 拖取/右键共用）；null key = 清空。 */
+    public void markByKey(int markerIndex, AEKey key) {
+        if (markerIndex < 0 || markerIndex >= markerInv.getContainerSize()) {
+            return;
+        }
+        if (key == null) {
+            markerInv.setItem(markerIndex, ItemStack.EMPTY);
+            return;
+        }
+        markerInv.setItem(markerIndex,
+                appeng.items.misc.WrappedGenericStack.wrap(key, 1));
+    }
+
+    /** 清空标记（JEI/网络包用）。 */
+    public void clearMarker(int markerIndex) {
+        markByKey(markerIndex, null);
     }
 
     /** 方块拆除时掉落样板槽物品（玩家资源；蓄水池物品属于网络/CPU，不返还防刷）。 */

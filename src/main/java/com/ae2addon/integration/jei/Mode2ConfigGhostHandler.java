@@ -25,7 +25,10 @@ public class Mode2ConfigGhostHandler implements IGhostIngredientHandler<Mode2Con
         List<Target<I>> targets = new ArrayList<>();
 
         I ing = ingredient.getIngredient();
-        if (!(ing instanceof ItemStack)) {
+        // 物品 / 流体 / Mekanism 化学物（气体等；未装 Mekanism 时短路不命中）
+        if (!(ing instanceof ItemStack) && !(ing instanceof net.minecraftforge.fluids.FluidStack)
+                && !(net.minecraftforge.fml.ModList.get().isLoaded("mekanism")
+                        && ing instanceof mekanism.api.chemical.ChemicalStack<?>)) {
             return targets;
         }
 
@@ -75,15 +78,26 @@ public class Mode2ConfigGhostHandler implements IGhostIngredientHandler<Mode2Con
 
         @Override
         public void accept(I ingredient) {
-            if (!(ingredient instanceof ItemStack stack)) return;
-
             Minecraft mc = Minecraft.getInstance();
             if (mc.player == null) return;
 
-            // 直接将 JEI 拖拽的物品作为白名单添加请求发到服务端
-            ItemStack toAdd = stack.copy();
-            toAdd.setCount(1);
-            AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(toAdd));
+            if (ingredient instanceof ItemStack stack) {
+                // 物品：原逻辑（服务端自动检测流体容器）
+                ItemStack toAdd = stack.copy();
+                toAdd.setCount(1);
+                AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(toAdd));
+            } else if (ingredient instanceof net.minecraftforge.fluids.FluidStack fluid) {
+                // 流体：AEKey 直加白名单
+                AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(
+                        appeng.api.stacks.AEFluidKey.of(fluid)));
+            } else if (net.minecraftforge.fml.ModList.get().isLoaded("mekanism")
+                    && ingredient instanceof mekanism.api.chemical.ChemicalStack<?> chemical) {
+                // 化学物（气体等）：AEKey 直加白名单
+                var key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(chemical);
+                if (key != null) {
+                    AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(key));
+                }
+            }
         }
     }
 }

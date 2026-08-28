@@ -187,6 +187,25 @@ public class Mode2ConfigPacket {
     }
 
     // type 7 添加规则 / type 8 移除规则（isTag=true → tag，false → mod）
+    // type 13：JEI 拖取流体/化学物、任意 AEKey 直加白名单（keyTag 携带）
+    public Mode2ConfigPacket(appeng.api.stacks.AEKey key) {
+        this.type = 13;
+        this.threshold = 0;
+        this.itemId = "";
+        this.clickedStack = ItemStack.EMPTY;
+        this.panelItems = null;
+        this.keyTag = key == null ? null : key.toTagGeneric();
+        this.workMode = 0;
+        this.rule = "";
+        this.isTag = true;
+        this.ruleList = null;
+        this.ruleInstant = true;
+        this.blacklistKeyTag = null;
+        this.blacklistKeys = null;
+        this.chunkIndex = 0;
+        this.totalChunks = 1;
+    }
+
     public Mode2ConfigPacket(int type, String rule, boolean isTag) {
         this.type = type;
         this.threshold = 0;
@@ -314,6 +333,8 @@ public class Mode2ConfigPacket {
             buf.writeBoolean(p.ruleInstant);
         } else if (p.type == 11 && p.blacklistKeyTag != null) {
             buf.writeNbt(p.blacklistKeyTag);
+        } else if (p.type == 13 && p.keyTag != null) {
+            buf.writeNbt(p.keyTag);
         } else if (p.type == 12 && p.blacklistKeys != null) {
             buf.writeVarInt(p.chunkIndex);
             buf.writeVarInt(p.totalChunks);
@@ -332,6 +353,11 @@ public class Mode2ConfigPacket {
 
         if (type == 1) {
             return new Mode2ConfigPacket(buf.readItem());
+        }
+
+        if (type == 13) {
+            CompoundTag t = buf.readNbt();
+            return new Mode2ConfigPacket(t == null ? null : AEKey.fromTagGeneric(t));
         }
 
         if (type == 4) {
@@ -472,6 +498,14 @@ public class Mode2ConfigPacket {
 
             } else if (p.type == 5 && p.keyTag != null) {
                 handleToggleInfinite(inv, p.keyTag, player);
+                return;
+            } else if (p.type == 13 && p.keyTag != null) {
+                // JEI 拖取流体/化学物/物品：AEKey 直加白名单
+                AEKey key = AEKey.fromTagGeneric(p.keyTag);
+                if (key != null) {
+                    inv.addWl(key);
+                    sendPanelRefresh(inv, player);
+                }
                 return;
             } else if (p.type == 6) {
                 inv.setWorkMode(p.workMode);

@@ -67,6 +67,14 @@ public final class MekanismGasCompat {
                 && mekKey.getForm() == MekanismKey.GAS;
     }
 
+    /** 化学物 JEI 拖取 → AEKey（MekanismKey.of，气体/灌注/颜料/泥浆均可）。 */
+    public static AEKey keyOfChemical(mekanism.api.chemical.ChemicalStack<?> stack) {
+        if (!isLoaded() || stack == null || stack.isEmpty()) {
+            return null;
+        }
+        return MekanismKey.of(stack);
+    }
+
     /** 喂出：把气体的 amount 量插入机器气体槽；返回实际喂出量（0=机器满/拒收）。 */
     public static long feed(BlockEntity target, Direction side, AEKey key, long amount) {
         if (!isFeedable(key) || amount <= 0) {
