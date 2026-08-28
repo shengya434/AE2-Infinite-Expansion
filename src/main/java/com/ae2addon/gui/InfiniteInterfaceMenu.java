@@ -98,6 +98,22 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         return !feeder.isRemoved();
     }
 
+    /**
+     * 右键标记槽（slotId 9-17）= 用手中容器直接标记流体/气体（2026-08-28）：
+     * 不放入槽、不消耗；空手右键 = 清空标记。其余点击走原版逻辑。
+     */
+    @Override
+    public void clicked(int slotId, int button,
+            net.minecraft.world.inventory.ClickType clickType, Player player) {
+        if (clickType == net.minecraft.world.inventory.ClickType.PICKUP
+                && button == 1 && slotId >= 9 && slotId < 18) {
+            if (feeder.handleMarkerRightClick(slotId - 9, getCarried())) {
+                return; // 已作为标记处理，跳过原版拆分/放置
+            }
+        }
+        super.clicked(slotId, button, clickType, player);
+    }
+
     @Override
     public ItemStack quickMoveStack(Player player, int slotIndex) {
         Slot slot = getSlot(slotIndex);

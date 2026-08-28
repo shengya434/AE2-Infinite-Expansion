@@ -11,7 +11,7 @@
   "gui.ae2addon.infinite_interface.title": "ME接口（无限级）",
   "gui.ae2addon.infinite_interface.player_inv": "背包",
   "gui.ae2addon.infinite_interface.patterns": "§7样板槽",
-  "gui.ae2addon.infinite_interface.markers": "§7标记槽",
+  "gui.ae2addon.infinite_interface.markers": "§7标记槽 §8右键",
 
   "gui.ae2addon.cell.name": "§5万能无限 [%s]",
   "gui.ae2addon.mode.unlimited": "§a无限制",

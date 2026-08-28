@@ -149,6 +149,49 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         g.fill(sx + 1, sy + 1, sx + 17, sy + 17, 0xFF373737);
     }
 
+    /**
+     * 标记槽（index 9-17）图标叠加绘制：右键标记的 WrappedGenericStack
+     * （流体/气体）在槽位上方重绘——流体画真·流体贴图（着色），物品直接渲染。
+     * 注：AbstractContainerScreen.renderSlot 是 private 不能覆写，故在
+     * renderLabels（槽渲染之后、translate 坐标系）里叠加绘制。
+     */
+    private void renderMarkerIcons(GuiGraphics g) {
+        for (Slot slot : menu.getSlotList()) {
+            if (slot.index < 9 || slot.index >= 18) {
+                continue;
+            }
+            var stack = slot.getItem();
+            if (stack.getItem() instanceof appeng.items.misc.WrappedGenericStack wgs) {
+                appeng.api.stacks.AEKey key = wgs.unwrapWhat(stack);
+                if (key instanceof appeng.api.stacks.AEFluidKey fluidKey) {
+                    renderFluidIcon(g, fluidKey, slot.x, slot.y);
+                } else if (key instanceof appeng.api.stacks.AEItemKey itemKey) {
+                    g.renderItem(itemKey.toStack(), slot.x, slot.y);
+                }
+                // 气体等其他 key：暂用原版（WrappedGenericStack 默认）渲染
+            }
+        }
+    }
+
+    /** 槽内绘制流体贴图（真·流体图标 + 颜色着色）。 */
+    private void renderFluidIcon(GuiGraphics g, appeng.api.stacks.AEFluidKey key, int x, int y) {
+        try {
+            var fluid = key.getFluid();
+            var ext = net.minecraftforge.client.extensions.common.IClientFluidTypeExtensions.of(fluid);
+            var stack = key.toStack(1000);
+            var still = ext.getStillTexture(stack);
+            var sprite = net.minecraft.client.Minecraft.getInstance()
+                    .getTextureAtlas(net.minecraft.client.renderer.texture.TextureAtlas.LOCATION_BLOCKS)
+                    .apply(still);
+            g.fill(x, y, x + 16, y + 16, 0xFF000000); // 槽底
+            g.blit(x, y, 0, 16, 16, sprite);          // 流体贴图
+            int color = ext.getTintColor(stack);       // 着色覆盖（半透明）
+            g.fill(x, y, x + 16, y + 16, (color & 0xFFFFFF) | 0x90000000);
+        } catch (RuntimeException e) {
+            g.fill(x, y, x + 16, y + 16, 0xFF555555); // 兜底灰块
+        }
+    }
+
     @Override
     protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
         g.drawString(font, title, titleLabelX, titleLabelY, 0xFFFFAA, false);
@@ -178,6 +221,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             g.drawString(font, Component.literal(line), 8, lineY, 0xFFFFFF, false);
             lineY += 8;
         }
+        // 标记槽图标叠加（WrappedGenericStack 流体/物品）
+        renderMarkerIcons(g);
     }
 
     @Override

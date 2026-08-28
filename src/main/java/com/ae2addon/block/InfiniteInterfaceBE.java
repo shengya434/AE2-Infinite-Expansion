@@ -491,7 +491,15 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if (stack.isEmpty()) {
                 continue;
             }
-            // 流体容器（桶/罐/蓄液罐）→ 标记内部流体；否则标记物品
+            // 右键标记的 WrappedGenericStack（流体/气体等任意 key）→ 直接取 key
+            if (stack.getItem() instanceof appeng.items.misc.WrappedGenericStack wgs) {
+                AEKey wrapped = wgs.unwrapWhat(stack);
+                if (wrapped != null) {
+                    keys.add(wrapped);
+                    continue;
+                }
+            }
+            // 旧方式兜底：流体容器（桶/罐/蓄液罐）→ 标记内部流体；否则标记物品
             var contained = FluidUtil.getFluidContained(stack);
             if (contained.isPresent() && !contained.get().isEmpty()) {
                 keys.add(AEFluidKey.of(contained.get()));
@@ -682,6 +690,41 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     private void onMarkersChanged() {
         setChanged();
+    }
+
+    /**
+     * 右键标记槽：用手中物品直接标记流体/气体/物品（2026-08-28 sensei 要求，
+     * 不放入槽、不消耗容器）。流体/气体包成 WrappedGenericStack 显示，
+     * 普通物品放 1 个作视觉；空手右键 = 清空标记。
+     */
+    public boolean handleMarkerRightClick(int markerIndex, ItemStack carried) {
+        if (markerIndex < 0 || markerIndex >= markerInv.getContainerSize()) {
+            return false;
+        }
+        if (carried.isEmpty()) {
+            markerInv.setItem(markerIndex, ItemStack.EMPTY);
+            return true;
+        }
+        // 流体容器 → 标记流体
+        var contained = FluidUtil.getFluidContained(carried);
+        if (contained.isPresent() && !contained.get().isEmpty()) {
+            markerInv.setItem(markerIndex,
+                    appeng.items.misc.WrappedGenericStack.wrap(
+                            AEFluidKey.of(contained.get()), 1));
+            return true;
+        }
+        // 气体容器（气罐/气桶）→ 标记气体
+        AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.chemicalInContainer(carried);
+        if (gasKey != null) {
+            markerInv.setItem(markerIndex,
+                    appeng.items.misc.WrappedGenericStack.wrap(gasKey, 1));
+            return true;
+        }
+        // 普通物品 → 标记物品
+        ItemStack single = carried.copy();
+        single.setCount(1);
+        markerInv.setItem(markerIndex, single);
+        return true;
     }
 
     /** 方块拆除时掉落样板槽物品（玩家资源；蓄水池物品属于网络/CPU，不返还防刷）。 */
