@@ -166,7 +166,11 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         var summary = feeder.reservoirSummary();
         lines.add("§e蓄水池: §f" + summary[0] + " §7种 / §f合计 " + summary[1]
                 + " §8| §e已喂出: §f"
-                + com.ae2addon.block.InfiniteInterfaceBE.fmt(feeder.totalFed()));
+                + com.ae2addon.block.InfiniteInterfaceBE.fmt(feeder.totalFed())
+                + " §8| §b推送 "
+                + com.ae2addon.block.InfiniteInterfaceBE.fmt(
+                        java.math.BigInteger.valueOf(feeder.feedRatePerSecond()))
+                + "§7/s");
         int markers = feeder.markerCount();
         String restock = markers <= 0
                 ? "§7无标记（仅样板定量）"

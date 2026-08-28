@@ -95,7 +95,7 @@ public final class AE2AddonConfig {
     public static final ForgeConfigSpec.IntValue FEEDER_FEED_BUDGET = BUILDER
             .comment("ME接口(无限级)每tick喂给相邻机器的尝试次数上限（防单tick卡顿）",
                     "Infinite Interface max feed attempts per tick (anti-lag)")
-            .defineInRange("feederFeedBudget", 1024, 1, 1_000_000);
+            .defineInRange("feederFeedBudget", 4096, 1, 1_000_000);
 
     // ── 调试 ──
 

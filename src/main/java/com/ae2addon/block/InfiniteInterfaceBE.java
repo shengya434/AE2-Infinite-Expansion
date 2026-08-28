@@ -146,6 +146,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
     /** 累计已喂出总量（机器/漏斗实际收到的物品数；供料站流量可见性）。 */
     private BigInteger totalFed = BigInteger.ZERO;
 
+    /** 推送速率统计：当前 1 秒窗口内喂出数 / 上一秒速率（items/s）。 */
+    private long rateWindowFed;
+    private long currentFeedRate;
+
     // ── 样板槽（3×3，声明可处理的配方；CPU 路由靠它） ──
 
     private final SimpleContainer patternInv = new SimpleContainer(9) {
@@ -348,6 +352,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         if (patternDirty) {
             rebuildPatterns();
         }
+        if ((lvl.getGameTime() & 19) == 0) {
+            currentFeedRate = rateWindowFed;
+            rateWindowFed = 0;
+        }
         if (!feederDiagLogged) {
             feederDiagLogged = true;
             logFeederStatus("启动");
@@ -428,13 +436,25 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         if (handler == null) {
             return;
         }
-        int budget = FEED_BUDGET;
         int slots = handler.getSlots();
         if (slots <= 0) {
             return;
         }
+        // 可喂物品数（并行轮转基数）：预算均分给每种物品，
+        // 所有物品每 tick 同时推进 = 并行推送，不被单种材料霸占。
+        int feedable = 0;
+        for (var entry : reservoir.entrySet()) {
+            if (entry.getKey() instanceof AEItemKey && entry.getValue().signum() > 0) {
+                feedable++;
+            }
+        }
+        if (feedable <= 0) {
+            return;
+        }
+        int perItemBudget = Math.max(1, FEED_BUDGET / feedable);
+        int totalBudget = FEED_BUDGET;
         long fedAll = 0;
-        for (var it = reservoir.entrySet().iterator(); it.hasNext() && budget > 0; ) {
+        for (var it = reservoir.entrySet().iterator(); it.hasNext() && totalBudget > 0; ) {
             var entry = it.next();
             AEKey key = entry.getKey();
             if (!(key instanceof AEItemKey itemKey)) {
@@ -447,20 +467,23 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
             }
             long amount = remain.min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
             long fed = 0;
-            while (amount > 0 && budget > 0) {
+            int itemBudget = perItemBudget;
+            while (amount > 0 && itemBudget > 0 && totalBudget > 0) {
                 int chunk = (int) Math.min(FEED_STACK, amount);
                 ItemStack stack = itemKey.toStack(chunk);
                 ItemStack leftover = stack;
+                // 一轮 = 依次尝试所有输入槽（多槽机器并行填满）
                 for (int slot = 0; slot < slots && !leftover.isEmpty(); slot++) {
                     leftover = handler.insertItem(slot, leftover, false);
                 }
                 int inserted = chunk - leftover.getCount();
                 if (inserted <= 0) {
-                    break; // 机器满了/拒收该物品 → 换下一种
+                    break; // 该物品本轮拒收 → 换下一种
                 }
                 fed += inserted;
                 amount -= inserted;
-                budget--;
+                itemBudget--;
+                totalBudget--;
             }
             if (fed > 0) {
                 // ⚠️ 用 entry.setValue/it.remove 而非 computeIfPresent(null)：
@@ -476,10 +499,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         }
         if (fedAll > 0) {
             totalFed = totalFed.add(BigInteger.valueOf(fedAll));
+            rateWindowFed += fedAll;
             setChanged();
             com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][feeder] 喂出 {} 个 → 蓄水池={}种/合计{}，累计已喂出={}",
-                    fedAll, reservoirSummary()[0],
+                    "[ae2addon][feeder] 喂出 {} 个（{}种并行）→ 蓄水池={}种/合计{}，累计已喂出={}",
+                    fedAll, feedable, reservoirSummary()[0],
                     fmt(totalAmount()), fmt(totalFed));
         }
     }
@@ -812,6 +836,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
             out.add(name + " × " + fmt(entry.getValue()));
         }
         return out;
+    }
+
+    /** 上一秒喂出速率（items/s，GUI 状态用）。 */
+    public long feedRatePerSecond() {
+        return currentFeedRate;
     }
 
     /** 累计已喂出总量（GUI 状态用）。 */
