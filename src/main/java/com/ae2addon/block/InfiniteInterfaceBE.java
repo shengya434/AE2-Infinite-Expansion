@@ -569,6 +569,19 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     /** 升级卡诊断（每 64 tick 或升级变化时打一次）。 */
     private void dumpUpgradeCards() {
         try {
+            var block = com.ae2addon.init.ModBlocks.INFINITE_INTERFACE.get();
+            var cap = appeng.core.definitions.AEItems.CAPACITY_CARD.asItem();
+            var blockItem = block.asItem();
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][cards] 注册表诊断: block.asItem={} max(blockItem)={} max(AIR)={} max(block)={}",
+                    blockItem,
+                    appeng.api.upgrades.Upgrades.getMaxInstallable(cap, blockItem),
+                    appeng.api.upgrades.Upgrades.getMaxInstallable(cap, net.minecraft.world.item.Items.AIR),
+                    appeng.api.upgrades.Upgrades.getMaxInstallable(cap, block));
+        } catch (RuntimeException e) {
+            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon][cards] 注册表诊断失败", e);
+        }
+        try {
             java.util.List<String> contents = new java.util.ArrayList<>();
             for (int i = 0; i < upgrades.size(); i++) {
                 contents.add(upgrades.getStackInSlot(i).getItem().toString());
