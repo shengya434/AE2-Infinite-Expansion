@@ -166,8 +166,8 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         int patternEnd = 45;
         int markerEnd = 90;
         int upgradeEnd = 99;
-        int invEnd = 135;
-        int hotbarEnd = 144;
+        int invEnd = 126;   // 玩家主格 27（99..125）
+        int hotbarEnd = 135; // 快捷栏 9（126..134）；总 135 格
 
         if (slotIndex < patternEnd) {
             // 样板槽 → 玩家背包

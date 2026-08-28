@@ -37,7 +37,28 @@ public class AE2Addon {
             appeng.menu.MenuOpener.addOpener(
                     ModMenuTypes.INTEGRATED_CPU.get(),
                     com.ae2addon.gui.IntegratedCPUMenu::openMenu);
+            dumpRegistrations();
         });
+    }
+
+    /** 注册表自检（2026-08-28：创造标签页物品缺失排查）。 */
+    private static void dumpRegistrations() {
+        try {
+            var block = ModBlocks.INFINITE_INTERFACE.get();
+            var item = ModItems.INFINITE_INTERFACE_ITEM.get();
+            var registered = net.minecraftforge.registries.ForgeRegistries.ITEMS
+                    .containsValue(item);
+            var key = net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(item);
+            var byBlock = net.minecraft.world.item.Item.byBlock(block);
+            var asItem = block.asItem();
+            LOGGER.info("[ae2addon] 注册自检: block={} item={} itemInRegistry={} key={} byBlock={} asItem={}",
+                    block, item, registered, key, byBlock, asItem);
+            LOGGER.info("[ae2addon] 注册自检: ITEMS.containsKey(ae2addon:infinite_interface)={}",
+                    net.minecraftforge.registries.ForgeRegistries.ITEMS.containsKey(
+                            new ResourceLocation(MODID, "infinite_interface")));
+        } catch (RuntimeException e) {
+            LOGGER.warn("[ae2addon] 注册自检失败", e);
+        }
     }
 
     public AE2Addon() {

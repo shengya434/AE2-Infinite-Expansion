@@ -97,11 +97,12 @@ public class ModItems {
             net.minecraft.world.level.ItemLike item) {
         try {
             net.minecraft.world.item.ItemStack stack = new net.minecraft.world.item.ItemStack(item);
-            if (stack.getCount() != 1) {
+            if (stack.isEmpty() || stack.getCount() != 1) {
+                // isEmpty（Forge：delegate==AIR 即空，物品未注册）或计数异常：跳过并记日志
                 com.ae2addon.AE2Addon.LOGGER.warn(
-                        "[ae2addon] 创造标签页物品 {} count={}（异常，已钳回 1）",
-                        item, stack.getCount());
-                stack.setCount(1);
+                        "[ae2addon] 创造标签页跳过 {}: isEmpty={} count={}（物品可能未注册）",
+                        item, stack.isEmpty(), stack.getCount());
+                return;
             }
             output.accept(stack);
         } catch (RuntimeException e) {
