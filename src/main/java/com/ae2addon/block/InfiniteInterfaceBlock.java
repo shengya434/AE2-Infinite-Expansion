@@ -51,6 +51,21 @@ public class InfiniteInterfaceBlock extends AEBaseEntityBlock<InfiniteInterfaceB
         return OrientationStrategies.facing();
     }
 
+    /**
+     * 2026-08-28 15:40 注册自检实锤：Forge 补丁版 Block.asItem() 带缓存（f_49788_），
+     * 首次调用时若物品尚未注册会永久缓存 Items.AIR → new ItemStack(方块)=EMPTY
+     * （创造标签页消失/JEI 找不到）。重写直接返回注册物品，绕开毒缓存。
+     * 未注册时（注册早期）回退 super（不会崩，注册完成后即返回正确物品）。
+     */
+    @Override
+    public net.minecraft.world.item.Item asItem() {
+        var ro = com.ae2addon.init.ModItems.INFINITE_INTERFACE_ITEM;
+        if (ro != null && ro.isPresent()) {
+            return ro.get();
+        }
+        return super.asItem();
+    }
+
     @Override
     public InteractionResult onActivated(Level level, BlockPos pos, Player player,
             InteractionHand hand, ItemStack heldStack, BlockHitResult hit) {
