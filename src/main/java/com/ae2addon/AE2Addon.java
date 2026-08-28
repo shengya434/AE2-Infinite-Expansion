@@ -114,13 +114,11 @@ public class AE2Addon {
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.crafting.BatchedCraftingQueue.class);
 
-        // ME接口（无限级）升级卡注册：容量卡（每卡+1页=9格/槽，最多2）+ 速度卡（喂出预算×2/张，最多2）
+        // ME接口（无限级）升级卡注册：容量卡（每卡+1页=9格/槽，最多4）+ 红石/反向/感应/频道/虚拟合成
+        // 2026-08-28 12:22 sensei：容量卡上限 2→4；加速卡取消（不再接受速度卡）
         appeng.api.upgrades.Upgrades.add(
                 ModBlocks.INFINITE_INTERFACE.get(),
-                appeng.core.definitions.AEItems.CAPACITY_CARD.asItem(), 2);
-        appeng.api.upgrades.Upgrades.add(
-                ModBlocks.INFINITE_INTERFACE.get(),
-                appeng.core.definitions.AEItems.SPEED_CARD.asItem(), 2);
+                appeng.core.definitions.AEItems.CAPACITY_CARD.asItem(), 4);
         appeng.api.upgrades.Upgrades.add(
                 ModBlocks.INFINITE_INTERFACE.get(),
                 appeng.core.definitions.AEItems.REDSTONE_CARD.asItem(), 1);

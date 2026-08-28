@@ -44,9 +44,9 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         // 分页布局（2026-08-28）：样板/标记槽固定 3×3 每页，容量卡加页；
         // 当前页 = 客户端视图状态（currentPage），槽位按页显隐
         final int gridY = 83;
-        // 样板槽（左 3×3×页；每页9格）
+        // 样板槽（左 3×3×5页；每页9格，容量卡最多4→45格）
         var patternInv = feeder.getPatternInventory();
-        for (int i = 0; i < 27; i++) {
+        for (int i = 0; i < 45; i++) {
             int page = i / 9;
             int col = (i % 9) % 3;
             int row = (i % 9) / 3;
@@ -57,9 +57,9 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 }
             });
         }
-        // 标记槽（右 3×3×页；任意物品 = 自动补货清单）
+        // 标记槽（右 3×3×5页；任意物品 = 自动补货清单）
         var markerInv = feeder.getMarkerInventory();
-        for (int i = 0; i < 27; i++) {
+        for (int i = 0; i < 45; i++) {
             int page = i / 9;
             int col = (i % 9) % 3;
             int row = (i % 9) / 3;
@@ -105,14 +105,14 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         currentPage = Math.max(0, Math.min(max, currentPage + delta));
     }
 
-    /** 标记槽 slotId 起点（固定：样板槽 0-26）。 */
+    /** 标记槽 slotId 起点（固定：样板槽 0-44）。 */
     public int markerSlotStart() {
-        return 27;
+        return 45;
     }
 
-    /** 标记槽 slotId 终点（不含；固定 54）。 */
+    /** 标记槽 slotId 终点（不含；固定 90）。 */
     public int markerSlotEnd() {
-        return 54;
+        return 90;
     }
 
     public static InfiniteInterfaceMenu fromNetwork(int id, Inventory playerInventory,
@@ -163,11 +163,11 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         }
         ItemStack stack = slot.getItem();
         ItemStack original = stack.copy();
-        int patternEnd = 27;
-        int markerEnd = 54;
-        int upgradeEnd = 63;
-        int invEnd = 99;
-        int hotbarEnd = 108;
+        int patternEnd = 45;
+        int markerEnd = 90;
+        int upgradeEnd = 99;
+        int invEnd = 135;
+        int hotbarEnd = 144;
 
         if (slotIndex < patternEnd) {
             // 样板槽 → 玩家背包

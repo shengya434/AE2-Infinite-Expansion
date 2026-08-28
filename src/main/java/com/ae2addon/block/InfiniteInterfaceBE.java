@@ -168,7 +168,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     // ── 样板槽（3×3，声明可处理的配方；CPU 路由靠它） ──
 
-    private final SimpleContainer patternInv = new SimpleContainer(27) {
+    private final SimpleContainer patternInv = new SimpleContainer(45) {
         @Override
         public void setChanged() {
             super.setChanged();
@@ -180,7 +180,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     // 样板 = 定量（CPU 推多少发多少，发完停）；标记 = 无限供料（标记的物品
     // 持续从网络补到 feederStockTarget，机器永远有货）。
 
-    private final SimpleContainer markerInv = new SimpleContainer(27) {
+    private final SimpleContainer markerInv = new SimpleContainer(45) {
         @Override
         public void setChanged() {
             super.setChanged();
@@ -420,11 +420,6 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     }
 
     /** 速度卡数量（0-2）：每张喂出预算 ×2。 */
-    public int speedCards() {
-        return upgrades.getInstalledUpgrades(
-                appeng.core.definitions.AEItems.SPEED_CARD.asItem());
-    }
-
     /** 当前活动的样板槽数（9 + 容量卡×9，分页显示）。 */
     public int activePatternSlots() {
         return 9 + capacityCards() * 9;
@@ -767,7 +762,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             return;
         }
         // 速度卡：每张喂出预算 ×2（最高 ×4）
-        int budget = Math.min(FEED_BUDGET << speedCards(), 1_000_000);
+        int budget = Math.min(FEED_BUDGET, 1_000_000);
         int perItemBudget = Math.max(1, budget / feedable);
         int totalBudget = budget;
         long fedAll = 0;
