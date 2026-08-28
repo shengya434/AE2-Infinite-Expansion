@@ -65,10 +65,10 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             int row = (i % 9) / 3;
             addSlot(new PageSlot(markerInv, i, 96 + col * 18, gridY + row * 18, page));
         }
-        // 升级槽（5个，参数区下方；只收 AE2 升级卡）
+        // 升级槽（9个，参数区下方整行；容量/速度/红石/反向/感应/频道/虚拟合成全部可同时插）
         var upgradeInv = feeder.getUpgrades().toContainer();
-        for (int i = 0; i < 5; i++) {
-            addSlot(new Slot(upgradeInv, i, 44 + i * 18, 59));
+        for (int i = 0; i < 9; i++) {
+            addSlot(new Slot(upgradeInv, i, 8 + i * 18, 59));
         }
         // 玩家背包 9×3 + 快捷栏（固定位置）
         for (int row = 0; row < 3; row++) {
@@ -165,9 +165,9 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         ItemStack original = stack.copy();
         int patternEnd = 27;
         int markerEnd = 54;
-        int upgradeEnd = 59;
-        int invEnd = 95;
-        int hotbarEnd = 104;
+        int upgradeEnd = 63;
+        int invEnd = 99;
+        int hotbarEnd = 108;
 
         if (slotIndex < patternEnd) {
             // 样板槽 → 玩家背包

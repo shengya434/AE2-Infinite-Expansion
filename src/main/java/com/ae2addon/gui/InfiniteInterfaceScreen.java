@@ -209,8 +209,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             g.drawString(font, Component.literal(LABELS[i]), 8, ROW_YS[i] + 3, 0xFFFFFF, false);
         }
 
-        // 升级标签（升级槽左侧）
-        g.drawString(font, Component.literal("§7升级"), 8, 64, 0xFFFFFF, false);
+        // 升级槽整行（9格，x=8..152；无标签，卡片自明）
+        // （原“升级”文字标签已移除，避免与第一格重叠）
 
         // 页标签（右上角 ◀ N/M ▶ 之间）
         String pageLabel = "§7" + (menu.currentPage + 1) + "/" + (menu.getFeeder().maxPage() + 1);

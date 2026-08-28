@@ -195,7 +195,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     private final appeng.api.upgrades.IUpgradeInventory upgrades =
             appeng.api.upgrades.UpgradeInventories.forMachine(
-                    com.ae2addon.init.ModBlocks.INFINITE_INTERFACE.get(), 4,
+                    com.ae2addon.init.ModBlocks.INFINITE_INTERFACE.get(), 9,
                     this::onUpgradesChanged);
 
     /**
