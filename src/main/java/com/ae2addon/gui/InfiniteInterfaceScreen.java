@@ -145,14 +145,17 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
     /** 命中 [✎] 标记 → 返回设置 key（stockTarget/restockInterval/feedBudget），未命中返回 null。 */
     private String hitEditMarker(double mx, double my) {
+        // ⚠️ 鼠标坐标是屏幕坐标，状态行绘制是 GUI 相对坐标（renderLabels 在 translate 后）
+        double rx = mx - leftPos;
+        double ry = my - topPos;
         List<String> lines = menu.statusLines;
         for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
             int lineY = STATUS_Y + i * STATUS_LINE_H;
-            if (my < lineY || my >= lineY + STATUS_LINE_H) {
+            if (ry < lineY || ry >= lineY + STATUS_LINE_H) {
                 continue;
             }
             String stripped = lines.get(i).replaceAll("§.", "");
-            // 逐字符定位所有 [✎] 的 x 坐标
+            // 逐字符定位所有 [✎] 的 x 坐标（相对坐标）
             List<Integer> markerXs = new ArrayList<>();
             int x = STATUS_X;
             for (int c = 0; c < stripped.length(); c++) {
@@ -171,14 +174,14 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                 case 1 -> "stockTarget";
                 case 2 -> {
                     // 两个标记：第一个 = 补货间隔，第二个 = 喂出预算
-                    yield markerXs.size() >= 2 && mx >= markerXs.get(1) - 6
+                    yield markerXs.size() >= 2 && rx >= markerXs.get(1) - 6
                             ? "feedBudget" : "restockInterval";
                 }
                 default -> null;
             };
             if (key != null) {
                 for (int markerX : markerXs) {
-                    if (mx >= markerX - 6 && mx <= markerX + 18) {
+                    if (rx >= markerX - 6 && rx <= markerX + 18) {
                         return key;
                     }
                 }

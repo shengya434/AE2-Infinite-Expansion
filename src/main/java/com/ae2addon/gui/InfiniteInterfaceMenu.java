@@ -181,9 +181,9 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         lines.add(restock);
         lines.add("§7补货间隔: §f"
                 + com.ae2addon.block.InfiniteInterfaceBE.RESTOCK_INTERVAL
-                + "§7t §e[✎] §8| §7预算: §f"
+                + "§7t §e[✎] §7预算: §f"
                 + com.ae2addon.block.InfiniteInterfaceBE.FEED_BUDGET
-                + " §7/tick §e[✎]");
+                + " §e[✎]");
         var front = feeder.getFront();
         String machine = "§7无相邻机器";
         if (front != null && feeder.getLevel() != null) {
