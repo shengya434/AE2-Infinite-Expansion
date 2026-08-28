@@ -2277,6 +2277,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         tag.putBoolean("activeExtract", activeExtract);
         tag.putBoolean("activeFeed", activeFeed);
         tag.putString("extractSide", extractSide.name());
+        // 每接口独立参数（2026-08-28 修复：之前漏存，重进游戏归零）
+        tag.putLong("pStockTarget", pStockTarget);
+        tag.putInt("pRestockInterval", pRestockInterval);
+        tag.putInt("pFeedBudget", pFeedBudget);
 
         ListTag reservoirList = new ListTag();
         for (var entry : reservoir.entrySet()) {
@@ -2319,9 +2323,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         activeExtract = tag.getBoolean("activeExtract");
         activeFeed = tag.getBoolean("activeFeed");
-        pStockTarget = tag.getLong("pStockTarget");
-        pRestockInterval = tag.getInt("pRestockInterval");
-        pFeedBudget = tag.getInt("pFeedBudget");
+        pStockTarget = tag.contains("pStockTarget") ? tag.getLong("pStockTarget") : -1;
+        pRestockInterval = tag.contains("pRestockInterval") ? tag.getInt("pRestockInterval") : -1;
+        pFeedBudget = tag.contains("pFeedBudget") ? tag.getInt("pFeedBudget") : -1;
         try {
             extractSide = appeng.api.orientation.RelativeSide.valueOf(
                     tag.getString("extractSide"));
