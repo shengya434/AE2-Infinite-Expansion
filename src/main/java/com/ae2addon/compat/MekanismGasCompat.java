@@ -75,18 +75,15 @@ public final class MekanismGasCompat {
         return MekanismKey.of(stack);
     }
 
-    /** 喂出：把气体的 amount 量插入机器气体槽；返回实际喂出量（0=机器满/拒收）。 */
+    /** 喂出：把气体的 amount 量插入机器气体槽；返回实际喂出量（0=机器满/拒收）。
+     * 指定面优先，找不到气体槽时遍历机器所有面。 */
     public static long feed(BlockEntity target, Direction side, AEKey key, long amount) {
         if (!isFeedable(key) || amount <= 0) {
             return 0;
         }
         try {
             MekanismKey mekKey = (MekanismKey) key;
-            var cap = target.getCapability(Capabilities.GAS_HANDLER, side);
-            if (!cap.isPresent()) {
-                return 0;
-            }
-            var handler = cap.orElse(null);
+            var handler = findGasHandler(target, side);
             if (handler == null || handler.getTanks() <= 0) {
                 return 0;
             }
@@ -103,5 +100,33 @@ public final class MekanismGasCompat {
         } catch (RuntimeException ignored) {
             return 0;
         }
+    }
+
+    /** 查找机器气体 handler：指定面优先，找不到遍历其余面。 */
+    private static mekanism.api.chemical.gas.IGasHandler findGasHandler(
+            BlockEntity target, Direction primary) {
+        if (target == null) {
+            return null;
+        }
+        var cap = target.getCapability(Capabilities.GAS_HANDLER, primary);
+        if (cap.isPresent()) {
+            var handler = cap.orElse(null);
+            if (handler != null) {
+                return handler;
+            }
+        }
+        for (Direction side : Direction.values()) {
+            if (side == primary) {
+                continue;
+            }
+            var c = target.getCapability(Capabilities.GAS_HANDLER, side);
+            if (c.isPresent()) {
+                var handler = c.orElse(null);
+                if (handler != null) {
+                    return handler;
+                }
+            }
+        }
+        return null;
     }
 }

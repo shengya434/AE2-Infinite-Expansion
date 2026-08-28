@@ -519,6 +519,35 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return keys;
     }
 
+    /** 查找机器的流体 handler：指定面优先，找不到遍历其余面。 */
+    private static IFluidHandler findFluidHandler(BlockEntity target, Direction primary) {
+        if (target == null) {
+            return null;
+        }
+        LazyOptional<IFluidHandler> cap = target.getCapability(
+                ForgeCapabilities.FLUID_HANDLER, primary);
+        if (cap.isPresent()) {
+            IFluidHandler handler = cap.orElse(null);
+            if (handler != null) {
+                return handler;
+            }
+        }
+        for (Direction side : Direction.values()) {
+            if (side == primary) {
+                continue;
+            }
+            LazyOptional<IFluidHandler> c = target.getCapability(
+                    ForgeCapabilities.FLUID_HANDLER, side);
+            if (c.isPresent()) {
+                IFluidHandler handler = c.orElse(null);
+                if (handler != null) {
+                    return handler;
+                }
+            }
+        }
+        return null;
+    }
+
     /** ③ 按机器容量分批喂出：insertItem 拒收的余量留在蓄水池。 */
     private void feedMachine() {
         Direction front = getFront();
@@ -531,10 +560,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         LazyOptional<IItemHandler> cap = target.getCapability(
                 ForgeCapabilities.ITEM_HANDLER, front.getOpposite());
-        LazyOptional<IFluidHandler> fluidCap = target.getCapability(
-                ForgeCapabilities.FLUID_HANDLER, front.getOpposite());
         IItemHandler handler = cap.isPresent() ? cap.orElse(null) : null;
-        IFluidHandler fluidHandler = fluidCap.isPresent() ? fluidCap.orElse(null) : null;
+        // 流体 handler：前脸优先，找不到遍历机器所有面（部分机器输入面配置不同）
+        IFluidHandler fluidHandler = findFluidHandler(target, front.getOpposite());
         int slots = handler == null ? 0 : handler.getSlots();
         if (slots <= 0 && fluidHandler == null) {
             if (!feederDiagLogged) {
@@ -637,7 +665,29 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                     fmt(totalAmount()), fmt(totalFed));
         } else {
             rejectWindow++; // 有货但整 tick 零喂出 → 机器满/拒收（诊断瓶颈）
+            // 诊断：蓄水池含流体/气体但喂不出（机器无对应槽 or 拒收）
+            if (hasUnfedFluidOrGas() && (level.getGameTime() & 0x7F) == 0) {
+                com.ae2addon.AE2Addon.LOGGER.warn(
+                        "[ae2addon][feeder] 蓄水池含流体/气体但未喂出：物品槽={} 流体槽={} 气体可喂={}，"
+                                + "蓄水池={}种/合计{}",
+                        handler != null, fluidHandler != null,
+                        com.ae2addon.compat.MekanismGasCompat.isLoaded(),
+                        reservoirSummary()[0], fmt(totalAmount()));
+            }
         }
+    }
+
+    /** 蓄水池是否含流体/气体 key（诊断用）。 */
+    private boolean hasUnfedFluidOrGas() {
+        for (var entry : reservoir.entrySet()) {
+            AEKey key = entry.getKey();
+            if ((key instanceof AEFluidKey
+                    || com.ae2addon.compat.MekanismGasCompat.isFeedable(key))
+                    && entry.getValue().signum() > 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ── 蓄水池操作 ──
