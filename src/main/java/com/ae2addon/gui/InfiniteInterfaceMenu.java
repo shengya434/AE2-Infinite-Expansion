@@ -68,7 +68,7 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         // 升级槽（9个，参数区下方整行；容量/速度/红石/反向/感应/频道/虚拟合成全部可同时插）
         var upgradeInv = feeder.getUpgrades().toContainer();
         for (int i = 0; i < 9; i++) {
-            addSlot(new Slot(upgradeInv, i, 8 + i * 18, 59));
+            addSlot(new UpgradeSlot(upgradeInv, i, 8 + i * 18, 59));
         }
         // 玩家背包 9×3 + 快捷栏（固定位置）
         for (int row = 0; row < 3; row++) {
@@ -79,6 +79,40 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         for (int col = 0; col < 9; col++) {
             addSlot(new Slot(playerInventory, col, 8 + col * 18, 215));
         }
+    }
+
+    /** 升级槽：mayPlace 做数量上限检查（客户端 UI 提示 + moveItemStackTo 用）；
+     *  服务端点击插入由 clicked() 兜底拦截（vanilla 容器路径不过滤）。 */
+    private class UpgradeSlot extends Slot {
+        UpgradeSlot(net.minecraft.world.Container inv, int index, int x, int y) {
+            super(inv, index, x, y);
+        }
+
+        @Override
+        public boolean mayPlace(ItemStack stack) {
+            if (stack.isEmpty()) {
+                return true;
+            }
+            net.minecraft.world.item.Item item = stack.getItem();
+            int max = appeng.api.upgrades.Upgrades.getMaxInstallable(
+                    item, com.ae2addon.init.ModBlocks.INFINITE_INTERFACE.get().asItem());
+            if (max <= 0) {
+                return false; // 本机不支持的卡
+            }
+            return countUpgrade(item) < max;
+        }
+    }
+
+    /** 升级槽中某卡现有数量（直接数容器，不依赖 installed 缓存）。 */
+    private int countUpgrade(net.minecraft.world.item.Item item) {
+        int n = 0;
+        var inv = feeder.getUpgrades();
+        for (int i = 0; i < inv.size(); i++) {
+            if (inv.getStackInSlot(i).getItem() == item) {
+                n++;
+            }
+        }
+        return n;
     }
 
     /** 分页槽：仅当前页可见可点（isActive 客户端渲染用；服务端点击按位置处理）。 */
@@ -150,6 +184,15 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 && button == 1 && slotId >= markerSlotStart() && slotId < markerSlotEnd()) {
             if (feeder.handleMarkerRightClick(slotId - markerSlotStart(), getCarried())) {
                 return; // 已作为标记处理，跳过原版拆分/放置
+            }
+        }
+        // 升级槽数量上限兜底（服务端）：vanilla 容器插入不过滤 mayPlace
+        if (slotId >= 90 && slotId < 99 && !getCarried().isEmpty()
+                && (clickType == net.minecraft.world.inventory.ClickType.PICKUP
+                    || clickType == net.minecraft.world.inventory.ClickType.QUICK_MOVE)) {
+            Slot slot = getSlot(slotId);
+            if (slot instanceof UpgradeSlot us && !us.mayPlace(getCarried())) {
+                return; // 超限，拒绝插入
             }
         }
         super.clicked(slotId, button, clickType, player);
