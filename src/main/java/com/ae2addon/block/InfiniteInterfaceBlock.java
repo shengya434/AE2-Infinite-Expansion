@@ -72,6 +72,14 @@ public class InfiniteInterfaceBlock extends AEBaseEntityBlock<InfiniteInterfaceB
         if (level.isClientSide) {
             return InteractionResult.SUCCESS;
         }
+        // AE2 内存卡 doesSneakBypassUse=true：shift+右键绕过物品交互走到这里。
+        // 检测内存卡 → 复制/粘贴配置（与正常右键 useOn 路径同一套逻辑）
+        if (heldStack.getItem() instanceof appeng.items.tools.MemoryCardItem) {
+            var be = getBlockEntity(level, pos);
+            if (be != null && com.ae2addon.mixin.MemoryCardHelper.handleUse(be, player, heldStack)) {
+                return InteractionResult.SUCCESS;
+            }
+        }
         var be = getBlockEntity(level, pos);
         if (be == null) {
             return InteractionResult.FAIL;
