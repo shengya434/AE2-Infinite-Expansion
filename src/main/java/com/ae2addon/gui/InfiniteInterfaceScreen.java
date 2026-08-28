@@ -343,26 +343,26 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         // 状态行（样板槽下方；最多 2 行，超长截断）
         List<String> lines = menu.statusLines;
         int lineY = STATUS_Y;
-        int shown = 0;
-        outer:
-        for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
+        int total = Math.min(lines.size(), MAX_STATUS_LINES);
+        for (int i = 0; i < total; i++) {
             Component comp = deserialize(lines.get(i));
             String text = comp.getString();
             String stripped = text.replaceAll("§.", "");
-            if (font.width(stripped) <= W - 16) {
-                // 一行放得下：原样（保留颜色）
-                if (shown >= MAX_STATUS_LINES) break;
+            boolean isLast = (i == total - 1);
+            if (isLast && font.width(stripped) > W - 16) {
+                // 最后一行（开关行，最重要）：超宽拆行，保证完整可见
+                List<String> wraps = wrapByWidth(font, stripped, W - 16);
+                for (int j = 0; j < wraps.size(); j++) {
+                    g.drawString(font, Component.literal(wraps.get(j)), 8, lineY, 0xFFFFFF, false);
+                    lineY += (j < wraps.size() - 1) ? 5 : 7;
+                }
+            } else {
+                // 前几行：超宽截断省略号，不换行（换行配额留给最后一行）
+                if (font.width(stripped) > W - 16) {
+                    comp = Component.literal(font.plainSubstrByWidth(stripped, W - 20) + "…");
+                }
                 g.drawString(font, comp, 8, lineY, 0xFFFFFF, false);
                 lineY += 7;
-                shown++;
-                continue;
-            }
-            // 超宽：按宽度拆行（纯文本降级，保证完整可见）
-            for (String seg : wrapByWidth(font, stripped, W - 16)) {
-                if (shown >= MAX_STATUS_LINES) break outer;
-                g.drawString(font, Component.literal(seg), 8, lineY, 0xFFFFFF, false);
-                lineY += 7;
-                shown++;
             }
         }
         // 标记槽图标叠加（WrappedGenericStack 流体/物品）
