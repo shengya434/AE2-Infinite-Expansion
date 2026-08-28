@@ -619,7 +619,19 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
                 @Override
                 public net.minecraftforge.fluids.FluidStack getFluidInTank(int tank) {
-                    return net.minecraftforge.fluids.FluidStack.EMPTY;
+                    if (tank != 0) {
+                        return net.minecraftforge.fluids.FluidStack.EMPTY;
+                    }
+                    // 蓄水池最多流体预览（Jade/管道能看到真实流体与数量）
+                    var best = largestFluid();
+                    if (best == null) {
+                        return net.minecraftforge.fluids.FluidStack.EMPTY;
+                    }
+                    long amount = best.getValue()
+                            .min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                    return new net.minecraftforge.fluids.FluidStack(
+                            ((appeng.api.stacks.AEFluidKey) best.getKey()).getFluid(),
+                            (int) Math.max(1, amount));
                 }
 
                 @Override
