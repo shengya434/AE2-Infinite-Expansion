@@ -510,7 +510,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
                 @Override
                 public int getSlotLimit(int slot) {
-                    return 64;
+                    // 反映真实缓存上限（补货目标），Jade/管道显示不误导
+                    return (int) Math.min(Math.max(STOCK_TARGET, 1), Integer.MAX_VALUE);
                 }
 
                 @Override
@@ -1574,7 +1575,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
         @Override
         public int getSlotLimit(int slot) {
-            return FEED_STACK;
+            // 反映真实缓存上限（补货目标），Jade/管道显示不误导
+            return (int) Math.min(Math.max(STOCK_TARGET, 1), Integer.MAX_VALUE);
         }
 
         @Override
