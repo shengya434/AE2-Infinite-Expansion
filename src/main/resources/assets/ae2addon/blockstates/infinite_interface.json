@@ -1,7 +1,19 @@
 {
   "variants": {
-    "": {
+    "facing=north": {
       "model": "ae2addon:block/infinite_interface"
+    },
+    "facing=east": {
+      "model": "ae2addon:block/infinite_interface",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "ae2addon:block/infinite_interface",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "ae2addon:block/infinite_interface",
+      "y": 270
     }
   }
 }

@@ -107,6 +107,28 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         super(ModBlockEntities.INFINITE_INTERFACE.get(), pos, state);
     }
 
+    // ── 诊断日志（定位供料问题用） ──
+
+    private boolean feederDiagLogged;
+
+    private void logFeederStatus(String tag) {
+        Direction front = getFront();
+        Direction facing = null;
+        try {
+            facing = getBlockState().getValue(
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.HORIZONTAL_FACING);
+        } catch (RuntimeException ignored) {
+        }
+        BlockEntity target = (front == null || level == null)
+                ? null : level.getBlockEntity(worldPosition.relative(front));
+        String targetName = target == null
+                ? "无" : target.getBlockState().getBlock().getName().getString();
+        var summary = reservoirSummary();
+        com.ae2addon.AE2Addon.LOGGER.info(
+                "[ae2addon][feeder] {} pos={} facing={} front={} 目标方块={} 蓄水池={}种/合计{}",
+                tag, worldPosition, facing, front, targetName, summary[0], summary[1]);
+    }
+
     // ── 网格节点：注册为合成 provider（CPU 才能找到我们推样板） ──
 
     @Override
@@ -129,6 +151,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
      */
     @Override
     public boolean pushPattern(IPatternDetails patternDetails, KeyCounter[] inputs) {
+        long inputCount = 0;
+        long inputTypes = 0;
         if (inputs != null) {
             for (var counter : inputs) {
                 if (counter == null) {
@@ -139,10 +163,17 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
                     long amount = entry.getLongValue();
                     if (key != null && amount > 0) {
                         addReservoir(key, BigInteger.valueOf(amount));
+                        inputCount += amount;
+                        inputTypes++;
                     }
                 }
             }
         }
+        var summary = reservoirSummary();
+        com.ae2addon.AE2Addon.LOGGER.info(
+                "[ae2addon][feeder] pushPattern 接收 pattern={} 本次{}种/{}个 → 蓄水池={}种/合计{}",
+                patternDetails == null ? "null" : patternDetails.getClass().getSimpleName(),
+                inputTypes, inputCount, summary[0], summary[1]);
         setChanged();
         return true;
     }
@@ -176,6 +207,13 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         }
         if (patternDirty) {
             rebuildPatterns();
+        }
+        if (!feederDiagLogged) {
+            feederDiagLogged = true;
+            logFeederStatus("启动");
+        } else if ((lvl.getGameTime() & 0x3F) == 0
+                && com.ae2addon.config.AE2AddonConfig.debugLogs()) {
+            logFeederStatus("心跳"); // 每 64 tick（约 3 秒）一条，仅 debugLogs 开
         }
         if ((lvl.getGameTime() & (RESTOCK_INTERVAL - 1)) == 0) {
             restockFromNetwork();
@@ -242,6 +280,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         LazyOptional<IItemHandler> cap = target.getCapability(
                 ForgeCapabilities.ITEM_HANDLER, front.getOpposite());
         if (!cap.isPresent()) {
+            if (!feederDiagLogged) {
+                feederDiagLogged = true;
+                logFeederStatus("启动(无IItemHandler)");
+            }
             return;
         }
         IItemHandler handler = cap.orElse(null);

@@ -1,6 +1,12 @@
 {
-  "parent": "minecraft:block/cube_all",
+  "parent": "minecraft:block/cube",
   "textures": {
-    "all": "ae2addon:block/infinite_interface"
+    "particle": "ae2addon:block/infinite_interface",
+    "down": "ae2addon:block/infinite_interface",
+    "up": "ae2addon:block/infinite_interface",
+    "north": "ae2addon:block/infinite_interface_front",
+    "south": "ae2addon:block/infinite_interface",
+    "west": "ae2addon:block/infinite_interface",
+    "east": "ae2addon:block/infinite_interface"
   }
 }
