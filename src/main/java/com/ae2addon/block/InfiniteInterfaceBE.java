@@ -138,6 +138,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     public static volatile int FEED_BUDGET = 1024;
     /** 每次 insertItem 尝试的最大堆叠数（受机器槽位上限约束）。 */
     public static volatile int FEED_STACK = 64;
+    /** 主动抽取配置（applyConfig 同步）。 */
+    public static volatile int EXTRACT_INTERVAL = 4;
+    public static volatile int EXTRACT_STACK = 64;
+    public static volatile int EXTRACT_FLUID = 1000;
+    public static volatile int EXTRACT_GAS = 1000;
     /** 补货间隔（tick）。4 = 每秒 5 次全量补货。 */
     public static volatile int RESTOCK_INTERVAL = 4;
 
@@ -147,6 +152,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         FEED_BUDGET = AE2AddonConfig.feederFeedBudget();
         FEED_STACK = AE2AddonConfig.feederFeedStack();
         RESTOCK_INTERVAL = Math.max(1, AE2AddonConfig.feederRestockInterval());
+        EXTRACT_INTERVAL = Math.max(1, AE2AddonConfig.feederExtractInterval());
+        EXTRACT_STACK = Math.max(1, AE2AddonConfig.feederExtractStack());
+        EXTRACT_FLUID = Math.max(1, AE2AddonConfig.feederExtractFluid());
+        EXTRACT_GAS = Math.max(1, AE2AddonConfig.feederExtractGas());
     }
 
     // ── 蓄水池（BigInteger 防溢出；CPU N× 直灌可达 2^63-1/批） ──
@@ -1042,8 +1051,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         if ((lvl.getGameTime() & (RESTOCK_INTERVAL - 1)) == 0) {
             restockFromNetwork();
         }
-        if ((lvl.getGameTime() & 3) == 1) {
-            extractFromMachine(); // 主动抽取：正面机器产物 → 网络（固定每 4 tick）
+        if ((lvl.getGameTime() % EXTRACT_INTERVAL) == 0) {
+            extractFromMachine(); // 主动抽取：可配置方向/间隔（默认每 4 tick）
         }
         feedMachinePower(); // 感应卡供电独立于喂出（蓄水池空也供电）
         feedMachine();
@@ -1482,7 +1491,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 if (handler != null && handler.getSlots() > 0) {
                     boolean found = false;
                     for (int slot = 0; slot < handler.getSlots(); slot++) {
-                        var extracted = handler.extractItem(slot, 64, true);
+                        var extracted = handler.extractItem(slot, EXTRACT_STACK, true);
                         if (extracted.isEmpty()) {
                             continue;
                         }
@@ -1524,7 +1533,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if (fluidCap.isPresent()) {
                 var fluidHandler = fluidCap.orElse(null);
                 if (fluidHandler != null && fluidHandler.getTanks() > 0) {
-                    var drained = fluidHandler.drain(1000, net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.SIMULATE);
+                    var drained = fluidHandler.drain(EXTRACT_FLUID, net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.SIMULATE);
                     if (!drained.isEmpty()) {
                         var key = appeng.api.stacks.AEFluidKey.of(drained.getFluid());
                         if (key != null && !isMarkedMaterial(key)) {
@@ -1545,7 +1554,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 if (gasCap.isPresent()) {
                     var gasHandler = gasCap.orElse(null);
                     if (gasHandler != null && gasHandler.getTanks() > 0) {
-                        var extracted = gasHandler.extractChemical(1000, mekanism.api.Action.SIMULATE);
+                        var extracted = gasHandler.extractChemical(EXTRACT_GAS, mekanism.api.Action.SIMULATE);
                         if (!extracted.isEmpty()) {
                             AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(extracted);
                             if (key != null && !isMarkedMaterial(key)) {
