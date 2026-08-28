@@ -37,6 +37,11 @@ public class InfiniteInterfaceBlock extends AEBaseEntityBlock<InfiniteInterfaceB
 
     public InfiniteInterfaceBlock() {
         super(stoneProps().strength(3.0f).requiresCorrectToolForDrops());
+        // ⚠️ 必须设置 blockEntityClass：AEBaseEntityBlock.hasAnalogOutputSignal() 直接
+        // blockEntityClass.isAssignableFrom(...) 无判空，方块放置时 markAndNotifyBlock
+        // 查比较器信号 → null.isAssignableFrom → NPE（2026-08-28 崩溃实锤）。
+        // type/ticker 传 null：newBlockEntity/getTicker 均已 override，不依赖它们。
+        setBlockEntity(InfiniteInterfaceBE.class, null, null, null);
     }
 
     @Override
