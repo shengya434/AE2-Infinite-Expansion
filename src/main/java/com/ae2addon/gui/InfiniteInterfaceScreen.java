@@ -131,6 +131,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (editBox != null && editBox.isFocused()) {
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][gui] 按键(编辑中): keyCode={} focused={}", keyCode, editBox.isFocused());
             if (keyCode == 257 || keyCode == 335) { // Enter / Numpad Enter
                 applyEdit();
                 return true;
@@ -182,7 +184,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         setFocused(editBox);
         addWidget(editBox);
         com.ae2addon.AE2Addon.LOGGER.info(
-                "[ae2addon][gui] 打开编辑框: key={} 初始值={}", key, current);
+                "[ae2addon][gui] 输入框已创建: key={} 初始值={} 位置=({},{}) leftPos={} topPos={}",
+                key, current, editBox.getX(), editBox.getY(), leftPos, topPos);
     }
 
     /** 从状态行文本提取当前值（服务端固定格式）。 */
@@ -222,9 +225,12 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         String text = editBox.getValue().trim();
         try {
             long value = parseSetting(text);
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][gui] 应用设置: key={} 文本={} 解析值={}", editingKey, text, value);
             AE2Addon.NETWORK.sendToServer(new com.ae2addon.network.FeederSettingPacket(editingKey, value));
         } catch (NumberFormatException e) {
-            // 输入无效：忽略（保留原值）
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][gui] 解析失败: key={} 文本={}", editingKey, text);
         }
         cancelEdit();
     }
