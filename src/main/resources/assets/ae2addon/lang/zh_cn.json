@@ -159,4 +159,5 @@
   "gui.ae2addon.order.failed": "失败",
   "gui.ae2addon.order.cancelled": "已取消",
   "gui.ae2addon.order.cancel": "Shift+取消"
+  "item.ae2addon.config_card": "配置存储卡",
 }

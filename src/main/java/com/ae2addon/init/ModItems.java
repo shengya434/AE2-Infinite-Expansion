@@ -67,6 +67,12 @@ public class ModItems {
             () -> new BlockItem(ModBlocks.INFINITE_INTERFACE.get(), new Item.Properties())
     );
 
+    /** 配置存储卡：复制/粘贴接口配置（自研，绕开 AE2 内存卡限制） */
+    public static final RegistryObject<Item> CONFIG_CARD = ITEMS.register(
+            "config_card",
+            com.ae2addon.item.ConfigCardItem::new
+    );
+
     // ── 创造模式标签页 ──
 
     public static final RegistryObject<CreativeModeTab> TAB_AE2ADDON = CREATIVE_TABS.register(
@@ -83,6 +89,7 @@ public class ModItems {
                         acceptTabItem(output, ModBlocks.INFINITE_CO_PROCESSING.get());
                         acceptTabItem(output, ModBlocks.INTEGRATED_CPU.get());
                         acceptTabItem(output, ModBlocks.INFINITE_INTERFACE.get());
+                        acceptTabItem(output, CONFIG_CARD.get());
                         acceptTabItem(output, MATTER_BALL.get());
                     })
                     .build()

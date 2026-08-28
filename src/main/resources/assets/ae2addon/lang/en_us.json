@@ -159,4 +159,5 @@
   "gui.ae2addon.order.failed": "Failed",
   "gui.ae2addon.order.cancelled": "Cancelled",
   "gui.ae2addon.order.cancel": "Shift+Cancel"
+  "item.ae2addon.config_card": "Config Storage Card",
 }
