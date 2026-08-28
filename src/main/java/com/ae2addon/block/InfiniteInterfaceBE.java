@@ -66,7 +66,8 @@ import java.util.Set;
  * 数据流：CPU ──ScaledPattern N×──► [蓄水池 BigInteger] ──insertItem 分批──► 机器
  *         网络 ──无上限拉取─────────► [蓄水池] ◄──extractItem── 机器/漏斗
  */
-public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICraftingProvider {
+public class InfiniteInterfaceBE extends AENetworkBlockEntity
+        implements ICraftingProvider, appeng.helpers.patternprovider.PatternContainer {
 
     // ── 全局注册表（供 CPU mixin 查询：全量推送判定 / 取消回退） ──
 
@@ -185,6 +186,41 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
 
     private List<IPatternDetails> patterns = List.of();
     private boolean patternDirty = false;
+
+    /**
+     * 样板管理终端（Pattern Access Terminal）兼容适配器：终端通过 PatternContainer
+     * 发现本方块并远程读写样板槽（2026-08-28 sensei 反馈：此前不实现 PatternContainer
+     * → 终端看不到/管不了我们的样板）。
+     * 写入走 patternInv.setItem → SimpleContainer.setChanged → onPatternsChanged →
+     * requestUpdate，CPU 路由即时刷新。
+     */
+    private final appeng.api.inventories.InternalInventory terminalPatternInv =
+            new appeng.api.inventories.InternalInventory() {
+                @Override
+                public int size() {
+                    return patternInv.getContainerSize();
+                }
+
+                @Override
+                public ItemStack getStackInSlot(int slot) {
+                    return patternInv.getItem(slot);
+                }
+
+                @Override
+                public void setItemDirect(int slot, ItemStack stack) {
+                    patternInv.setItem(slot, stack);
+                }
+
+                @Override
+                public int getSlotLimit(int slot) {
+                    return 1;
+                }
+
+                @Override
+                public boolean isItemValid(int slot, ItemStack stack) {
+                    return stack.isEmpty() || PatternDetailsHelper.isEncodedPattern(stack);
+                }
+            };
 
     private final IActionSource actionSource = new MachineSource(this);
 
@@ -337,6 +373,24 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
     @Override
     public boolean isBusy() {
         return false;
+    }
+
+    // ── PatternContainer（样板管理终端兼容） ──
+
+    @Override
+    public appeng.api.networking.IGrid getGrid() {
+        return getMainNode().getGrid();
+    }
+
+    @Override
+    public appeng.api.inventories.InternalInventory getTerminalPatternInventory() {
+        return terminalPatternInv;
+    }
+
+    @Override
+    public appeng.api.implementations.blockentities.PatternContainerGroup getTerminalGroup() {
+        return appeng.api.implementations.blockentities.PatternContainerGroup.fromMachine(
+                level, worldPosition, net.minecraft.core.Direction.UP);
     }
 
     /** 样板输出 = 网络「可发射物品」声明（终端可见，不影响实际功能）。 */
