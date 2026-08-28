@@ -26,8 +26,15 @@ public class MemoryCardItemMixin {
 
     private static final String CFG_KEY = "ae2addon:cfg";
 
+    static {
+        com.ae2addon.AE2Addon.LOGGER.info("[ae2addon] MemoryCardItemMixin 类已加载");
+    }
+
     @Inject(method = "m_6225_", at = @At("HEAD"), cancellable = true)
     private void ae2addon$handleFeeder(UseOnContext ctx, CallbackInfoReturnable<InteractionResult> cir) {
+        com.ae2addon.AE2Addon.LOGGER.info("[ae2addon] 内存卡 useOn 触发（目标方块={}）",
+                ctx.getLevel().getBlockEntity(ctx.getClickedPos()) == null ? "null"
+                        : ctx.getLevel().getBlockEntity(ctx.getClickedPos()).getClass().getSimpleName());
         Level level = ctx.getLevel();
         BlockEntity be = level.getBlockEntity(ctx.getClickedPos());
         if (!(be instanceof com.ae2addon.block.InfiniteInterfaceBE feeder)) {
