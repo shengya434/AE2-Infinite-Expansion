@@ -45,7 +45,7 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         var patternInv = feeder.getPatternInventory();
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 3; col++) {
-                addSlot(new Slot(patternInv, col + row * 3, 26 + col * 18, 17 + row * 18) {
+                addSlot(new Slot(patternInv, col + row * 3, 26 + col * 18, 64 + row * 18) {
                     @Override
                     public boolean mayPlace(ItemStack stack) {
                         return PatternDetailsHelper.isEncodedPattern(stack);
@@ -58,19 +58,19 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         var markerInv = feeder.getMarkerInventory();
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 3; col++) {
-                addSlot(new Slot(markerInv, col + row * 3, 96 + col * 18, 17 + row * 18));
+                addSlot(new Slot(markerInv, col + row * 3, 96 + col * 18, 64 + row * 18));
             }
         }
 
         // 玩家背包 9×3
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
-                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 120 + row * 18));
+                addSlot(new Slot(playerInventory, col + row * 9 + 9, 8 + col * 18, 136 + row * 18));
             }
         }
         // 快捷栏 1×9
         for (int col = 0; col < 9; col++) {
-            addSlot(new Slot(playerInventory, col, 8 + col * 18, 176));
+            addSlot(new Slot(playerInventory, col, 8 + col * 18, 194));
         }
     }
 

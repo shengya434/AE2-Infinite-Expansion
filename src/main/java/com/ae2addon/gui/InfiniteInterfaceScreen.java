@@ -15,28 +15,26 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * ME 接口（无限级）配置界面（v4 常驻编辑版）：
- * 3×3 样板槽（左）+ 3×3 标记槽（右）+ 三行「输入框+保存」参数区 + 状态行 + 背包。
+ * ME 接口（无限级）配置界面（v5 参数置顶版）：
+ * 顶部三行参数（补货目标/补货间隔/喂出预算，常驻输入框+保存），
+ * 中部 3×3 样板槽 + 3×3 标记槽，下方状态行 + 背包。
  * <p>
- * 2026-08-28 10:21 教训：点击弹框方案（[✎] → 临时 EditBox）在用户环境
- * 输入框不可见/不可用（原因未明，ModernUI MixinEditBox 只加撤销不影响渲染），
- * 改为常驻 EditBox + 保存按钮（与 Mode2ConfigScreen 同款，必然可见可点）。
- * <p>
- * 参数：补货目标（feederStockTarget）/ 补货间隔（feederRestockInterval）/
- * 喂出预算（feederFeedBudget）。回车或点保存 → FeederSettingPacket → 服务端写盘热加载。
- * 输入支持 MAX / 1e12 / K/M/G/T/P/E 后缀。
+ * 2026-08-28 10:32 sensei 要求：参数行放到 UI 上方。
  */
 public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInterfaceMenu> {
 
     private static final int W = 176;
-    private static final int H = 194;
-    private static final int MAX_STATUS_LINES = 3;
+    private static final int H = 214;
+    private static final int MAX_STATUS_LINES = 2;
 
     private static final String[] KEYS = {"stockTarget", "restockInterval", "feedBudget"};
     private static final String[] LABELS = {"§7补货目标", "§7补货间隔", "§7喂出预算"};
+    /** 参数行 Y（顶部，位于样板槽上方）。 */
+    private static final int[] ROW_YS = {17, 31, 45};
+    /** 状态行 Y（样板槽下方）。 */
+    private static final int STATUS_Y = 121;
 
     private final EditBox[] boxes = new EditBox[3];
-    private final Button[] buttons = new Button[3];
 
     /** 蓄水池状态行（服务端 FeederStatusPacket → 主线程）。 */
     public static void handleStatus(List<String> lines) {
@@ -58,8 +56,6 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     @Override
     protected void init() {
         super.init();
-        // 三行参数：标签 + 输入框 + 保存按钮（常驻，行高 14，位于样板槽下方）
-        int[] rowYs = {64, 78, 92};
         long[] values = {
                 AE2AddonConfig.feederStockTarget(),
                 AE2AddonConfig.feederRestockInterval(),
@@ -67,19 +63,16 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         };
         for (int i = 0; i < 3; i++) {
             final int idx = i;
-            EditBox box = new EditBox(font, leftPos + 48, topPos + rowYs[i], 70, 14,
+            EditBox box = new EditBox(font, leftPos + 48, topPos + ROW_YS[i], 70, 14,
                     Component.literal(KEYS[i]));
             box.setMaxLength(40);
             box.setValue(String.valueOf(values[i]));
-            box.setResponder(s -> { });
             addRenderableWidget(box);
             boxes[i] = box;
 
-            Button button = Button.builder(Component.literal("保存"),
+            addRenderableWidget(Button.builder(Component.literal("保存"),
                     b -> saveSetting(idx)
-            ).bounds(leftPos + 122, topPos + rowYs[i] - 1, 32, 16).build();
-            addRenderableWidget(button);
-            buttons[i] = button;
+            ).bounds(leftPos + 122, topPos + ROW_YS[i] - 1, 32, 16).build());
         }
     }
 
@@ -159,22 +152,23 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     @Override
     protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
         g.drawString(font, title, titleLabelX, titleLabelY, 0xFFFFAA, false);
-        g.drawString(font,
-                Component.translatable("gui.ae2addon.infinite_interface.patterns"),
-                26, 6, 0xAAAAAA, false);
-        g.drawString(font,
-                Component.translatable("gui.ae2addon.infinite_interface.markers"),
-                96, 6, 0xAAAAAA, false);
 
-        // 参数行标签（输入框左侧）
-        int[] rowYs = {64, 78, 92};
+        // 参数行标签（顶部，输入框左侧）
         for (int i = 0; i < 3; i++) {
-            g.drawString(font, Component.literal(LABELS[i]), 8, rowYs[i] + 3, 0xFFFFFF, false);
+            g.drawString(font, Component.literal(LABELS[i]), 8, ROW_YS[i] + 3, 0xFFFFFF, false);
         }
 
-        // 状态行（参数区下方；最多 3 行，超长截断）
+        // 样板槽/标记槽标签（格子正上方）
+        g.drawString(font,
+                Component.translatable("gui.ae2addon.infinite_interface.patterns"),
+                26, 60, 0xAAAAAA, false);
+        g.drawString(font,
+                Component.translatable("gui.ae2addon.infinite_interface.markers"),
+                96, 60, 0xAAAAAA, false);
+
+        // 状态行（样板槽下方；最多 2 行，超长截断）
         List<String> lines = menu.statusLines;
-        int lineY = 110;
+        int lineY = STATUS_Y;
         for (int i = 0; i < Math.min(lines.size(), MAX_STATUS_LINES); i++) {
             String line = lines.get(i);
             String stripped = line.replaceAll("§.", "");
