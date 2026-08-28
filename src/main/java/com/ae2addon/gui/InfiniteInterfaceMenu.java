@@ -228,10 +228,9 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 return ItemStack.EMPTY;
             }
         } else if (slotIndex < markerEnd) {
-            // 标记槽 → 玩家背包
-            if (!moveItemStackTo(stack, upgradeEnd, hotbarEnd, true)) {
-                return ItemStack.EMPTY;
-            }
+            // 标记槽：虚拟标记不可取回——shift 点击 = 取消标记（清空 + 退缓存）
+            feeder.markByKey(slotIndex - markerSlotStart(), null);
+            return ItemStack.EMPTY;
         } else if (slotIndex < upgradeEnd) {
             // 升级槽 → 玩家背包
             if (!moveItemStackTo(stack, upgradeEnd, hotbarEnd, true)) {
