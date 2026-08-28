@@ -549,9 +549,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         setChanged();
         updateChannelLink();
-        if (level != null && (level.getGameTime() & 0x3F) == 0) {
-            dumpUpgradeCards();
-        }
+        dumpUpgradeCards(); // 插拔卡立即打日志（不再等 64 tick 门控）
     }
 
     /** 升级卡诊断（每 64 tick 或升级变化时打一次）。 */
