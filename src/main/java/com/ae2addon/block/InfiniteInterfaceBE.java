@@ -10,6 +10,7 @@ import appeng.api.networking.crafting.ICraftingProvider;
 import appeng.api.networking.security.IActionSource;
 import appeng.api.orientation.BlockOrientation;
 import appeng.api.orientation.RelativeSide;
+import appeng.api.stacks.AEFluidKey;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
 import appeng.api.stacks.KeyCounter;
@@ -31,6 +32,10 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.common.capabilities.Capability;
 import net.minecraftforge.common.capabilities.ForgeCapabilities;
 import net.minecraftforge.common.util.LazyOptional;
+import net.minecraftforge.fluids.FluidStack;
+import net.minecraftforge.fluids.FluidUtil;
+import net.minecraftforge.fluids.capability.IFluidHandler;
+import net.minecraftforge.fluids.capability.IFluidHandler.FluidAction;
 import net.minecraftforge.items.IItemHandler;
 import org.jetbrains.annotations.Nullable;
 
@@ -388,10 +393,6 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         }
         MEStorage storage = grid.getStorageService().getInventory();
         for (AEKey key : wantedKeys()) {
-            // 只补物品（流体无法通过 IItemHandler 喂给机器）
-            if (!(key instanceof AEItemKey)) {
-                continue;
-            }
             long have = reservoirAmount(key);
             long want = STOCK_TARGET - have;
             if (want <= 0) {
@@ -411,6 +412,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         for (int i = 0; i < markerInv.getContainerSize(); i++) {
             ItemStack stack = markerInv.getItem(i);
             if (stack.isEmpty()) {
+                continue;
+            }
+            // 流体容器（桶/罐/蓄液罐）→ 标记内部流体；否则标记物品
+            var contained = FluidUtil.getFluidContained(stack);
+            if (contained.isPresent() && !contained.get().isEmpty()) {
+                keys.add(AEFluidKey.of(contained.get()));
                 continue;
             }
             AEItemKey key = AEItemKey.of(stack);
@@ -433,26 +440,23 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         }
         LazyOptional<IItemHandler> cap = target.getCapability(
                 ForgeCapabilities.ITEM_HANDLER, front.getOpposite());
-        if (!cap.isPresent()) {
+        LazyOptional<IFluidHandler> fluidCap = target.getCapability(
+                ForgeCapabilities.FLUID_HANDLER, front.getOpposite());
+        IItemHandler handler = cap.isPresent() ? cap.orElse(null) : null;
+        IFluidHandler fluidHandler = fluidCap.isPresent() ? fluidCap.orElse(null) : null;
+        int slots = handler == null ? 0 : handler.getSlots();
+        if (slots <= 0 && fluidHandler == null) {
             if (!feederDiagLogged) {
                 feederDiagLogged = true;
-                logFeederStatus("启动(无IItemHandler)");
+                logFeederStatus("启动(无IItemHandler/无IFluidHandler)");
             }
             return;
         }
-        IItemHandler handler = cap.orElse(null);
-        if (handler == null) {
-            return;
-        }
-        int slots = handler.getSlots();
-        if (slots <= 0) {
-            return;
-        }
-        // 可喂物品数（并行轮转基数）：预算均分给每种物品，
-        // 所有物品每 tick 同时推进 = 并行推送，不被单种材料霸占。
+        // 可喂种类数（物品+流体，并行轮转基数）：预算均分，所有种类同时推进
         int feedable = 0;
         for (var entry : reservoir.entrySet()) {
-            if (entry.getKey() instanceof AEItemKey && entry.getValue().signum() > 0) {
+            if ((entry.getKey() instanceof AEItemKey || entry.getKey() instanceof AEFluidKey)
+                    && entry.getValue().signum() > 0) {
                 feedable++;
             }
         }
@@ -465,9 +469,6 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         for (var it = reservoir.entrySet().iterator(); it.hasNext() && totalBudget > 0; ) {
             var entry = it.next();
             AEKey key = entry.getKey();
-            if (!(key instanceof AEItemKey itemKey)) {
-                continue;
-            }
             BigInteger remain = entry.getValue();
             if (remain.signum() <= 0) {
                 it.remove();
@@ -476,22 +477,38 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
             long amount = remain.min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
             long fed = 0;
             int itemBudget = perItemBudget;
-            while (amount > 0 && itemBudget > 0 && totalBudget > 0) {
-                int chunk = (int) Math.min(FEED_STACK, amount);
-                ItemStack stack = itemKey.toStack(chunk);
-                ItemStack leftover = stack;
-                // 一轮 = 依次尝试所有输入槽（多槽机器并行填满）
-                for (int slot = 0; slot < slots && !leftover.isEmpty(); slot++) {
-                    leftover = handler.insertItem(slot, leftover, false);
+            if (key instanceof AEItemKey itemKey && handler != null) {
+                while (amount > 0 && itemBudget > 0 && totalBudget > 0) {
+                    int chunk = (int) Math.min(FEED_STACK, amount);
+                    ItemStack stack = itemKey.toStack(chunk);
+                    ItemStack leftover = stack;
+                    // 一轮 = 依次尝试所有输入槽（多槽机器并行填满）
+                    for (int slot = 0; slot < slots && !leftover.isEmpty(); slot++) {
+                        leftover = handler.insertItem(slot, leftover, false);
+                    }
+                    int inserted = chunk - leftover.getCount();
+                    if (inserted <= 0) {
+                        break; // 该物品本轮拒收 → 换下一种
+                    }
+                    fed += inserted;
+                    amount -= inserted;
+                    itemBudget--;
+                    totalBudget--;
                 }
-                int inserted = chunk - leftover.getCount();
-                if (inserted <= 0) {
-                    break; // 该物品本轮拒收 → 换下一种
+            } else if (key instanceof AEFluidKey fluidKey && fluidHandler != null) {
+                // 流体喂出：fill 到机器液体槽（FluidStack 上限 int）
+                while (amount > 0 && itemBudget > 0 && totalBudget > 0) {
+                    int chunk = (int) Math.min(Integer.MAX_VALUE, amount);
+                    FluidStack fs = fluidKey.toStack(chunk);
+                    int filled = fluidHandler.fill(fs, FluidAction.EXECUTE);
+                    if (filled <= 0) {
+                        break; // 机器液体槽满/不吃该流体
+                    }
+                    fed += filled;
+                    amount -= filled;
+                    itemBudget--;
+                    totalBudget--;
                 }
-                fed += inserted;
-                amount -= inserted;
-                itemBudget--;
-                totalBudget--;
             }
             if (fed > 0) {
                 // ⚠️ 用 entry.setValue/it.remove 而非 computeIfPresent(null)：
