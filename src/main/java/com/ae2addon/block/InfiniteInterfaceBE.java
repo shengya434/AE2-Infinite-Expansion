@@ -259,16 +259,23 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             new appeng.api.inventories.InternalInventory() {
                 @Override
                 public int size() {
-                    return patternInv.getContainerSize();
+                    // 按容量卡裁剪：无卡 9 格，每张卡 +9 格（终端显示格数）
+                    return activePatternSlots();
                 }
 
                 @Override
                 public ItemStack getStackInSlot(int slot) {
+                    if (slot >= activePatternSlots()) {
+                        return ItemStack.EMPTY;
+                    }
                     return patternInv.getItem(slot);
                 }
 
                 @Override
                 public void setItemDirect(int slot, ItemStack stack) {
+                    if (slot >= activePatternSlots()) {
+                        return;
+                    }
                     patternInv.setItem(slot, stack);
                 }
 
@@ -279,6 +286,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
                 @Override
                 public boolean isItemValid(int slot, ItemStack stack) {
+                    if (slot >= activePatternSlots()) {
+                        return false;
+                    }
                     return stack.isEmpty() || PatternDetailsHelper.isEncodedPattern(stack);
                 }
             };
