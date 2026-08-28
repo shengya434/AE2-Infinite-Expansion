@@ -46,7 +46,9 @@ public class InfiniteInterfaceBlock extends AEBaseEntityBlock<InfiniteInterfaceB
 
     @Override
     public IOrientationStrategy getOrientationStrategy() {
-        return OrientationStrategies.horizontalFacing();
+        // 完整 6 向 facing：扳手点任意面都安全（horizontalFacing 点侧面会旋转到
+        // UP/DOWN 而 HORIZONTAL_FACING 存不了 → 崩）；支持正面朝上/朝下喂机器。
+        return OrientationStrategies.facing();
     }
 
     @Override

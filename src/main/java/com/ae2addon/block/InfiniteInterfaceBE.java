@@ -116,7 +116,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         Direction facing = null;
         try {
             facing = getBlockState().getValue(
-                    net.minecraft.world.level.block.state.properties.BlockStateProperties.HORIZONTAL_FACING);
+                    net.minecraft.world.level.block.state.properties.BlockStateProperties.FACING);
         } catch (RuntimeException ignored) {
         }
         BlockEntity target = (front == null || level == null)
