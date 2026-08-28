@@ -68,7 +68,8 @@ import java.util.Set;
  */
 public class InfiniteInterfaceBE extends AENetworkBlockEntity
         implements ICraftingProvider, appeng.helpers.patternprovider.PatternContainer,
-        appeng.api.upgrades.IUpgradeableObject {
+        appeng.api.upgrades.IUpgradeableObject,
+        appeng.api.networking.crafting.ICraftingRequester {
 
     // ── 全局注册表（供 CPU mixin 查询：全量推送判定 / 取消回退） ──
 
@@ -248,6 +249,14 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     // ── 诊断日志（定位供料问题用） ──
 
     private boolean feederDiagLogged;
+
+    // ── 虚拟合成卡（CRAFTING_CARD）：补货提取失败且可合成时请求 CPU 合成 ──
+
+    /** key → 上次发起合成请求的 gameTime（防重复请求节流）。 */
+    private final java.util.Map<AEKey, Long> craftingRequests = new java.util.HashMap<>();
+
+    /** 同 key 合成请求冷却（tick；5 秒）。 */
+    private static final long CRAFT_COOLDOWN = 100;
 
     private void logFeederStatus(String tag) {
         Direction front = getFront();
@@ -453,6 +462,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     public boolean hasCraftingCard() {
         return upgrades.getInstalledUpgrades(
                 appeng.core.definitions.AEItems.CRAFTING_CARD.asItem()) > 0;
+    }
+
+    /** ICraftingSimulationRequester：合成模拟请求的来源。 */
+    public appeng.api.networking.security.IActionSource getActionSource() {
+        return actionSource;
     }
 
     /** AppFlux 感应卡（给机器供电）。 */
@@ -681,6 +695,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if (got > 0) {
                 addReservoir(key, BigInteger.valueOf(got));
                 setChanged();
+            } else if (hasCraftingCard() && isCraftable(key)) {
+                // 虚拟合成卡：网络没有 → 请求 CPU 合成
+                requestCrafting(key, want);
             } else if (key instanceof AEFluidKey
                     || com.ae2addon.compat.MekanismGasCompat.isFeedable(key)) {
                 // 流体/气体提取失败诊断（节流：每 100 次打一条）
@@ -690,6 +707,113 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                             key, want);
                 }
             }
+        }
+    }
+
+    /** 网络是否可合成该 key（虚拟合成卡）。 */
+    private boolean isCraftable(AEKey key) {
+        IGrid grid = getMainNode().getGrid();
+        if (grid == null) {
+            return false;
+        }
+        try {
+            return grid.getCraftingService().isCraftable(key);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** 发起 CPU 合成请求（异步；AE2-VM 兼容——beginCraftingCalculation 由 VM 接管）。 */
+    private void requestCrafting(AEKey key, long amount) {
+        IGrid grid = getMainNode().getGrid();
+        if (grid == null || level == null || level.isClientSide) {
+            return;
+        }
+        long now = level.getGameTime();
+        Long last = craftingRequests.get(key);
+        if (last != null && now - last < CRAFT_COOLDOWN) {
+            return; // 冷却中，防刷屏
+        }
+        craftingRequests.put(key, now);
+        try {
+            var service = grid.getCraftingService();
+            // 匿名模拟请求者（BE 不能 implements：getGridNode default 与父类冲突）
+            var simulationRequester = new appeng.api.networking.crafting.ICraftingSimulationRequester() {
+                @Override
+                public appeng.api.networking.security.IActionSource getActionSource() {
+                    return actionSource;
+                }
+            };
+            java.util.concurrent.Future<appeng.api.networking.crafting.ICraftingPlan> future =
+                    service.beginCraftingCalculation(level, simulationRequester, key, amount,
+                            appeng.api.networking.crafting.CalculationStrategy.CRAFT_LESS);
+            // Future（非 CompletableFuture）：后台线程等待计算结果，完成后切主线程提交
+            java.util.concurrent.CompletableFuture
+                    .supplyAsync(() -> {
+                        try {
+                            return future.get(15, java.util.concurrent.TimeUnit.SECONDS);
+                        } catch (Exception e) {
+                            com.ae2addon.AE2Addon.LOGGER.warn(
+                                    "[ae2addon][feeder] 虚拟合成计算失败: {} {}", key, e);
+                            return null;
+                        }
+                    })
+                    .thenAccept(plan -> {
+                        if (plan == null || plan.simulation() || plan.bytes() <= 0) {
+                            return;
+                        }
+                        if (level != null && level.getServer() != null) {
+                            level.getServer().execute(() -> {
+                                try {
+                                    var result = service.submitJob(plan, this, null, false, actionSource);
+                                    if (result != null && result.successful()) {
+                                        com.ae2addon.AE2Addon.LOGGER.info(
+                                                "[ae2addon][feeder] 虚拟合成卡: 提交合成 {} x{}",
+                                                key, plan.bytes());
+                                    } else {
+                                        com.ae2addon.AE2Addon.LOGGER.warn(
+                                                "[ae2addon][feeder] 虚拟合成卡提交未成功: {} 错误={}",
+                                                key, result == null ? "null" : result.errorCode());
+                                    }
+                                } catch (RuntimeException e) {
+                                    com.ae2addon.AE2Addon.LOGGER.warn(
+                                            "[ae2addon][feeder] 虚拟合成卡提交失败: {} {}", key, e);
+                                }
+                            });
+                        }
+                    });
+        } catch (RuntimeException e) {
+            craftingRequests.remove(key);
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon][feeder] 虚拟合成请求异常: {} {}", key, e);
+        }
+    }
+
+    // ── ICraftingRequester（虚拟合成卡：CPU 产物直接进蓄水池） ──
+
+    @Override
+    public com.google.common.collect.ImmutableSet<appeng.api.networking.crafting.ICraftingLink> getRequestedJobs() {
+        return com.google.common.collect.ImmutableSet.of();
+    }
+
+    @Override
+    public long insertCraftedItems(appeng.api.networking.crafting.ICraftingLink link,
+            AEKey what, long amount, appeng.api.config.Actionable actionable) {
+        if (actionable == appeng.api.config.Actionable.MODULATE && amount > 0) {
+            addReservoir(what, BigInteger.valueOf(amount));
+            setChanged();
+        }
+        return amount; // 全收（进蓄水池，随后按机器容量喂出）
+    }
+
+    @Override
+    public void jobStateChange(appeng.api.networking.crafting.ICraftingLink link) {
+        // 合成结束/取消：清冷却，允许稍后重试
+        if (link != null && link.getCraftingID() != null) {
+            craftingRequests.entrySet().removeIf(e ->
+                    e.getKey().toString().equals(link.getCraftingID().toString()));
+        } else {
+            craftingRequests.clear();
         }
     }
 

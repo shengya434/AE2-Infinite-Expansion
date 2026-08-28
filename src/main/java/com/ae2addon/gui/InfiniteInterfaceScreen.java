@@ -236,6 +236,13 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             g.drawString(font, Component.literal(line), 8, lineY, 0xFFFFFF, false);
             lineY += 8;
         }
+
+        // 【临时诊断】悬浮槽物品名（tooltip 排查用；确认后移除）
+        if (hoveredSlot != null && hoveredSlot.hasItem()) {
+            String hoverName = hoveredSlot.getItem().getHoverName().getString();
+            g.drawString(font, Component.literal("§f悬浮: §e" + hoverName),
+                    8, lineY + 1, 0xFFFFFF, false);
+        }
         // 标记槽图标叠加（WrappedGenericStack 流体/物品）
         renderMarkerIcons(g);
     }
