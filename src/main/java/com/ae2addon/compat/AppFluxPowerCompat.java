@@ -69,7 +69,18 @@ public final class AppFluxPowerCompat {
             }
             IEnergyStorage machine = machineCap.orElse(null);
             if (machine == null || !machine.canReceive()) {
+                if (System.getProperty("ae2addon.debugPower") != null) {
+                    com.ae2addon.AE2Addon.LOGGER.info(
+                            "[ae2addon][feeder] 供电诊断: 机器能量槽不可接收 (cap={} machine={})",
+                            machineCap.isPresent(), machine);
+                }
                 return 0;
+            }
+            if (System.getProperty("ae2addon.debugPower") != null) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][feeder] 供电诊断: networkEnergy={} canExtract={} stored={}/{} 上限={}FE/t",
+                        networkEnergy, networkEnergy.canExtract(),
+                        machine.getEnergyStored(), machine.getMaxEnergyStored(), MAX_FE_PER_TICK);
             }
             int need = Math.min((int) MAX_FE_PER_TICK,
                     machine.getMaxEnergyStored() - machine.getEnergyStored());

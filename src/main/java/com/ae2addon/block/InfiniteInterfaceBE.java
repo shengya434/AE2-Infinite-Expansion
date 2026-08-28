@@ -537,8 +537,43 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     }
 
     private void onUpgradesChanged() {
+        // 容量卡强制上限 4（双保险；容器过滤失效时兜底）
+        var capCard = appeng.core.definitions.AEItems.CAPACITY_CARD.asItem();
+        if (upgrades.getInstalledUpgrades(capCard) > 4) {
+            for (int i = 0; i < upgrades.size(); i++) {
+                if (upgrades.getStackInSlot(i).getItem() == capCard) {
+                    upgrades.setItemDirect(i, net.minecraft.world.item.ItemStack.EMPTY);
+                    break;
+                }
+            }
+        }
         setChanged();
         updateChannelLink();
+        if (level != null && (level.getGameTime() & 0x3F) == 0) {
+            dumpUpgradeCards();
+        }
+    }
+
+    /** 升级卡诊断（每 64 tick 或升级变化时打一次）。 */
+    private void dumpUpgradeCards() {
+        try {
+            java.util.List<String> contents = new java.util.ArrayList<>();
+            for (int i = 0; i < upgrades.size(); i++) {
+                contents.add(upgrades.getStackInSlot(i).getItem().toString());
+            }
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][cards] 容量={} 红石={} 反向={} 合成={} 感应={} 频道={} 虚拟={} | 总页={} | 槽: {}",
+                    upgrades.getInstalledUpgrades(appeng.core.definitions.AEItems.CAPACITY_CARD.asItem()),
+                    upgrades.getInstalledUpgrades(appeng.core.definitions.AEItems.REDSTONE_CARD.asItem()),
+                    upgrades.getInstalledUpgrades(appeng.core.definitions.AEItems.INVERTER_CARD.asItem()),
+                    upgrades.getInstalledUpgrades(appeng.core.definitions.AEItems.CRAFTING_CARD.asItem()),
+                    hasInductionCard() ? 1 : 0,
+                    hasChannelCard() ? 1 : 0,
+                    hasVirtualCraftingCard() ? 1 : 0,
+                    maxPage() + 1,
+                    contents);
+        } catch (RuntimeException ignored) {
+        }
     }
 
     // ── PatternContainer（样板管理终端兼容） ──
