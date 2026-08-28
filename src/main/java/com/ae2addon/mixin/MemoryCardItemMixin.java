@@ -41,8 +41,8 @@ public class MemoryCardItemMixin {
             return; // 非本 mod 方块：交给原逻辑
         }
         Player player = ctx.getPlayer();
-        if (player == null || player.isShiftKeyDown()) {
-            return; // shift+右键交给原逻辑（AE2 用 shift 处理别的）
+        if (player == null) {
+            return;
         }
         ItemStack card = ctx.getItemInHand();
         CompoundTag tag = card.getOrCreateTag();
@@ -50,8 +50,7 @@ public class MemoryCardItemMixin {
             // 导入
             try {
                 CompoundTag cfg = tag.getCompound(CFG_KEY);
-                MemoryCardItem.importGenericSettingsAndNotify(feeder, tag, player); // 升级卡等
-                importFeederConfig(feeder, cfg);
+                importFeederConfig(feeder, cfg); // 升级卡（完整NBT）+ 参数/标记/开关/方向
                 ((MemoryCardItem) card.getItem()).notifyUser(player, appeng.api.implementations.items.MemoryCardMessages.SETTINGS_LOADED);
             } catch (RuntimeException e) {
                 com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon] 内存卡导入失败", e);
@@ -60,8 +59,7 @@ public class MemoryCardItemMixin {
             // 导出
             try {
                 CompoundTag cfg = new CompoundTag();
-                MemoryCardItem.exportGenericSettings(feeder, cfg); // 升级卡等
-                exportFeederConfig(feeder, cfg);
+                exportFeederConfig(feeder, cfg); // 升级卡（完整NBT）+ 参数/标记/开关/方向
                 tag.put(CFG_KEY, cfg);
                 tag.putString("ae2addon:name", "ME接口(无限级)");
                 ((MemoryCardItem) card.getItem()).notifyUser(player, appeng.api.implementations.items.MemoryCardMessages.SETTINGS_SAVED);
@@ -78,6 +76,19 @@ public class MemoryCardItemMixin {
     }
 
     private static void exportFeederConfig(com.ae2addon.block.InfiniteInterfaceBE feeder, CompoundTag cfg) {
+        // 升级卡（完整 ItemStack 含 NBT——频道卡频率/绑定等不丢）
+        ListTag upgradeList = new ListTag();
+        var upgrades = feeder.getUpgrades();
+        for (int i = 0; i < upgrades.size(); i++) {
+            ItemStack st = upgrades.getStackInSlot(i);
+            if (!st.isEmpty()) {
+                CompoundTag ent = new CompoundTag();
+                ent.putInt("Slot", i);
+                st.save(ent);
+                upgradeList.add(ent);
+            }
+        }
+        cfg.put("upgrades", upgradeList);
         cfg.putLong("pStockTarget", feeder.pStockTarget);
         cfg.putInt("pRestockInterval", feeder.pRestockInterval);
         cfg.putInt("pFeedBudget", feeder.pFeedBudget);
@@ -109,6 +120,20 @@ public class MemoryCardItemMixin {
     }
 
     private static void importFeederConfig(com.ae2addon.block.InfiniteInterfaceBE feeder, CompoundTag cfg) {
+        // 升级卡恢复（先清空再写入）
+        var upgrades = feeder.getUpgrades();
+        for (int i = 0; i < upgrades.size(); i++) {
+            upgrades.setItemDirect(i, ItemStack.EMPTY);
+        }
+        ListTag upgradeList = cfg.getList("upgrades", Tag.TAG_COMPOUND);
+        for (int i = 0; i < upgradeList.size(); i++) {
+            CompoundTag ent = upgradeList.getCompound(i);
+            ItemStack st = ItemStack.of(ent);
+            int slot = ent.getInt("Slot");
+            if (slot >= 0 && slot < upgrades.size() && !st.isEmpty()) {
+                upgrades.setItemDirect(slot, st);
+            }
+        }
         feeder.pStockTarget = cfg.getLong("pStockTarget");
         feeder.pRestockInterval = cfg.getInt("pRestockInterval");
         feeder.pFeedBudget = cfg.getInt("pFeedBudget");
