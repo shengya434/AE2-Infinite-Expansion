@@ -112,6 +112,10 @@ dependencies {
 
     // AppliedE — EMC与AE2桥接（编译时需要，运行时可选）
     compileOnly fg.deobf("maven.modrinth:SyKS54UY:0.14.3")  // AppliedE 0.14.3
+
+    // Mekanism + Applied Mekanistics（可选集成：气体样板喂出/标记；运行时无则跳过）
+    compileOnly fg.deobf(files("libs/Mekanism-1.20.1-10.4.16.80.jar"))
+    compileOnly fg.deobf(files("libs/Applied-Mekanistics-1.4.3.jar"))
 }
 
 jar {

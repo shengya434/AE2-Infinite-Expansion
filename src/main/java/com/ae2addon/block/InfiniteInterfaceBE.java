@@ -497,6 +497,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 keys.add(AEFluidKey.of(contained.get()));
                 continue;
             }
+            // 气体容器（气罐/气桶）→ 标记内部气体
+            AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.chemicalInContainer(stack);
+            if (gasKey != null) {
+                keys.add(gasKey);
+                continue;
+            }
             AEItemKey key = AEItemKey.of(stack);
             if (key != null) {
                 keys.add(key);
@@ -532,7 +538,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         // 可喂种类数（物品+流体，并行轮转基数）：预算均分，所有种类同时推进
         int feedable = 0;
         for (var entry : reservoir.entrySet()) {
-            if ((entry.getKey() instanceof AEItemKey || entry.getKey() instanceof AEFluidKey)
+            if ((entry.getKey() instanceof AEItemKey || entry.getKey() instanceof AEFluidKey
+                    || com.ae2addon.compat.MekanismGasCompat.isFeedable(entry.getKey()))
                     && entry.getValue().signum() > 0) {
                 feedable++;
             }
@@ -583,6 +590,19 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                     }
                     fed += filled;
                     amount -= filled;
+                    itemBudget--;
+                    totalBudget--;
+                }
+            } else if (com.ae2addon.compat.MekanismGasCompat.isFeedable(key)) {
+                // 气体喂出：insertChemical 到机器气体槽（Mekanism 可选集成）
+                while (amount > 0 && itemBudget > 0 && totalBudget > 0) {
+                    long fedOnce = com.ae2addon.compat.MekanismGasCompat.feed(
+                            target, front.getOpposite(), key, amount);
+                    if (fedOnce <= 0) {
+                        break; // 机器气体槽满/不吃该气体
+                    }
+                    fed += fedOnce;
+                    amount -= fedOnce;
                     itemBudget--;
                     totalBudget--;
                 }

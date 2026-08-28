@@ -1,0 +1,99 @@
+package com.ae2addon.compat;
+
+import appeng.api.stacks.AEKey;
+import me.ramidzkh.mekae2.ae2.MekanismKey;
+import mekanism.api.Action;
+import mekanism.api.chemical.gas.GasStack;
+import mekanism.common.capabilities.Capabilities;
+import net.minecraft.core.Direction;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraftforge.fml.ModList;
+
+/**
+ * Mekanism + Applied Mekanistics 可选集成（2026-08-28 sensei 需求：气体）。
+ * <p>
+ * - 标记槽：气罐/气桶（GAS_HANDLER 物品能力）→ 标记内部气体（MekanismKey）
+ * - 喂出：MekanismKey（气体）→ 机器气体槽 insertChemical
+ * - 其余化学形态（灌注/颜料/泥浆）暂不喂出
+ * <p>
+ * compileOnly 依赖（libs/ 下两个 jar），运行时未装 Mekanism/Applied Mekanistics
+ * 时 isLoaded() 为 false，所有方法短路返回，不影响主功能。
+ * 注意：引用 Mekanism/appmek 类的方法只能在 isLoaded() 为 true 后调用
+ * （JVM 按方法体懒加载类，标准可选集成模式）。
+ */
+public final class MekanismGasCompat {
+
+    private static boolean checked;
+    private static boolean loaded;
+
+    private MekanismGasCompat() {
+    }
+
+    public static boolean isLoaded() {
+        if (!checked) {
+            checked = true;
+            loaded = ModList.get().isLoaded("mekanism")
+                    && ModList.get().isLoaded("appmek");
+        }
+        return loaded;
+    }
+
+    /** 标记槽：气体容器（气罐/气桶）→ 内部气体 AEKey；非气体容器返回 null。 */
+    public static AEKey chemicalInContainer(ItemStack stack) {
+        if (!isLoaded() || stack.isEmpty()) {
+            return null;
+        }
+        try {
+            var cap = stack.getCapability(Capabilities.GAS_HANDLER);
+            if (cap.isPresent()) {
+                var handler = cap.orElse(null);
+                if (handler != null && handler.getTanks() > 0) {
+                    var chemical = handler.getChemicalInTank(0);
+                    if (chemical != null && !chemical.isEmpty()) {
+                        return MekanismKey.of(chemical);
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // 非气体容器/能力异常：按非气体处理
+        }
+        return null;
+    }
+
+    /** 该 AEKey 是否为可喂出的气体（MekanismKey GAS 形态）。 */
+    public static boolean isFeedable(AEKey key) {
+        return isLoaded() && key instanceof MekanismKey mekKey
+                && mekKey.getForm() == MekanismKey.GAS;
+    }
+
+    /** 喂出：把气体的 amount 量插入机器气体槽；返回实际喂出量（0=机器满/拒收）。 */
+    public static long feed(BlockEntity target, Direction side, AEKey key, long amount) {
+        if (!isFeedable(key) || amount <= 0) {
+            return 0;
+        }
+        try {
+            MekanismKey mekKey = (MekanismKey) key;
+            var cap = target.getCapability(Capabilities.GAS_HANDLER, side);
+            if (!cap.isPresent()) {
+                return 0;
+            }
+            var handler = cap.orElse(null);
+            if (handler == null || handler.getTanks() <= 0) {
+                return 0;
+            }
+            var stack = mekKey.getStack();
+            if (!(stack instanceof GasStack gasStack) || gasStack.isEmpty()) {
+                return 0;
+            }
+            long insertAmount = Math.min(amount, Integer.MAX_VALUE);
+            // 复制栈：不改动 key 内部缓存的化学物
+            var insert = new GasStack(gasStack, insertAmount);
+            var leftover = handler.insertChemical(insert, Action.EXECUTE);
+            long fed = insertAmount - leftover.getAmount();
+            return Math.max(0, fed);
+        } catch (RuntimeException ignored) {
+            return 0;
+        }
+    }
+}
