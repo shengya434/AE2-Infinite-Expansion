@@ -1,4 +1,4 @@
-package com.ae2addon.mixin;
+package com.ae2addon.util;
 
 import appeng.items.tools.MemoryCardItem;
 import com.ae2addon.block.InfiniteInterfaceBE;

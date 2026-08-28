@@ -1,6 +1,7 @@
 package com.ae2addon.mixin;
 
 import appeng.items.tools.MemoryCardItem;
+import com.ae2addon.util.MemoryCardHelper;
 import appeng.util.InteractionUtil;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -39,7 +40,7 @@ public class MemoryCardItemMixin {
         if (player == null) {
             return;
         }
-        if (MemoryCardHelper.handleUse(feeder, player, ctx.getItemInHand())) {
+        if (com.ae2addon.util.MemoryCardHelper.handleUse(feeder, player, ctx.getItemInHand())) {
             cir.setReturnValue(InteractionResult.sidedSuccess(level.isClientSide));
         }
     }
