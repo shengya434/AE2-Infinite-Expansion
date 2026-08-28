@@ -578,7 +578,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                     blockItem,
                     appeng.api.upgrades.Upgrades.getMaxInstallable(cap, blockItem),
                     appeng.api.upgrades.Upgrades.getMaxInstallable(cap, net.minecraft.world.item.Items.AIR),
-                    appeng.api.upgrades.Upgrades.getMaxInstallable(cap, block));
+                    appeng.api.upgrades.Upgrades.getMaxInstallable(cap, net.minecraft.world.item.Item.byBlock(block)));
         } catch (RuntimeException e) {
             com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon][cards] 注册表诊断失败", e);
         }
