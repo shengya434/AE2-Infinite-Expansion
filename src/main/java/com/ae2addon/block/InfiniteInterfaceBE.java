@@ -84,6 +84,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
 
     private final Map<AEKey, BigInteger> reservoir = new LinkedHashMap<>();
 
+    /** 累计已喂出总量（机器/漏斗实际收到的物品数；供料站流量可见性）。 */
+    private BigInteger totalFed = BigInteger.ZERO;
+
     // ── 样板槽（3×3，声明可处理的配方；输入 = 自动补货清单） ──
 
     private final SimpleContainer patternInv = new SimpleContainer(9) {
@@ -295,6 +298,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
         if (slots <= 0) {
             return;
         }
+        long fedAll = 0;
         for (var it = reservoir.entrySet().iterator(); it.hasNext() && budget > 0; ) {
             var entry = it.next();
             AEKey key = entry.getKey();
@@ -307,6 +311,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
                 continue;
             }
             long amount = remain.min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
+            long fed = 0;
             while (amount > 0 && budget > 0) {
                 int chunk = (int) Math.min(FEED_STACK, amount);
                 ItemStack stack = itemKey.toStack(chunk);
@@ -318,13 +323,29 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
                 if (inserted <= 0) {
                     break; // 机器满了/拒收该物品 → 换下一种
                 }
-                subtractReservoir(itemKey, inserted);
+                fed += inserted;
                 amount -= inserted;
                 budget--;
             }
-            if (remain.signum() > 0) {
-                setChanged();
+            if (fed > 0) {
+                // ⚠️ 用 entry.setValue/it.remove 而非 computeIfPresent(null)：
+                // 迭代中通过 map 删除会 ConcurrentModificationException（潜在崩溃）
+                BigInteger next = entry.getValue().subtract(BigInteger.valueOf(fed));
+                if (next.signum() > 0) {
+                    entry.setValue(next);
+                } else {
+                    it.remove();
+                }
+                fedAll += fed;
             }
+        }
+        if (fedAll > 0) {
+            totalFed = totalFed.add(BigInteger.valueOf(fedAll));
+            setChanged();
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][feeder] 喂出 {} 个 → 蓄水池={}种/合计{}，累计已喂出={}",
+                    fedAll, reservoirSummary()[0],
+                    fmt(totalAmount()), fmt(totalFed));
         }
     }
 
@@ -483,6 +504,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
             }
             if (!simulate) {
                 subtractReservoir(itemKey, take);
+                totalFed = totalFed.add(BigInteger.valueOf(take));
                 setChanged();
             }
             return itemKey.toStack((int) take);
@@ -539,6 +561,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
             reservoirList.add(entryTag);
         }
         tag.put("reservoir", reservoirList);
+        tag.putString("totalFed", totalFed.toString());
     }
 
     @Override
@@ -570,6 +593,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
             } catch (RuntimeException ignored) {
                 // 单条损坏不影响整体
             }
+        }
+        try {
+            totalFed = new BigInteger(tag.getString("totalFed"));
+        } catch (RuntimeException ignored) {
+            totalFed = BigInteger.ZERO;
         }
     }
 
@@ -607,6 +635,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity implements ICrafti
             out.add(name + " × " + fmt(entry.getValue()));
         }
         return out;
+    }
+
+    /** 累计已喂出总量（GUI 状态用）。 */
+    public BigInteger totalFed() {
+        return totalFed;
     }
 
     /** 蓄水池内物品合计（BigInteger，GUI 显示）。 */

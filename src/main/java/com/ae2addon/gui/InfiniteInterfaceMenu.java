@@ -148,7 +148,9 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
     private List<String> buildStatusLines() {
         List<String> lines = new ArrayList<>();
         var summary = feeder.reservoirSummary();
-        lines.add("§e蓄水池: §f" + summary[0] + " §7种 / §f合计 " + summary[1]);
+        lines.add("§e蓄水池: §f" + summary[0] + " §7种 / §f合计 " + summary[1]
+                + " §8| §e已喂出: §f"
+                + com.ae2addon.block.InfiniteInterfaceBE.fmt(feeder.totalFed()));
         lines.add("§7自动补货目标: §f" + com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET + " §7/种"
                 + (com.ae2addon.block.InfiniteInterfaceBE.STOCK_TARGET <= 0 ? " §c(关闭)" : ""));
         var front = feeder.getFront();
