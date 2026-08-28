@@ -10,6 +10,7 @@
   "gui.ae2addon.mode2_config": "Custom Infinite Configuration",
   "gui.ae2addon.infinite_interface.title": "ME Interface (Infinite)",
   "gui.ae2addon.infinite_interface.player_inv": "Inventory",
+  "gui.ae2addon.infinite_interface.patterns": "§7Patterns",
 
   "gui.ae2addon.cell.name": "§5Universal Infinite [%s]",
   "gui.ae2addon.mode.unlimited": "§aUnlimited",

@@ -1,9 +1,7 @@
 package com.ae2addon.gui;
 
-import com.ae2addon.block.InfiniteInterfaceBE;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
-import net.minecraft.client.resources.language.I18n;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.Slot;
@@ -12,23 +10,20 @@ import java.util.List;
 
 /**
  * ME 接口（无限级）配置界面（简洁版）：
- * 3×3 样板槽 + 蓄水池状态行（FeederStatusPacket 同步）。
+ * 3×3 样板槽（上）+ 蓄水池状态行（中）+ 玩家背包（下）。
  * <p>
  * 自绘背景（无贴图依赖）：暗色面板 + 槽位底框。
+ * <p>
+ * 布局（2026-08-28 修）：状态行不再压玩家背包——窗口加高到 214，
+ * 背包整体下移；样板槽上方加「样板槽」标签防误认成投掷器。
  */
 public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInterfaceMenu> {
 
     private static final int W = 176;
-    private static final int H = 166;
-
-    public InfiniteInterfaceScreen(InfiniteInterfaceMenu menu, Inventory playerInventory,
-            Component title) {
-        super(menu, playerInventory, title);
-        imageWidth = W;
-        imageHeight = H;
-        titleLabelY = 6;
-        inventoryLabelY = H - 82;
-    }
+    private static final int H = 214;
+    private static final int STATUS_X = 8;
+    private static final int STATUS_Y = 60;
+    private static final int STATUS_LINE_H = 8;
 
     /** 蓄水池状态行（服务端 FeederStatusPacket → 主线程）。 */
     public static void handleStatus(List<String> lines) {
@@ -36,6 +31,15 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         if (mc.screen instanceof InfiniteInterfaceScreen screen) {
             screen.menu.statusLines = lines;
         }
+    }
+
+    public InfiniteInterfaceScreen(InfiniteInterfaceMenu menu, Inventory playerInventory,
+            Component title) {
+        super(menu, playerInventory, title);
+        imageWidth = W;
+        imageHeight = H;
+        titleLabelY = 6;
+        inventoryLabelY = 108;
     }
 
     @Override
@@ -67,21 +71,26 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     @Override
     protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
         g.drawString(font, title, titleLabelX, titleLabelY, 0xFFFFAA, false);
+
+        // 样板槽标签（3×3 格上方，防误认成投掷器）
+        g.drawString(font,
+                Component.translatable("gui.ae2addon.infinite_interface.patterns"),
+                62, 6, 0xAAAAAA, false);
+
         g.drawString(font, Component.translatable("gui.ae2addon.infinite_interface.player_inv"),
                 inventoryLabelX, inventoryLabelY, 0xAAAAAA, false);
 
-        // 蓄水池状态行（状态区：样板槽下方、背包上方）
+        // 蓄水池状态行（样板槽下方、背包上方；最多 6 行，超长截断）
         List<String> lines = menu.statusLines;
-        int lineY = 72;
-        for (int i = 0; i < Math.min(lines.size(), 7); i++) {
+        int lineY = STATUS_Y;
+        for (int i = 0; i < Math.min(lines.size(), 6); i++) {
             String line = lines.get(i);
-            // 太长截断（去掉 § 码后按像素宽度截断）
             String stripped = line.replaceAll("§.", "");
             if (font.width(stripped) > W - 16) {
                 line = font.plainSubstrByWidth(line, W - 20) + "…";
             }
-            g.drawString(font, Component.literal(line), 8, lineY, 0xFFFFFF, false);
-            lineY += 9;
+            g.drawString(font, Component.literal(line), STATUS_X, lineY, 0xFFFFFF, false);
+            lineY += STATUS_LINE_H;
         }
     }
 
