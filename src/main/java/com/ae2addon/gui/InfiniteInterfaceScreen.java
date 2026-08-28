@@ -27,8 +27,8 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
 
     private static final int W = 176;
     private static final int H = 237;
-    private static final int MAX_STATUS_LINES = 4;
-    private static final int STATUS_Y = 138;
+    private static final int MAX_STATUS_LINES = 3;
+    private static final int STATUS_Y = 137;
 
     private static final String[] KEYS = {"stockTarget", "restockInterval", "feedBudget"};
     private static final String[] LABELS = {
@@ -353,7 +353,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                 // 一行放得下：原样（保留颜色）
                 if (shown >= MAX_STATUS_LINES) break;
                 g.drawString(font, comp, 8, lineY, 0xFFFFFF, false);
-                lineY += 5;
+                lineY += 7;
                 shown++;
                 continue;
             }
@@ -361,7 +361,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             for (String seg : wrapByWidth(font, stripped, W - 16)) {
                 if (shown >= MAX_STATUS_LINES) break outer;
                 g.drawString(font, Component.literal(seg), 8, lineY, 0xFFFFFF, false);
-                lineY += 5;
+                lineY += 7;
                 shown++;
             }
         }
