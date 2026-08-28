@@ -489,13 +489,13 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                     if (slot != 0) {
                         return net.minecraft.world.item.ItemStack.EMPTY;
                     }
-                    // 蓄水池最多物品预览（管道能看到 → 可抽取）
+                    // 蓄水池最多物品预览（显示真实数量；抽取仍按 FEED_STACK 分批）
                     var best = largestItem();
                     if (best == null || !(best.getKey() instanceof AEItemKey itemKey)) {
                         return net.minecraft.world.item.ItemStack.EMPTY;
                     }
                     long amount = best.getValue()
-                            .min(BigInteger.valueOf(FEED_STACK)).longValue();
+                            .min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
                     return itemKey.toStack((int) Math.max(1, amount));
                 }
 
@@ -1741,7 +1741,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 return ItemStack.EMPTY;
             }
             long amount = best.getValue()
-                    .min(BigInteger.valueOf(FEED_STACK)).longValue();
+                    .min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
             return ((AEItemKey) best.getKey()).toStack((int) Math.max(1, amount));
         }
 
