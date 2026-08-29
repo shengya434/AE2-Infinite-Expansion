@@ -265,6 +265,9 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
         com.ae2addon.AE2Addon.LOGGER.warn(
                 "[ae2addon] 模拟拦截被调用 what={} amount={} isCancelled={}",
                 what, amount, callback.isCancelled());
+        // 2026-08-29 诊断已清理：此前打印 getCraftingFor/getProviders 定位
+        // 「用成品合成成品」，根因是接口 getEmitableItems 重写导致 canEmit=true，
+        // 与第三方 mixin 无关，诊断代码已移除。
         // 2026-08-27：AE2-VM 等更高/同优先级 mod 已接管（cancel+setReturnValue）→ 让路，
         // 避免覆盖对方的计算结果（本类 priority=1200 低于 VM 的 2000，正常我们先执行）。
         if (callback.isCancelled()) {

@@ -2000,33 +2000,6 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             }
         }
         patterns = List.copyOf(list);
-        // 2026-08-29 诊断：接口自己注册了哪些样板（定位 X→X 型样板问题）
-        try {
-            com.ae2addon.AE2Addon.LOGGER.warn(
-                    "[ae2addon][pattern] 接口{} 注册样板 {} 个：",
-                    worldPosition, patterns.size());
-            for (var p : patterns) {
-                StringBuilder sbIn = new StringBuilder();
-                for (var in : p.getInputs()) {
-                    for (var c : in.getPossibleInputs()) {
-                        if (c != null && c.what() != null) {
-                            sbIn.append(c.what()).append("x").append(c.amount()).append(" ");
-                        }
-                    }
-                }
-                StringBuilder sbOut = new StringBuilder();
-                for (var o : p.getOutputs()) {
-                    if (o != null && o.what() != null) {
-                        sbOut.append(o.what()).append("x").append(o.amount()).append(" ");
-                    }
-                }
-                com.ae2addon.AE2Addon.LOGGER.warn(
-                        "[ae2addon][pattern]   样板 {} | 输入[{}] 输出[{}]",
-                        p.getClass().getName(), sbIn, sbOut);
-            }
-        } catch (RuntimeException e) {
-            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon][pattern] 注册样板日志失败", e);
-        }
         if (getMainNode().isReady()) {
             ICraftingProvider.requestUpdate(getMainNode());
         }
