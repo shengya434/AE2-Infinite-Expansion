@@ -1596,7 +1596,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 IItemHandler handler = itemCap.orElse(null);
                 if (handler != null && handler.getSlots() > 0) {
                     boolean found = false;
-                    for (int slot = 0; slot < handler.getSlots(); slot++) {
+                    for (int slot = 0; slot < handler.getSlots() && !found; slot++) {
                         var extracted = handler.extractItem(slot, EXTRACT_STACK, true);
                         if (extracted.isEmpty()) {
                             continue;
@@ -1608,16 +1608,49 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (isMarkedMaterial(key)) {
                             continue; // 材料不抽（防回流）
                         }
+                        // ⚠️ 部分机器的 IItemHandler 把单次 extractItem 钳制在物品最大堆叠
+                        // （Mekanism 箱子/箱柜 = min(槽内数量, maxStackSize)，原版物品=64），
+                        // 配置的每次抽取量一次拿不完 → 循环试探凑满（2026-08-29 sensei 实测 1024 只出 64）。
+                        // 先模拟收集可抽总量（一次入网），再按网络实际接收量实抽。
+                        int remaining = EXTRACT_STACK;
+                        long available = 0;
+                        int guard = 0;
+                        while (remaining > 0 && guard++ < 65536) {
+                            var part = handler.extractItem(slot, remaining, true);
+                            if (part.isEmpty()) {
+                                break;
+                            }
+                            var partKey = appeng.api.stacks.AEItemKey.of(part);
+                            if (partKey == null || !partKey.equals(key)) {
+                                break; // 槽内容变化（防御）
+                            }
+                            int n = Math.min(part.getCount(), remaining);
+                            if (n <= 0) {
+                                break;
+                            }
+                            available += n;
+                            remaining -= n;
+                        }
+                        if (available <= 0) {
+                            continue;
+                        }
                         long inserted = storage.insert(
-                                key, extracted.getCount(), Actionable.MODULATE, actionSource);
+                                key, available, Actionable.MODULATE, actionSource);
                         if (inserted > 0) {
-                            handler.extractItem(slot, (int) inserted, false);
+                            // 按网络实收量从机器取出（单次仍可能被钳制，循环取）
+                            int toExtract = (int) Math.min(inserted, Integer.MAX_VALUE);
+                            while (toExtract > 0) {
+                                var got = handler.extractItem(slot, toExtract, false);
+                                if (got.isEmpty()) {
+                                    break;
+                                }
+                                toExtract -= Math.min(got.getCount(), toExtract);
+                            }
                             found = true;
                             com.ae2addon.AE2Addon.LOGGER.info(
                                     "[ae2addon][feeder] 主动抽取: {} x{} → 网络（槽{}）",
                                     key, inserted, slot);
                         }
-                        break;
                     }
                     if (!found && (level.getGameTime() & 0xFF) == 0) {
                         // 节流诊断：为什么抽不到
