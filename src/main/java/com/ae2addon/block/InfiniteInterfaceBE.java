@@ -2240,19 +2240,22 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     @Override
     public <T> LazyOptional<T> getCapability(Capability<T> cap, @Nullable Direction side) {
-        if (cap == ForgeCapabilities.ITEM_HANDLER && side == getFront()) {
+        boolean front = side == getFront();
+        // 正面物品：FrontItemHandler（机器抽蓄水池 + 被动输入进网络）
+        if (front && cap == ForgeCapabilities.ITEM_HANDLER) {
             return frontHandler.cast();
         }
-        // 网络入口（非正面）：外界送入的物品/流体直接进网络
-        if (side != getFront()) {
+        // 网络入口：侧面全部 + 正面流体/气体（被动输入）；送入进网络、抽取走蓄水池
+        boolean isGas = com.ae2addon.compat.MekanismGasCompat.isLoaded()
+                && cap == mekanism.common.capabilities.Capabilities.GAS_HANDLER;
+        if (!front || cap == ForgeCapabilities.FLUID_HANDLER || isGas) {
             if (cap == ForgeCapabilities.ITEM_HANDLER) {
                 return net.minecraftforge.common.util.LazyOptional.of(() -> networkItemHandler).cast();
             }
             if (cap == ForgeCapabilities.FLUID_HANDLER) {
                 return net.minecraftforge.common.util.LazyOptional.of(() -> networkFluidHandler).cast();
             }
-            if (com.ae2addon.compat.MekanismGasCompat.isLoaded()
-                    && cap == mekanism.common.capabilities.Capabilities.GAS_HANDLER) {
+            if (isGas) {
                 return net.minecraftforge.common.util.LazyOptional.of(() -> networkGasHandler).cast();
             }
         }
@@ -2267,7 +2270,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     /**
      * 正面虚拟单槽：slot 0 = 蓄水池中数量最多的物品。
-     * extractItem 从蓄水池扣；insertItem 一律拒收（防机器回流 → 死循环）。
+     * extractItem 从蓄水池扣；insertItem 被动收下 → 直接进网络
+     * （2026-08-30 sensei：机器 IO 槽位难懂时留后路，机器/管道从正面塞的产物能接住）。
      */
     private final class FrontItemHandler implements IItemHandler {
 
@@ -2292,7 +2296,35 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
         @Override
         public ItemStack insertItem(int slot, ItemStack stack, boolean simulate) {
-            return stack; // 拒收：防回流
+            // 正面被动输入：机器/管道从正面塞入 → 直接进网络（与侧面入口一致）
+            if (stack.isEmpty()) {
+                return ItemStack.EMPTY;
+            }
+            IGrid grid = getMainNode().getGrid();
+            if (grid == null) {
+                return stack;
+            }
+            try {
+                var key = appeng.api.stacks.AEItemKey.of(stack);
+                if (key == null) {
+                    return stack;
+                }
+                long inserted = grid.getStorageService().getInventory().insert(
+                        key, stack.getCount(),
+                        simulate ? Actionable.SIMULATE : Actionable.MODULATE,
+                        actionSource);
+                if (inserted <= 0) {
+                    return stack;
+                }
+                if (inserted >= stack.getCount()) {
+                    return ItemStack.EMPTY;
+                }
+                ItemStack rest = stack.copy();
+                rest.setCount(stack.getCount() - (int) inserted);
+                return rest;
+            } catch (RuntimeException e) {
+                return stack;
+            }
         }
 
         @Override
@@ -2327,7 +2359,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
         @Override
         public boolean isItemValid(int slot, ItemStack stack) {
-            return false; // 只出不进
+            return !stack.isEmpty(); // 被动输入：收机器/管道塞入
         }
 
     }
