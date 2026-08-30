@@ -1583,13 +1583,14 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         MEStorage storage = grid.getStorageService().getInventory();
         Direction side = extractDir.getOpposite();
         try {
-            // 物品：遍历所有槽找产物（标记材料跳过）；抽到即停
+            // 物品：遍历所有槽找产物（标记材料跳过）；全部槽轮流抽
+            // （2026-08-30 sensei：多槽机器只抽 1 槽 → 去掉抽到即停）
             var itemCap = target.getCapability(ForgeCapabilities.ITEM_HANDLER, side);
             if (itemCap.isPresent()) {
                 IItemHandler handler = itemCap.orElse(null);
                 if (handler != null && handler.getSlots() > 0) {
                     boolean found = false;
-                    for (int slot = 0; slot < handler.getSlots() && !found; slot++) {
+                    for (int slot = 0; slot < handler.getSlots(); slot++) {
                         var extracted = handler.extractItem(slot, EXTRACT_STACK, true);
                         if (extracted.isEmpty()) {
                             continue;
@@ -1660,49 +1661,93 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                     }
                 }
             }
-            // 流体：drain 1 桶（产物跳过标记材料）
+            // 流体：逐罐 drain（产物跳过标记材料；2026-08-30 多罐机器全罐抽）
             var fluidCap = target.getCapability(ForgeCapabilities.FLUID_HANDLER, side);
             if (fluidCap.isPresent()) {
                 var fluidHandler = fluidCap.orElse(null);
                 if (fluidHandler != null && fluidHandler.getTanks() > 0) {
-                    var drained = fluidHandler.drain(EXTRACT_FLUID, net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.SIMULATE);
-                    if (!drained.isEmpty()) {
-                        var key = appeng.api.stacks.AEFluidKey.of(drained.getFluid());
-                        if (key != null && !isMarkedMaterial(key)) {
-                            long inserted = storage.insert(
-                                    key, drained.getAmount(), Actionable.MODULATE, actionSource);
-                            if (inserted > 0) {
-                                fluidHandler.drain((int) inserted, net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.EXECUTE);
-                                com.ae2addon.AE2Addon.LOGGER.info(
-                                        "[ae2addon][feeder] 主动抽取: {} {}mB → 网络", key, inserted);
-                            }
+                    for (int tank = 0; tank < fluidHandler.getTanks(); tank++) {
+                        var inTank = fluidHandler.getFluidInTank(tank);
+                        if (inTank.isEmpty()) {
+                            continue;
+                        }
+                        var key = appeng.api.stacks.AEFluidKey.of(inTank.getFluid());
+                        if (key == null || isMarkedMaterial(key)) {
+                            continue;
+                        }
+                        long amount = Math.min(inTank.getAmount(), EXTRACT_FLUID);
+                        if (amount <= 0) {
+                            continue;
+                        }
+                        var drained = fluidHandler.drain(new net.minecraftforge.fluids.FluidStack(
+                                inTank.getFluid(), (int) amount),
+                                net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.SIMULATE);
+                        if (drained.isEmpty()) {
+                            continue;
+                        }
+                        long inserted = storage.insert(
+                                key, drained.getAmount(), Actionable.MODULATE, actionSource);
+                        if (inserted > 0) {
+                            fluidHandler.drain(new net.minecraftforge.fluids.FluidStack(
+                                    inTank.getFluid(), (int) inserted),
+                                    net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.EXECUTE);
+                            com.ae2addon.AE2Addon.LOGGER.info(
+                                    "[ae2addon][feeder] 主动抽取: {} {}mB → 网络（罐{}）", key, inserted, tank);
                         }
                     }
                 }
             }
-            // 气体：extractChemical 1 单位（产物跳过标记材料）
+            // 化学物（气体/灌注/颜料/浆液）：遍历各类型 handler 所有罐
+            // （2026-08-30 sensei：原来只抽气体，浆液/颜料抽不出来）
             if (com.ae2addon.compat.MekanismGasCompat.isLoaded()) {
-                var gasCap = target.getCapability(mekanism.common.capabilities.Capabilities.GAS_HANDLER, side);
-                if (gasCap.isPresent()) {
-                    var gasHandler = gasCap.orElse(null);
-                    if (gasHandler != null && gasHandler.getTanks() > 0) {
-                        var extracted = gasHandler.extractChemical(EXTRACT_GAS, mekanism.api.Action.SIMULATE);
-                        if (!extracted.isEmpty()) {
-                            AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(extracted);
-                            if (key != null && !isMarkedMaterial(key)) {
-                                long inserted = storage.insert(
-                                        key, extracted.getAmount(), Actionable.MODULATE, actionSource);
-                                if (inserted > 0) {
-                                    gasHandler.extractChemical((int) inserted, mekanism.api.Action.EXECUTE);
-                                    com.ae2addon.AE2Addon.LOGGER.info(
-                                            "[ae2addon][feeder] 主动抽取: {} {}单位 → 网络", key, inserted);
-                                }
-                            }
-                        }
-                    }
-                }
+                extractChemicalsFrom(target, side, storage, mekanism.common.capabilities.Capabilities.GAS_HANDLER);
+                extractChemicalsFrom(target, side, storage, mekanism.common.capabilities.Capabilities.INFUSION_HANDLER);
+                extractChemicalsFrom(target, side, storage, mekanism.common.capabilities.Capabilities.PIGMENT_HANDLER);
+                extractChemicalsFrom(target, side, storage, mekanism.common.capabilities.Capabilities.SLURRY_HANDLER);
             }
         } catch (RuntimeException ignored) {
+        }
+    }
+
+    /** 化学物抽取（气体/灌注/颜料/浆液）：遍历指定类型 handler 的所有罐（2026-08-30 sensei）。 */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private void extractChemicalsFrom(BlockEntity target, Direction side, MEStorage storage,
+            net.minecraftforge.common.capabilities.Capability<?> cap) {
+        var lo = target.getCapability(cap, side);
+        if (!lo.isPresent()) {
+            return;
+        }
+        Object h = lo.orElse(null);
+        if (!(h instanceof mekanism.api.chemical.IChemicalHandler<?, ?> ch) || ch.getTanks() <= 0) {
+            return;
+        }
+        for (int tank = 0; tank < ch.getTanks(); tank++) {
+            var inTank = ch.getChemicalInTank(tank);
+            if (inTank == null || inTank.isEmpty()) {
+                continue;
+            }
+            AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(inTank);
+            if (key == null || isMarkedMaterial(key)) {
+                continue;
+            }
+            long amount = Math.min(inTank.getAmount(), EXTRACT_GAS);
+            if (amount <= 0) {
+                continue;
+            }
+            var sim = ch.extractChemical(tank, amount, mekanism.api.Action.SIMULATE);
+            if (sim == null || sim.isEmpty()) {
+                continue;
+            }
+            long got = Math.min(sim.getAmount(), amount);
+            if (got <= 0) {
+                continue;
+            }
+            long inserted = storage.insert(key, got, Actionable.MODULATE, actionSource);
+            if (inserted > 0) {
+                ch.extractChemical(tank, inserted, mekanism.api.Action.EXECUTE);
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][feeder] 主动抽取: {} {}单位 → 网络（罐{}）", key, inserted, tank);
+            }
         }
     }
 

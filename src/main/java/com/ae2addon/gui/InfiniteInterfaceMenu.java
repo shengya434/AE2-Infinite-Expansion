@@ -31,6 +31,15 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
     /** 打开菜单的玩家（服务端广播用；AbstractContainerMenu 无 getPlayer()）。 */
     private final Player opener;
 
+    /** 网络工具 3×3 卡槽栏位置（GUI 右下角，与右缘对齐；2026-08-30 sensei）。 */
+    public static final int TOOLBOX_X = 157;
+    public static final int TOOLBOX_Y = 101;
+
+    /** 网络工具联动：背包有网络工具时显示其 3×3 卡槽栏（null=无工具）。 */
+    private final appeng.items.contents.NetworkToolMenuHost toolHost;
+    /** 网络工具所在玩家背包槽位（-1=无）。 */
+    private final int toolSlot;
+
     /** 客户端：蓄水池状态行（FeederStatusPacket 同步）。 */
     public volatile List<String> statusLines = List.of();
 
@@ -93,6 +102,34 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         }
         for (int col = 0; col < 9; col++) {
             addSlot(new Slot(playerInventory, col, 8 + col * 18, 215));
+        }
+        // 网络工具 3×3 卡槽栏（右下角）：背包里有网络工具时出现，可放升级卡
+        // （AE2 原版行为：打开机器 GUI 时显示工具内的卡，方便换卡）
+        var foundTool = appeng.items.tools.NetworkToolItem.findNetworkToolInv(opener);
+        this.toolHost = foundTool;
+        Integer ts = foundTool == null ? null : foundTool.getSlot();
+        this.toolSlot = ts == null ? -1 : ts;
+        if (toolHost != null) {
+            var toolContainer = toolHost.getInternalInventory().toContainer();
+            for (int i = 0; i < 9; i++) {
+                int col = i % 3;
+                int row = i / 3;
+                addSlot(new ToolboxSlot(toolContainer, i,
+                        TOOLBOX_X + col * 18, TOOLBOX_Y + row * 18));
+            }
+        }
+    }
+
+    /** 网络工具卡槽：只收升级卡（任意 mod 注册的卡；AE2 工具箱同款规则）。 */
+    private static class ToolboxSlot extends Slot {
+        ToolboxSlot(net.minecraft.world.Container inv, int index, int x, int y) {
+            super(inv, index, x, y);
+        }
+
+        @Override
+        public boolean mayPlace(ItemStack stack) {
+            return stack.isEmpty()
+                    || appeng.api.upgrades.Upgrades.isUpgradeCardItem(stack.getItem());
         }
     }
 
@@ -178,6 +215,11 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         return feeder;
     }
 
+    /** 背包是否有网络工具（客户端据此画 3×3 卡槽栏底框）。 */
+    public boolean hasToolbox() {
+        return toolHost != null;
+    }
+
     /** Screen 渲染槽位底框用（slots 是 protected，外部不可见）。 */
     public List<Slot> getSlotList() {
         return slots;
@@ -185,7 +227,16 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
 
     @Override
     public boolean stillValid(Player player) {
-        return !feeder.isRemoved();
+        if (feeder.isRemoved()) {
+            return false;
+        }
+        if (toolHost != null && toolSlot >= 0) {
+            // 网络工具被移动/移除 → 关闭菜单（AE2 同款行为）
+            if (player.getInventory().getItem(toolSlot) != toolHost.getItemStack()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -241,8 +292,9 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         int patternEnd = 45;
         int markerEnd = 90;
         int upgradeEnd = 99;
-        int invEnd = 126;   // 玩家主格 27（99..125）
-        int hotbarEnd = 135; // 快捷栏 9（126..134）；总 135 格
+        int invEnd = 126;    // 玩家主格 27（99..125）
+        int hotbarEnd = 135; // 快捷栏 9（126..134）
+        int toolboxEnd = 144; // 网络工具 9（135..143）；总 144 格
 
         if (slotIndex < patternEnd) {
             // 样板槽 → 玩家背包
@@ -256,6 +308,13 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         } else if (slotIndex < upgradeEnd) {
             // 升级槽 → 玩家背包
             if (!moveItemStackTo(stack, upgradeEnd, hotbarEnd, true)) {
+                return ItemStack.EMPTY;
+            }
+        } else if (slotIndex < toolboxEnd) {
+            // 网络工具卡槽：优先 → 接口升级槽（90..98）；其次 → 玩家背包
+            if (!moveItemStackTo(stack, upgradeEnd - 9, upgradeEnd, false)
+                    && !moveItemStackTo(stack, upgradeEnd, invEnd, false)
+                    && !moveItemStackTo(stack, invEnd, hotbarEnd, false)) {
                 return ItemStack.EMPTY;
             }
         } else {

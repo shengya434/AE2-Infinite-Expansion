@@ -25,10 +25,12 @@ import java.util.Locale;
  */
 public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInterfaceMenu> {
 
-    private static final int W = 176;
+    private static final int W = 211; // 2026-08-30：右扩 35px 容纳网络工具 3×3 卡槽栏
     private static final int H = 237;
     private static final int MAX_STATUS_LINES = 3;
     private static final int STATUS_Y = 137;
+    /** 状态行最大宽度（避开右侧网络工具卡槽栏）。 */
+    private static final int STATUS_MAX_W = 145;
 
     private static final String[] KEYS = {"stockTarget", "restockInterval", "feedBudget"};
     private static final String[] LABELS = {
@@ -258,6 +260,17 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         g.fill(x, y, x + 1, y + H, 0xFF555555);
         g.fill(x + W - 1, y, x + W, y + H, 0xFF555555);
 
+        // 网络工具 3×3 卡槽栏底框（右下角；有工具时显示）
+        if (menu.hasToolbox()) {
+            int px = x + InfiniteInterfaceMenu.TOOLBOX_X - 4;
+            int py = y + InfiniteInterfaceMenu.TOOLBOX_Y - 4;
+            g.fill(px, py, px + 58, py + 58, 0xF0101010);
+            g.fill(px, py, px + 58, py + 1, 0xFF555555);
+            g.fill(px, py + 57, px + 58, py + 58, 0xFF555555);
+            g.fill(px, py, px + 1, py + 58, 0xFF555555);
+            g.fill(px + 57, py, px + 58, py + 58, 0xFF555555);
+        }
+
         // 槽位底框（renderBg 无 translate，须手动加 leftPos/topPos）
         for (Slot slot : menu.getSlotList()) {
             if (slot.isActive()) {
@@ -349,17 +362,17 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             String text = comp.getString();
             String stripped = text.replaceAll("§.", "");
             boolean isLast = (i == total - 1);
-            if (isLast && font.width(stripped) > W - 16) {
+            if (isLast && font.width(stripped) > STATUS_MAX_W) {
                 // 最后一行（开关行，最重要）：超宽拆行，保证完整可见
-                List<String> wraps = wrapByWidth(font, stripped, W - 16);
+                List<String> wraps = wrapByWidth(font, stripped, STATUS_MAX_W);
                 for (int j = 0; j < wraps.size(); j++) {
                     g.drawString(font, Component.literal(wraps.get(j)), 8, lineY, 0xFFFFFF, false);
                     lineY += (j < wraps.size() - 1) ? 5 : 7;
                 }
             } else {
                 // 前几行：超宽截断省略号，不换行（换行配额留给最后一行）
-                if (font.width(stripped) > W - 16) {
-                    comp = Component.literal(font.plainSubstrByWidth(stripped, W - 20) + "…");
+                if (font.width(stripped) > STATUS_MAX_W) {
+                    comp = Component.literal(font.plainSubstrByWidth(stripped, STATUS_MAX_W - 4) + "…");
                 }
                 g.drawString(font, comp, 8, lineY, 0xFFFFFF, false);
                 lineY += 7;
