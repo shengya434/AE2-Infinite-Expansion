@@ -2221,12 +2221,366 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 }
             };
 
+    /** 化学物塞入网络入口 → 直接进网络（返回剩余；气体/灌注/颜料/浆液通用，2026-08-30）。 */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private <C extends mekanism.api.chemical.Chemical<C>, S extends mekanism.api.chemical.ChemicalStack<C>>
+            S insertChemToNetwork(S resource, mekanism.api.Action action) {
+        if (resource.isEmpty()) {
+            return resource;
+        }
+        IGrid grid = getMainNode().getGrid();
+        if (grid == null) {
+            return resource;
+        }
+        try {
+            AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(resource);
+            if (key == null) {
+                return resource;
+            }
+            long inserted = grid.getStorageService().getInventory().insert(
+                    key, resource.getAmount(),
+                    action.simulate() ? Actionable.SIMULATE : Actionable.MODULATE,
+                    actionSource);
+            if (inserted <= 0) {
+                return resource;
+            }
+            if (inserted >= resource.getAmount()) {
+                S empty = (S) resource.copy();
+                empty.setAmount(0);
+                return empty;
+            }
+            S rest = (S) resource.copy();
+            rest.setAmount(resource.getAmount() - inserted);
+            return rest;
+        } catch (RuntimeException e) {
+            return resource;
+        }
+    }
+
+    /** 按指定化学物从蓄水池抽取（返回抽出的 stack；气体/灌注/颜料/浆液通用）。 */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private <C extends mekanism.api.chemical.Chemical<C>, S extends mekanism.api.chemical.ChemicalStack<C>>
+            S extractChemFromReservoir(S stack, mekanism.api.Action action) {
+        if (stack.isEmpty()) {
+            return stack;
+        }
+        AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(stack);
+        if (key == null) {
+            return stack;
+        }
+        long have = reservoirAmount(key);
+        long take = Math.min(have, stack.getAmount());
+        if (take <= 0) {
+            S empty = (S) stack.copy();
+            empty.setAmount(0);
+            return empty;
+        }
+        if (!action.simulate()) {
+            subtractReservoir(key, take);
+            setChanged();
+        }
+        S out = (S) stack.copy();
+        out.setAmount(take);
+        return out;
+    }
+
+    private final mekanism.api.chemical.infuse.IInfusionHandler networkInfusionHandler =
+            new mekanism.api.chemical.infuse.IInfusionHandler() {
+                @Override
+                public int getTanks() {
+                    return 1;
+                }
+
+                @Override
+                public mekanism.api.chemical.infuse.InfusionStack getChemicalInTank(int tank) {
+                    if (tank != 0) {
+                        return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
+                    }
+                    var best = largestChemical(me.ramidzkh.mekae2.ae2.MekanismKey.INFUSION);
+                    if (best == null) {
+                        return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
+                    }
+                    var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                    if (mk == null
+                            || !(mk.getStack() instanceof mekanism.api.chemical.infuse.InfusionStack st)) {
+                        return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
+                    }
+                    long amt = best.getValue().min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                    return new mekanism.api.chemical.infuse.InfusionStack(st.getType(), (int) Math.max(1, amt));
+                }
+
+                @Override
+                public void setChemicalInTank(int tank, mekanism.api.chemical.infuse.InfusionStack stack) {
+                    // 只读（蓄水池视图），忽略写入
+                }
+
+                @Override
+                public long getTankCapacity(int tank) {
+                    return Integer.MAX_VALUE;
+                }
+
+                @Override
+                public boolean isValid(int tank, mekanism.api.chemical.infuse.InfusionStack stack) {
+                    return !stack.isEmpty();
+                }
+
+                @Override
+                public mekanism.api.chemical.infuse.InfusionStack insertChemical(int tank,
+                        mekanism.api.chemical.infuse.InfusionStack resource, mekanism.api.Action action) {
+                    return insertChemical(resource, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.infuse.InfusionStack extractChemical(int tank, long amount,
+                        mekanism.api.Action action) {
+                    return extractChemical(amount, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.infuse.InfusionStack insertChemical(
+                        mekanism.api.chemical.infuse.InfusionStack resource, mekanism.api.Action action) {
+                    return insertChemToNetwork(resource, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.infuse.InfusionStack extractChemical(long amount,
+                        mekanism.api.Action action) {
+                    if (amount <= 0) {
+                        return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
+                    }
+                    var best = largestChemical(me.ramidzkh.mekae2.ae2.MekanismKey.INFUSION);
+                    if (best == null) {
+                        return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
+                    }
+                    var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                    if (mk == null
+                            || !(mk.getStack() instanceof mekanism.api.chemical.infuse.InfusionStack st)) {
+                        return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
+                    }
+                    long take = best.getValue().min(BigInteger.valueOf(amount))
+                            .min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                    if (take <= 0) {
+                        return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
+                    }
+                    if (!action.simulate()) {
+                        subtractReservoir(best.getKey(), take);
+                        setChanged();
+                    }
+                    return new mekanism.api.chemical.infuse.InfusionStack(st.getType(), (int) take);
+                }
+
+                @Override
+                public mekanism.api.chemical.infuse.InfusionStack extractChemical(
+                        mekanism.api.chemical.infuse.InfusionStack stack, mekanism.api.Action action) {
+                    return extractChemFromReservoir(stack, action);
+                }
+            };
+
+    private final mekanism.api.chemical.pigment.IPigmentHandler networkPigmentHandler =
+            new mekanism.api.chemical.pigment.IPigmentHandler() {
+                @Override
+                public int getTanks() {
+                    return 1;
+                }
+
+                @Override
+                public mekanism.api.chemical.pigment.PigmentStack getChemicalInTank(int tank) {
+                    if (tank != 0) {
+                        return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
+                    }
+                    var best = largestChemical(me.ramidzkh.mekae2.ae2.MekanismKey.PIGMENT);
+                    if (best == null) {
+                        return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
+                    }
+                    var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                    if (mk == null
+                            || !(mk.getStack() instanceof mekanism.api.chemical.pigment.PigmentStack st)) {
+                        return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
+                    }
+                    long amt = best.getValue().min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                    return new mekanism.api.chemical.pigment.PigmentStack(st.getType(), (int) Math.max(1, amt));
+                }
+
+                @Override
+                public void setChemicalInTank(int tank, mekanism.api.chemical.pigment.PigmentStack stack) {
+                    // 只读（蓄水池视图），忽略写入
+                }
+
+                @Override
+                public long getTankCapacity(int tank) {
+                    return Integer.MAX_VALUE;
+                }
+
+                @Override
+                public boolean isValid(int tank, mekanism.api.chemical.pigment.PigmentStack stack) {
+                    return !stack.isEmpty();
+                }
+
+                @Override
+                public mekanism.api.chemical.pigment.PigmentStack insertChemical(int tank,
+                        mekanism.api.chemical.pigment.PigmentStack resource, mekanism.api.Action action) {
+                    return insertChemical(resource, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.pigment.PigmentStack extractChemical(int tank, long amount,
+                        mekanism.api.Action action) {
+                    return extractChemical(amount, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.pigment.PigmentStack insertChemical(
+                        mekanism.api.chemical.pigment.PigmentStack resource, mekanism.api.Action action) {
+                    return insertChemToNetwork(resource, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.pigment.PigmentStack extractChemical(long amount,
+                        mekanism.api.Action action) {
+                    if (amount <= 0) {
+                        return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
+                    }
+                    var best = largestChemical(me.ramidzkh.mekae2.ae2.MekanismKey.PIGMENT);
+                    if (best == null) {
+                        return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
+                    }
+                    var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                    if (mk == null
+                            || !(mk.getStack() instanceof mekanism.api.chemical.pigment.PigmentStack st)) {
+                        return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
+                    }
+                    long take = best.getValue().min(BigInteger.valueOf(amount))
+                            .min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                    if (take <= 0) {
+                        return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
+                    }
+                    if (!action.simulate()) {
+                        subtractReservoir(best.getKey(), take);
+                        setChanged();
+                    }
+                    return new mekanism.api.chemical.pigment.PigmentStack(st.getType(), (int) take);
+                }
+
+                @Override
+                public mekanism.api.chemical.pigment.PigmentStack extractChemical(
+                        mekanism.api.chemical.pigment.PigmentStack stack, mekanism.api.Action action) {
+                    return extractChemFromReservoir(stack, action);
+                }
+            };
+
+    private final mekanism.api.chemical.slurry.ISlurryHandler networkSlurryHandler =
+            new mekanism.api.chemical.slurry.ISlurryHandler() {
+                @Override
+                public int getTanks() {
+                    return 1;
+                }
+
+                @Override
+                public mekanism.api.chemical.slurry.SlurryStack getChemicalInTank(int tank) {
+                    if (tank != 0) {
+                        return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
+                    }
+                    var best = largestChemical(me.ramidzkh.mekae2.ae2.MekanismKey.SLURRY);
+                    if (best == null) {
+                        return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
+                    }
+                    var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                    if (mk == null
+                            || !(mk.getStack() instanceof mekanism.api.chemical.slurry.SlurryStack st)) {
+                        return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
+                    }
+                    long amt = best.getValue().min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                    return new mekanism.api.chemical.slurry.SlurryStack(st.getType(), (int) Math.max(1, amt));
+                }
+
+                @Override
+                public void setChemicalInTank(int tank, mekanism.api.chemical.slurry.SlurryStack stack) {
+                    // 只读（蓄水池视图），忽略写入
+                }
+
+                @Override
+                public long getTankCapacity(int tank) {
+                    return Integer.MAX_VALUE;
+                }
+
+                @Override
+                public boolean isValid(int tank, mekanism.api.chemical.slurry.SlurryStack stack) {
+                    return !stack.isEmpty();
+                }
+
+                @Override
+                public mekanism.api.chemical.slurry.SlurryStack insertChemical(int tank,
+                        mekanism.api.chemical.slurry.SlurryStack resource, mekanism.api.Action action) {
+                    return insertChemical(resource, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.slurry.SlurryStack extractChemical(int tank, long amount,
+                        mekanism.api.Action action) {
+                    return extractChemical(amount, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.slurry.SlurryStack insertChemical(
+                        mekanism.api.chemical.slurry.SlurryStack resource, mekanism.api.Action action) {
+                    return insertChemToNetwork(resource, action);
+                }
+
+                @Override
+                public mekanism.api.chemical.slurry.SlurryStack extractChemical(long amount,
+                        mekanism.api.Action action) {
+                    if (amount <= 0) {
+                        return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
+                    }
+                    var best = largestChemical(me.ramidzkh.mekae2.ae2.MekanismKey.SLURRY);
+                    if (best == null) {
+                        return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
+                    }
+                    var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                    if (mk == null
+                            || !(mk.getStack() instanceof mekanism.api.chemical.slurry.SlurryStack st)) {
+                        return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
+                    }
+                    long take = best.getValue().min(BigInteger.valueOf(amount))
+                            .min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                    if (take <= 0) {
+                        return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
+                    }
+                    if (!action.simulate()) {
+                        subtractReservoir(best.getKey(), take);
+                        setChanged();
+                    }
+                    return new mekanism.api.chemical.slurry.SlurryStack(st.getType(), (int) take);
+                }
+
+                @Override
+                public mekanism.api.chemical.slurry.SlurryStack extractChemical(
+                        mekanism.api.chemical.slurry.SlurryStack stack, mekanism.api.Action action) {
+                    return extractChemFromReservoir(stack, action);
+                }
+            };
+
     /** 蓄水池中数量最多的气体（侧面抽取预览用）。 */
     private Map.Entry<AEKey, BigInteger> largestGas() {
         Map.Entry<AEKey, BigInteger> best = null;
         for (var entry : reservoir.entrySet()) {
             if (!com.ae2addon.compat.MekanismGasCompat.isGas(entry.getKey())
                     || entry.getValue().signum() <= 0) {
+                continue;
+            }
+            if (best == null || entry.getValue().compareTo(best.getValue()) > 0) {
+                best = entry;
+            }
+        }
+        return best;
+    }
+
+    /** 蓄水池中数量最多的指定形态化学物（form=MekanismKey.GAS/INFUSION/PIGMENT/SLURRY）。 */
+    private Map.Entry<AEKey, BigInteger> largestChemical(byte form) {
+        Map.Entry<AEKey, BigInteger> best = null;
+        for (var entry : reservoir.entrySet()) {
+            var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(entry.getKey());
+            if (mk == null || mk.getForm() != form || entry.getValue().signum() <= 0) {
                 continue;
             }
             if (best == null || entry.getValue().compareTo(best.getValue()) > 0) {
@@ -2245,18 +2599,32 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         if (front && cap == ForgeCapabilities.ITEM_HANDLER) {
             return frontHandler.cast();
         }
-        // 网络入口：侧面全部 + 正面流体/气体（被动输入）；送入进网络、抽取走蓄水池
-        boolean isGas = com.ae2addon.compat.MekanismGasCompat.isLoaded()
-                && cap == mekanism.common.capabilities.Capabilities.GAS_HANDLER;
-        if (!front || cap == ForgeCapabilities.FLUID_HANDLER || isGas) {
+        // 网络入口：侧面全部 + 正面流体/化学物（被动输入）；送入进网络、抽取走蓄水池
+        boolean loaded = com.ae2addon.compat.MekanismGasCompat.isLoaded();
+        boolean isChem = loaded && (cap == mekanism.common.capabilities.Capabilities.GAS_HANDLER
+                || cap == mekanism.common.capabilities.Capabilities.INFUSION_HANDLER
+                || cap == mekanism.common.capabilities.Capabilities.PIGMENT_HANDLER
+                || cap == mekanism.common.capabilities.Capabilities.SLURRY_HANDLER);
+        if (!front || cap == ForgeCapabilities.FLUID_HANDLER || isChem) {
             if (cap == ForgeCapabilities.ITEM_HANDLER) {
                 return net.minecraftforge.common.util.LazyOptional.of(() -> networkItemHandler).cast();
             }
             if (cap == ForgeCapabilities.FLUID_HANDLER) {
                 return net.minecraftforge.common.util.LazyOptional.of(() -> networkFluidHandler).cast();
             }
-            if (isGas) {
-                return net.minecraftforge.common.util.LazyOptional.of(() -> networkGasHandler).cast();
+            if (isChem) {
+                if (cap == mekanism.common.capabilities.Capabilities.GAS_HANDLER) {
+                    return net.minecraftforge.common.util.LazyOptional.of(() -> networkGasHandler).cast();
+                }
+                if (cap == mekanism.common.capabilities.Capabilities.INFUSION_HANDLER) {
+                    return net.minecraftforge.common.util.LazyOptional.of(() -> networkInfusionHandler).cast();
+                }
+                if (cap == mekanism.common.capabilities.Capabilities.PIGMENT_HANDLER) {
+                    return net.minecraftforge.common.util.LazyOptional.of(() -> networkPigmentHandler).cast();
+                }
+                if (cap == mekanism.common.capabilities.Capabilities.SLURRY_HANDLER) {
+                    return net.minecraftforge.common.util.LazyOptional.of(() -> networkSlurryHandler).cast();
+                }
             }
         }
         return super.getCapability(cap, side);
