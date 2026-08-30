@@ -599,17 +599,51 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                 return true;
             }
         }
-        // 状态行第 3 行（开关行）点击切换：左半=抽取，右半=喂出
+        // 状态行第 3 行（开关行）点击切换：分区按实际渲染文本自适应
+        // （2026-08-30：硬编码分区在英文方向名/字体宽度下会歪，改为按 [值] 组右边界测量）
         int relX = (int) mouseX - leftPos;
         int relY = (int) mouseY - topPos;
-        if (button == 0 && relY >= 152 && relY <= 161 && relX >= 8 && relX < 170) {
-            String which = relX < 24 ? "extract" : (relX < 44 ? "dir" : (relX < 70 ? "feed" : "markerFeed"));
+        int total = Math.min(menu.statusLines.size(), MAX_STATUS_LINES);
+        int switchY = STATUS_Y + 7 * Math.max(0, total - 1);
+        if (button == 0 && relY >= switchY - 2 && relY <= switchY + 10 && relX >= 8 && relX < 170) {
+            String which = switchZoneAt(relX);
             AE2Addon.NETWORK.sendToServer(
                     new com.ae2addon.network.FeederTogglePacket(
                             getMenu().getFeeder().getBlockPos(), which));
             return true;
         }
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    /** 开关行点击区：按 4 个 [值] 组的实际渲染右边界划分（入/向/出/标），
+     *  自适应语言与方向名宽度；解析失败回退硬编码分区。 */
+    private String switchZoneAt(int relX) {
+        List<String> lines = menu.statusLines;
+        if (lines.size() < 3) {
+            return relX < 24 ? "extract" : (relX < 44 ? "dir" : (relX < 70 ? "feed" : "markerFeed"));
+        }
+        String text = deserialize(lines.get(2)).getString().replaceAll("§.", "");
+        int[] ends = {24, 44, 70, 170}; // 解析失败时兜底
+        int search = 0;
+        for (int g = 0; g < 4; g++) {
+            int open = text.indexOf('[', search);
+            int close = open < 0 ? -1 : text.indexOf(']', open + 1);
+            if (open < 0 || close < 0) {
+                break;
+            }
+            ends[g] = 8 + font.width(text.substring(0, close + 1));
+            search = close + 1;
+        }
+        if (relX < ends[0]) {
+            return "extract";
+        }
+        if (relX < ends[1]) {
+            return "dir";
+        }
+        if (relX < ends[2]) {
+            return "feed";
+        }
+        return "markerFeed";
     }
 
     @Override
