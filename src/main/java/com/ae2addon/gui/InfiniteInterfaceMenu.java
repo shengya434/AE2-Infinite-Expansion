@@ -390,6 +390,8 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 Component.translatable("gui.ae2addon.side."
                         + feeder.extractSide.name().toLowerCase(java.util.Locale.ROOT)),
                 Component.translatable(feeder.activeFeed
+                        ? "gui.ae2addon.feeder.on" : "gui.ae2addon.feeder.off"),
+                Component.translatable(feeder.activeMarkerFeed
                         ? "gui.ae2addon.feeder.on" : "gui.ae2addon.feeder.off"))));
         lines.add(json(Component.translatable("gui.ae2addon.feeder.params",
                 feeder.stockTargetValue(), feeder.restockIntervalValue(), feeder.feedBudgetValue())));

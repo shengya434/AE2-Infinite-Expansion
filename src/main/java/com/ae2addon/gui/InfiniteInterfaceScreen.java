@@ -442,7 +442,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         int relX = (int) mouseX - leftPos;
         int relY = (int) mouseY - topPos;
         if (button == 0 && relY >= 152 && relY <= 161 && relX >= 8 && relX < 170) {
-            String which = relX < 62 ? "extract" : (relX < 110 ? "dir" : "feed");
+            String which = relX < 24 ? "extract" : (relX < 44 ? "dir" : (relX < 70 ? "feed" : "markerFeed"));
             AE2Addon.NETWORK.sendToServer(
                     new com.ae2addon.network.FeederTogglePacket(
                             getMenu().getFeeder().getBlockPos(), which));

@@ -355,6 +355,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     /** 主动喂出（蓄水池 → 正面机器）。 */
     public boolean activeFeed = true;
 
+    /** 标记喂出（标记补货缓存 → 机器；关闭时只喂样板推送材料，2026-08-30 sensei）。 */
+    public boolean activeMarkerFeed = true;
+
+    /** 蓄水池中当前含样板推送材料的 key（标记喂出关闭时只喂这些）。 */
+    private final Set<AEKey> patternKeys = new HashSet<>();
+
     /** 主动抽取方向（相对面，跟随方块朝向；默认正面保持原行为）。 */
     public appeng.api.orientation.RelativeSide extractSide = appeng.api.orientation.RelativeSide.FRONT;
 
@@ -389,6 +395,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         } else if ("feed".equals(which)) {
             activeFeed = !activeFeed;
             com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 主动喂出 {}", activeFeed ? "开" : "关");
+        } else if ("markerFeed".equals(which)) {
+            activeMarkerFeed = !activeMarkerFeed;
+            com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][feeder] 标记喂出 {}", activeMarkerFeed ? "开" : "关");
         } else if ("dir".equals(which)) {
             cycleExtractSide();
             return; // 已在 cycle 内 setChanged
@@ -607,6 +616,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                     long amount = entry.getLongValue();
                     if (key != null && amount > 0) {
                         addReservoir(key, BigInteger.valueOf(amount));
+                        patternKeys.add(key);
                         inputCount += amount;
                         inputTypes++;
                         if (perCluster != null) {
@@ -1453,6 +1463,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if ((entry.getKey() instanceof AEItemKey || entry.getKey() instanceof AEFluidKey
                     || com.ae2addon.compat.MekanismGasCompat.isFeedable(entry.getKey()))
                     && entry.getValue().signum() > 0) {
+                if (!activeMarkerFeed && !patternKeys.contains(entry.getKey())) {
+                    continue; // 标记喂出关闭：标记缓存不计入可喂（只喂样板）
+                }
                 feedable++;
             }
         }
@@ -1471,6 +1484,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if (remain.signum() <= 0) {
                 it.remove();
                 continue;
+            }
+            if (!activeMarkerFeed && !patternKeys.contains(key)) {
+                continue; // 标记喂出关闭：标记补货缓存留蓄水池，不占机器格子
             }
             long amount = remain.min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
             long fed = 0;
@@ -1528,6 +1544,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 if (next.signum() > 0) {
                     entry.setValue(next);
                 } else {
+                    patternKeys.remove(key);
                     it.remove();
                 }
                 fedAll += fed;
@@ -1809,6 +1826,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if ((key instanceof AEFluidKey
                     || com.ae2addon.compat.MekanismGasCompat.isFeedable(key))
                     && entry.getValue().signum() > 0) {
+                if (!activeMarkerFeed && !patternKeys.contains(key)) {
+                    continue; // 标记喂出关闭：标记缓存不喂出属正常，不告警
+                }
                 return true;
             }
         }
@@ -1830,7 +1850,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         reservoir.computeIfPresent(key, (k, v) -> {
             BigInteger next = v.subtract(BigInteger.valueOf(amount));
-            return next.signum() > 0 ? next : null;
+            if (next.signum() <= 0) {
+                patternKeys.remove(key);
+                return null;
+            }
+            return next;
         });
     }
 
@@ -2003,6 +2027,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         tag.put("markerTargets", targetList);
         tag.putBoolean("activeExtract", activeExtract);
         tag.putBoolean("activeFeed", activeFeed);
+        tag.putBoolean("activeMarkerFeed", activeMarkerFeed);
         tag.putString("extractSide", extractSide.name());
         tag.putLong("pStockTarget", pStockTarget);
         tag.putInt("pRestockInterval", pRestockInterval);
@@ -2347,6 +2372,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         tag.put("markerTargets", targetList);
         tag.putBoolean("activeExtract", activeExtract);
         tag.putBoolean("activeFeed", activeFeed);
+        tag.putBoolean("activeMarkerFeed", activeMarkerFeed);
         tag.putString("extractSide", extractSide.name());
         // 每接口独立参数（2026-08-28 修复：之前漏存，重进游戏归零）
         tag.putLong("pStockTarget", pStockTarget);
@@ -2394,6 +2420,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         activeExtract = tag.getBoolean("activeExtract");
         activeFeed = tag.getBoolean("activeFeed");
+        if (tag.contains("activeMarkerFeed")) {
+            activeMarkerFeed = tag.getBoolean("activeMarkerFeed");
+        }
         pStockTarget = tag.contains("pStockTarget") ? tag.getLong("pStockTarget") : -1;
         pRestockInterval = tag.contains("pRestockInterval") ? tag.getInt("pRestockInterval") : -1;
         pFeedBudget = tag.contains("pFeedBudget") ? tag.getInt("pFeedBudget") : -1;
