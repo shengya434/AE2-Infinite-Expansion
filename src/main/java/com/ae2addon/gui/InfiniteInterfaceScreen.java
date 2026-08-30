@@ -216,35 +216,196 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         }
     }
 
-    /** 客户端解析：MAX/INF → Long.MAX；支持 K/M/G/T/P/E 后缀与科学计数。 */
+    /** 客户端解析：MAX/INF → Long.MAX；支持表达式（+ - * / ^ 括号）、K/M/G/T/P 后缀、
+     *  万/亿、科学计数、全角归一（2026-08-30 sensei：10^10 / 10*2 要能用）。 */
     private long parseSetting(String text) throws NumberFormatException {
-        String t = text.trim().toUpperCase(Locale.ROOT);
+        String t = normalizeExpr(text);
         if (t.equals("MAX") || t.equals("INF") || t.equals("INFINITE")) {
             return Long.MAX_VALUE;
         }
-        double unit = 1.0;
-        if (!t.isEmpty()) {
-            char last = t.charAt(t.length() - 1);
-            switch (last) {
-                case 'K' -> { unit = 1e3; t = t.substring(0, t.length() - 1); }
-                case 'M' -> { unit = 1e6; t = t.substring(0, t.length() - 1); }
-                case 'G' -> { unit = 1e9; t = t.substring(0, t.length() - 1); }
-                case 'T' -> { unit = 1e12; t = t.substring(0, t.length() - 1); }
-                case 'P' -> { unit = 1e15; t = t.substring(0, t.length() - 1); }
-                case 'E' -> { unit = 1e18; t = t.substring(0, t.length() - 1); }
-                default -> { }
-            }
-        }
-        double v;
-        try {
-            v = Long.parseLong(t) * unit;
-        } catch (NumberFormatException e) {
-            v = Double.parseDouble(t) * unit;
-        }
-        if (Double.isNaN(v) || v < 0) {
-            throw new NumberFormatException("无效");
+        ExprParser p = new ExprParser(t);
+        double v = p.parseExpr();
+        if (!p.atEnd() || Double.isNaN(v) || !Double.isFinite(v) || v < 0) {
+            throw new NumberFormatException("无效: " + text);
         }
         return (long) Math.min(Long.MAX_VALUE, v);
+    }
+
+    /** 全角→半角、去空白、万/亿→×1e4/×1e8。 */
+    private static String normalizeExpr(String text) {
+        StringBuilder sb = new StringBuilder();
+        for (char c : text.toCharArray()) {
+            if (Character.isWhitespace(c)) {
+                continue;
+            }
+            char n = c;
+            if (c >= '０' && c <= '９') {
+                n = (char) ('0' + (c - '０'));
+            } else if (c >= 'Ａ' && c <= 'Ｚ') {
+                n = (char) ('A' + (c - 'Ａ'));
+            } else if (c >= 'ａ' && c <= 'ｚ') {
+                n = (char) ('a' + (c - 'ａ'));
+            } else {
+                switch (c) {
+                    case '．' -> n = '.';
+                    case '＾' -> n = '^';
+                    case '×', '＊' -> n = '*';
+                    case '－' -> n = '-';
+                    case '＋' -> n = '+';
+                    case '／' -> n = '/';
+                    case '（' -> n = '(';
+                    case '）' -> n = ')';
+                    case '万' -> {
+                        sb.append("*1e4");
+                        continue;
+                    }
+                    case '亿' -> {
+                        sb.append("*1e8");
+                        continue;
+                    }
+                    default -> { }
+                }
+            }
+            sb.append(Character.toUpperCase(n));
+        }
+        return sb.toString();
+    }
+
+    /** 极简表达式解析器：+ - * / ^（^ 右结合；优先级 ^ > 一元负号 > * / > + -）。 */
+    private static class ExprParser {
+        private final String s;
+        private int i;
+
+        ExprParser(String s) {
+            this.s = s;
+        }
+
+        boolean atEnd() {
+            return i >= s.length();
+        }
+
+        private char peek() {
+            return atEnd() ? '\0' : s.charAt(i);
+        }
+
+        private boolean eat(char c) {
+            if (peek() == c) {
+                i++;
+                return true;
+            }
+            return false;
+        }
+
+        double parseExpr() {
+            double v = parseTerm();
+            while (true) {
+                if (eat('+')) {
+                    v += parseTerm();
+                } else if (eat('-')) {
+                    v -= parseTerm();
+                } else {
+                    return v;
+                }
+            }
+        }
+
+        private double parseTerm() {
+            double v = parsePower();
+            while (true) {
+                if (eat('*')) {
+                    v *= parsePower();
+                } else if (eat('/')) {
+                    v /= parsePower();
+                } else {
+                    return v;
+                }
+            }
+        }
+
+        private double parsePower() {
+            double v = parseUnary();
+            if (eat('^')) {
+                v = Math.pow(v, parsePower()); // 右结合：2^3^2 = 2^(3^2)
+            }
+            return v;
+        }
+
+        private double parseUnary() {
+            if (eat('-')) {
+                return -parseUnary();
+            }
+            if (eat('+')) {
+                return parseUnary();
+            }
+            return parseAtom();
+        }
+
+        private double parseAtom() {
+            if (eat('(')) {
+                double v = parseExpr();
+                if (!eat(')')) {
+                    throw new NumberFormatException("缺右括号");
+                }
+                return v;
+            }
+            int start = i;
+            boolean dot = false;
+            while (!atEnd()) {
+                char c = peek();
+                if (c >= '0' && c <= '9') {
+                    i++;
+                } else if (c == '.' && !dot) {
+                    dot = true;
+                    i++;
+                } else {
+                    break;
+                }
+            }
+            if (start == i) {
+                throw new NumberFormatException("缺数字");
+            }
+            // 科学计数指数（1e6 / 2E10）；非指数（如 1E 结尾）回退
+            if (peek() == 'e' || peek() == 'E') {
+                int save = i;
+                i++;
+                if (peek() == '+' || peek() == '-') {
+                    i++;
+                }
+                if (peek() >= '0' && peek() <= '9') {
+                    while (peek() >= '0' && peek() <= '9') {
+                        i++;
+                    }
+                } else {
+                    i = save;
+                }
+            }
+            int numEnd = i; // 数字部分到此为止（后缀不并入数字串）
+            double unit = 1.0;
+            switch (peek()) {
+                case 'K' -> {
+                    unit = 1e3;
+                    i++;
+                }
+                case 'M' -> {
+                    unit = 1e6;
+                    i++;
+                }
+                case 'G' -> {
+                    unit = 1e9;
+                    i++;
+                }
+                case 'T' -> {
+                    unit = 1e12;
+                    i++;
+                }
+                case 'P' -> {
+                    unit = 1e15;
+                    i++;
+                }
+                default -> { }
+            }
+            return Double.parseDouble(s.substring(start, numEnd)) * unit;
+        }
     }
 
     @Override
