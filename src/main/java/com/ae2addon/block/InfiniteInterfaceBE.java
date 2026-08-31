@@ -968,58 +968,29 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return card != null && upgrades.getInstalledUpgrades(card) > 0;
     }
 
-    // ── 频道卡无线链路（ExtendedAE+） ──
+    // ── 频道卡无线链路（ExtendedAE+，惰性持有——缺依赖不崩类加载） ──
 
-    /** 无线从端链路（WirelessSlaveLink；仅装卡且 mod 加载时非 null）。 */
-    private com.extendedae_plus.ae.wireless.WirelessSlaveLink channelLink;
+    /** 无线从端链路持有者（内部 Object 惰性持有 WirelessSlaveLink）。 */
+    private final com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink channelLink =
+            new com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink();
 
     private void updateChannelLink() {
-        if (!com.ae2addon.compat.ExtendedAEPlusCompat.isLoaded()) {
-            return;
-        }
         var card = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
-        long channel = -1;
-        java.util.UUID owner = null;
+        net.minecraft.world.item.ItemStack cardStack = net.minecraft.world.item.ItemStack.EMPTY;
         if (card != null) {
             for (int i = 0; i < upgrades.size(); i++) {
                 var stack = upgrades.getStackInSlot(i);
                 if (stack.getItem() == card) {
-                    channel = com.extendedae_plus.items.materials.ChannelCardItem.getChannel(stack);
-                    owner = com.extendedae_plus.items.materials.ChannelCardItem.getOwnerUUID(stack);
+                    cardStack = stack;
                     break;
                 }
             }
         }
-        try {
-            if (channel < 0) {
-                // 无卡/无效卡：断开
-                if (channelLink != null) {
-                    com.extendedae_plus.util.wireless.ChannelCardLinkHelper.disconnect(channelLink);
-                    channelLink = null;
-                }
-                return;
-            }
-            if (channelLink == null) {
-                var endpoint = new com.extendedae_plus.ae.wireless.endpoint.GenericNodeEndpointImpl(
-                        () -> this, () -> getMainNode().getNode());
-                channelLink = new com.extendedae_plus.ae.wireless.WirelessSlaveLink(endpoint);
-            }
-            channelLink.setPlacerId(owner);
-            channelLink.setFrequency(channel);
-            channelLink.updateStatus();
-        } catch (RuntimeException ignored) {
-            // 无线系统异常不影响主功能
-        }
+        channelLink.update(this, cardStack);
     }
 
     private void disconnectChannelLink() {
-        if (channelLink != null) {
-            try {
-                channelLink.onUnloadOrRemove();
-            } catch (RuntimeException ignored) {
-            }
-            channelLink = null;
-        }
+        channelLink.unload();
     }
 
     /** 红石门控：感应卡安装时，信号高=喂出（反向卡则反转）。 */
