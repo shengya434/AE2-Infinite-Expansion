@@ -1251,12 +1251,15 @@ public class InfiniteInterfacePart extends AEBasePart
 
     @Override
     public boolean onPartShiftActivate(Player p, InteractionHand hand, Vec3 pos) {
-        // shift+右键：升级卡插入 / 配置卡粘贴（AEBasePart.onShiftActivate 门面调此钩子，2026-09-03）
+        // shift+右键：升级卡全插 / 配置卡粘贴（AEBasePart.onShiftActivate 门面调此钩子，2026-09-03）
         if (p.getCommandSenderWorld().isClientSide()) {
             return true;
         }
         ItemStack held = p.getItemInHand(hand);
-        if (insertUpgradeCard(held)) {
+        AE2Addon.LOGGER.info("[ae2addon][panel] onPartShiftActivate held={}",
+                held.isEmpty() ? "空" : held.getHoverName().getString());
+        if (insertUpgradeCards(held, 0)) {
+            AE2Addon.LOGGER.info("[ae2addon][panel] shift+右键插卡成功");
             return true;
         }
         if (held.getItem() instanceof com.ae2addon.item.ConfigCardItem

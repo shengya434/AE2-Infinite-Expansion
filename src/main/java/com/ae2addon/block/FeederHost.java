@@ -183,29 +183,56 @@ public interface FeederHost {
 
     /** 手持升级卡右键接口 = 直接插入（AE2 玩法；已满/不支持返回 false）。 */
     default boolean insertUpgradeCard(ItemStack held) {
+        return insertUpgradeCards(held, 1);
+    }
+
+    /**
+     * 插入升级卡：limit=1 插一张（右键）；limit&lt;=0 全插直到满/手持空（shift+右键，2026-09-03）。
+     *
+     * @return 是否插入了至少一张
+     */
+    default boolean insertUpgradeCards(ItemStack held, int limit) {
         if (held.isEmpty() || !appeng.api.upgrades.Upgrades.isUpgradeCardItem(held)) {
             return false;
         }
         IUpgradeInventory inv = getUpgrades();
         net.minecraft.world.level.ItemLike card = held.getItem();
+        boolean insertedAny = false;
         try {
-            int installed = inv.getInstalledUpgrades(card);
             int max = inv.getMaxInstalled(card);
-            if (max <= 0 || installed >= max) {
-                return false; // 本机不支持或已满
+            if (max <= 0) {
+                return false; // 本机不支持
             }
-            for (int i = 0; i < inv.size(); i++) {
-                if (inv.getStackInSlot(i).isEmpty()) {
-                    ItemStack put = held.copy();
-                    put.setCount(1);
-                    inv.setItemDirect(i, put);
-                    held.shrink(1);
-                    setChanged();
-                    return true;
+            int inserted = 0;
+            while (held.getCount() > 0) {
+                if (inv.getInstalledUpgrades(card) >= max) {
+                    break; // 已满
+                }
+                if (limit > 0 && inserted >= limit) {
+                    break;
+                }
+                boolean placed = false;
+                for (int i = 0; i < inv.size(); i++) {
+                    if (inv.getStackInSlot(i).isEmpty()) {
+                        ItemStack put = held.copy();
+                        put.setCount(1);
+                        inv.setItemDirect(i, put);
+                        held.shrink(1);
+                        placed = true;
+                        inserted++;
+                        break;
+                    }
+                }
+                if (!placed) {
+                    break; // 无空槽
                 }
             }
+            insertedAny = inserted > 0;
         } catch (RuntimeException ignored) {
         }
-        return false;
+        if (insertedAny) {
+            setChanged();
+        }
+        return insertedAny;
     }
 }
