@@ -115,6 +115,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             }
             be.returnPushedForCluster(cluster);
         }
+        // 线缆面板 part 同样回退（2026-09-03）
+        for (var part : com.ae2addon.part.InfiniteInterfacePart.ACTIVE_PARTS) {
+            if (!part.isRemoved()) {
+                part.returnPushedForClusterPublic(cluster);
+            }
+        }
     }
 
     /** 新任务开始：清空该簇的归属记录（材料保留在接口，正常交付语义）。 */
@@ -127,6 +133,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 continue;
             }
             be.pushedByCluster.remove(cluster);
+        }
+        for (var part : com.ae2addon.part.InfiniteInterfacePart.ACTIVE_PARTS) {
+            if (!part.isRemoved()) {
+                part.resetPushedForClusterPublic(cluster);
+            }
         }
     }
 

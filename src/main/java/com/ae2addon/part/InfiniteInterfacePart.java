@@ -116,6 +116,13 @@ public class InfiniteInterfacePart extends AEBasePart
     private boolean activeFeed = true;
     private boolean activeMarkerFeed = true;
     private RelativeSide extractSide = RelativeSide.FRONT;
+    /** 活跃 part 注册表（BE 静态取消回退遍历用）。 */
+    public static final java.util.Set<InfiniteInterfacePart> ACTIVE_PARTS =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** 当前 CPU 任务推送归属：CPU簇 → 物品 → 数量（取消回退用）。 */
+    private final Map<Object, Map<AEKey, BigInteger>> pushedByCluster = new java.util.HashMap<>();
+
     private boolean patternDirty = true;
     private List<IPatternDetails> patterns = List.of();
     private final Map<AEKey, Long> markerTargets = new java.util.LinkedHashMap<>();
@@ -149,12 +156,64 @@ public class InfiniteInterfacePart extends AEBasePart
     public void addToWorld() {
         super.addToWorld();
         removed = false;
+        ACTIVE_PARTS.add(this);
     }
 
     @Override
     public void removeFromWorld() {
         super.removeFromWorld();
         removed = true;
+        ACTIVE_PARTS.remove(this);
+    }
+
+    // ── CPU 任务取消回退（与方块版 BE 同一触发链，2026-09-03） ──
+
+    /** 取消回退：把指定 CPU 簇推送、尚未喂出的材料插回网络。 */
+    private void returnPushedForCluster(Object cluster) {
+        Map<AEKey, BigInteger> pushed = pushedByCluster.remove(cluster);
+        if (pushed == null || pushed.isEmpty()) {
+            return;
+        }
+        IGrid grid = getMainNode().getGrid();
+        var storage = grid == null ? null : grid.getStorageService().getInventory();
+        BigInteger returned = BigInteger.ZERO;
+        for (var entry : pushed.entrySet()) {
+            AEKey key = entry.getKey();
+            long have = reservoirAmount(key);
+            long back = entry.getValue().min(BigInteger.valueOf(have))
+                    .min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
+            if (back <= 0) {
+                continue;
+            }
+            if (storage != null) {
+                long inserted = storage.insert(key, back, Actionable.MODULATE, actionSource);
+                if (inserted > 0) {
+                    subtractReservoir(key, inserted);
+                    returned = returned.add(BigInteger.valueOf(inserted));
+                }
+            } else {
+                subtractReservoir(key, back);
+                returned = returned.add(BigInteger.valueOf(back));
+            }
+        }
+        if (returned.signum() > 0) {
+            setChanged();
+        }
+    }
+
+    /** 新任务开始：清空该簇归属记录（材料保留，正常交付语义）。 */
+    private void resetPushedForCluster(Object cluster) {
+        pushedByCluster.remove(cluster);
+    }
+
+    /** 供方块版静态取消回退遍历调用（2026-09-03）。 */
+    public void returnPushedForClusterPublic(Object cluster) {
+        returnPushedForCluster(cluster);
+    }
+
+    /** 供方块版静态重置遍历调用（2026-09-03）。 */
+    public void resetPushedForClusterPublic(Object cluster) {
+        resetPushedForCluster(cluster);
     }
 
     // ── 模型/碰撞 ──
@@ -247,11 +306,22 @@ public class InfiniteInterfacePart extends AEBasePart
 
     @Override
     public boolean pushPattern(IPatternDetails patternDetails, KeyCounter[] inputs) {
-        for (KeyCounter kc : inputs) {
-            for (var entry : kc) {
-                if (entry.getLongValue() > 0) {
-                    addReservoir(entry.getKey(), BigInteger.valueOf(entry.getLongValue()));
-                    patternKeys.add(entry.getKey());
+        Object pusher = com.ae2addon.crafting.CraftingCompat.currentPushingCluster;
+        Map<AEKey, BigInteger> perCluster = null;
+        if (pusher != null) {
+            perCluster = pushedByCluster.computeIfAbsent(pusher, k -> new java.util.HashMap<>());
+        }
+        if (inputs != null) {
+            for (KeyCounter kc : inputs) {
+                for (var entry : kc) {
+                    if (entry.getLongValue() > 0) {
+                        addReservoir(entry.getKey(), BigInteger.valueOf(entry.getLongValue()));
+                        patternKeys.add(entry.getKey());
+                        if (perCluster != null) {
+                            perCluster.merge(entry.getKey(),
+                                    BigInteger.valueOf(entry.getLongValue()), BigInteger::add);
+                        }
+                    }
                 }
             }
         }
