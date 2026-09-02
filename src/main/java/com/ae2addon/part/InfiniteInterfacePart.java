@@ -1180,6 +1180,25 @@ public class InfiniteInterfacePart extends AEBasePart
     // ── GUI ──
 
     @Override
+    public boolean onShiftActivate(Player p, InteractionHand hand, Vec3 pos) {
+        // shift+右键：升级卡插入 / 配置卡粘贴（AE2 的 shift 交互走这里，2026-09-03）
+        if (p.getCommandSenderWorld().isClientSide()) {
+            return true;
+        }
+        ItemStack held = p.getItemInHand(hand);
+        if (insertUpgradeCard(held)) {
+            return true;
+        }
+        if (held.getItem() instanceof com.ae2addon.item.ConfigCardItem
+                || held.getItem() instanceof appeng.items.tools.MemoryCardItem) {
+            if (com.ae2addon.util.MemoryCardHelper.handlePaste(this, p, held)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
     public boolean onPartActivate(Player p, InteractionHand hand, Vec3 pos) {
         ItemStack held = p.getItemInHand(hand);
         if (!p.getCommandSenderWorld().isClientSide()) {
