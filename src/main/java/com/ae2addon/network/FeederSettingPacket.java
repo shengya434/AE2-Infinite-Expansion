@@ -41,11 +41,11 @@ public class FeederSettingPacket {
                 if (level == null || !level.hasChunkAt(msg.pos)) {
                     return;
                 }
-                if (level.getBlockEntity(msg.pos)
-                        instanceof com.ae2addon.block.InfiniteInterfaceBE be) {
-                    be.setPerBlockParam(msg.key, msg.value);
-                }
-            });
+                var fh = com.ae2addon.network.FeederHostResolver.resolve(level, msg.pos);
+                    if (fh != null) {
+                        fh.setPerBlockParam(msg.key, msg.value);
+                    }
+                            });
         }
         ctx.get().setPacketHandled(true);
     }

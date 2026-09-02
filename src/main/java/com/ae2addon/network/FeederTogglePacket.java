@@ -36,11 +36,11 @@ public class FeederTogglePacket {
                 if (level == null || !level.hasChunkAt(msg.pos)) {
                     return;
                 }
-                if (level.getBlockEntity(msg.pos)
-                        instanceof com.ae2addon.block.InfiniteInterfaceBE be) {
-                    be.toggleActive(msg.which);
-                }
-            });
+                var fh = com.ae2addon.network.FeederHostResolver.resolve(level, msg.pos);
+                    if (fh != null) {
+                        fh.toggleActive(msg.which);
+                    }
+                            });
         }
         ctx.get().setPacketHandled(true);
     }

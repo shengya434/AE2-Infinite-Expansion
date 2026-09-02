@@ -77,7 +77,8 @@ import net.minecraft.network.chat.Component;
  * （蓄水池 BigInteger、CPU 直灌、按机器容量喂出、网络空间优先 + 待入网缓存、STORAGE 子网直连）。
  */
 public class InfiniteInterfacePart extends AEBasePart
-        implements FeederHost, ICraftingProvider, IGridTickable {
+        implements FeederHost, ICraftingProvider, IGridTickable,
+        appeng.helpers.patternprovider.PatternContainer {
 
     public static final ResourceLocation MODEL_BASE =
             new ResourceLocation(AE2Addon.MODID, "part/infinite_interface_panel");
@@ -105,6 +106,10 @@ public class InfiniteInterfacePart extends AEBasePart
     private RelativeSide extractSide = RelativeSide.FRONT;
     private boolean patternDirty = true;
     private List<IPatternDetails> patterns = List.of();
+    private final Map<AEKey, Long> markerTargets = new java.util.LinkedHashMap<>();
+    private long pStockTarget = -1;
+    private int pRestockInterval = -1;
+    private int pFeedBudget = -1;
     private boolean removed = false;
     private long lastFeederWarnTick = Long.MIN_VALUE;
     private long rateWindowFed;
@@ -649,11 +654,6 @@ public class InfiniteInterfacePart extends AEBasePart
     }
 
     @Override
-    public void cycleMarkerTarget(int markerIndex) {
-        // v0.1：暂不支持每标记独立目标（用全局）
-    }
-
-    @Override
     public void markByKey(int markerIndex, AEKey key) {
         if (markerIndex < 0 || markerIndex >= markerInv.getContainerSize()) {
             return;
@@ -700,25 +700,172 @@ public class InfiniteInterfacePart extends AEBasePart
         return currentRejectRate;
     }
 
+    /** 每标记缓存目标步进（中键循环；与方块版一致）。 */
+    private static final long[] TARGET_STEPS = {1_000L, 10_000L, 100_000L, 1_000_000L, Long.MAX_VALUE};
+
+    // ── 每接口参数（GUI 保存；缺省 -1 用全局） ──
+
     @Override
     public long stockTargetValue() {
-        return InfiniteInterfaceBE.STOCK_TARGET;
+        return pStockTarget > 0 ? pStockTarget : InfiniteInterfaceBE.STOCK_TARGET;
     }
 
     @Override
     public int restockIntervalValue() {
-        return InfiniteInterfaceBE.RESTOCK_INTERVAL;
+        return pRestockInterval > 0 ? pRestockInterval : InfiniteInterfaceBE.RESTOCK_INTERVAL;
     }
 
     @Override
     public int feedBudgetValue() {
-        return InfiniteInterfaceBE.FEED_BUDGET;
+        return pFeedBudget > 0 ? pFeedBudget : InfiniteInterfaceBE.FEED_BUDGET;
+    }
+
+    @Override
+    public void setPerBlockParam(String key, long value) {
+        switch (key) {
+            case "stockTarget" -> pStockTarget = Math.max(0, Math.min(Long.MAX_VALUE, value));
+            case "restockInterval" -> pRestockInterval = (int) Math.max(0, Math.min(10000, value));
+            case "feedBudget" -> pFeedBudget = (int) Math.max(0, Math.min(1_000_000, value));
+            default -> {
+                return;
+            }
+        }
+        setChanged();
     }
 
     @Override
     public long targetFor(AEKey key) {
-        return InfiniteInterfaceBE.STOCK_TARGET;
+        Long v = markerTargets.get(key);
+        if (v != null && v > 0) {
+            return v;
+        }
+        return stockTargetValue();
     }
+
+    @Override
+    public void cycleMarkerTarget(int markerIndex) {
+        if (markerIndex < 0 || markerIndex >= markerInv.getContainerSize()) {
+            return;
+        }
+        ItemStack st = markerInv.getItem(markerIndex);
+        if (st.isEmpty() || !(st.getItem() instanceof WrappedGenericStack wgs)) {
+            return;
+        }
+        AEKey key = wgs.unwrapWhat(st);
+        if (key == null) {
+            return;
+        }
+        long cur = markerTargets.getOrDefault(key, 0L);
+        long next = 0;
+        for (long step : TARGET_STEPS) {
+            if (step > cur) {
+                next = step;
+                break;
+            }
+        }
+        if (next > 0) {
+            markerTargets.put(key, next);
+        } else {
+            markerTargets.remove(key);
+        }
+        setChanged();
+    }
+
+    @Override
+    public void setMarkerTarget(int markerIndex, long target) {
+        if (markerIndex < 0 || markerIndex >= markerInv.getContainerSize()) {
+            return;
+        }
+        ItemStack st = markerInv.getItem(markerIndex);
+        if (st.isEmpty() || !(st.getItem() instanceof WrappedGenericStack wgs)) {
+            return;
+        }
+        AEKey key = wgs.unwrapWhat(st);
+        if (key == null) {
+            return;
+        }
+        if (target > 0) {
+            markerTargets.put(key, target);
+        } else {
+            markerTargets.remove(key);
+        }
+        setChanged();
+    }
+
+    // ── PatternContainer（样板管理终端兼容，2026-09-02 part 补齐） ──
+
+    private final appeng.api.inventories.InternalInventory terminalPatternInv =
+            new appeng.api.inventories.InternalInventory() {
+                @Override
+                public int size() {
+                    return Math.min(patternInv.getContainerSize(), 9 + capacityCards() * 9);
+                }
+
+                @Override
+                public ItemStack getStackInSlot(int slot) {
+                    return slot >= 0 && slot < patternInv.getContainerSize()
+                            ? patternInv.getItem(slot) : ItemStack.EMPTY;
+                }
+
+                @Override
+                public void setItemDirect(int slot, ItemStack stack) {
+                    if (slot >= 0 && slot < patternInv.getContainerSize()) {
+                        patternInv.setItem(slot, stack);
+                    }
+                }
+
+                @Override
+                public int getSlotLimit(int slot) {
+                    return 1;
+                }
+
+                @Override
+                public boolean isItemValid(int slot, ItemStack stack) {
+                    if (slot >= 9 + capacityCards() * 9) {
+                        return false;
+                    }
+                    return stack.isEmpty()
+                            || appeng.api.crafting.PatternDetailsHelper.isEncodedPattern(stack);
+                }
+            };
+
+    @Override
+    public appeng.api.networking.IGrid getGrid() {
+        return getMainNode().getGrid();
+    }
+
+    @Override
+    public appeng.api.inventories.InternalInventory getTerminalPatternInventory() {
+        return terminalPatternInv;
+    }
+
+    @Override
+    public appeng.api.implementations.blockentities.PatternContainerGroup getTerminalGroup() {
+        Direction front = getFront();
+        Level lvl = getLevel();
+        if (front != null && lvl != null) {
+            var machine = lvl.getBlockEntity(getBlockPos().relative(front));
+            if (machine != null) {
+                var group = appeng.api.implementations.blockentities.PatternContainerGroup
+                        .fromMachine(lvl, machine.getBlockPos(), front.getOpposite());
+                if (group != null) {
+                    return group;
+                }
+                net.minecraft.world.level.block.Block machineBlock =
+                        machine.getBlockState().getBlock();
+                return new appeng.api.implementations.blockentities.PatternContainerGroup(
+                        appeng.api.stacks.AEItemKey.of(machineBlock),
+                        machineBlock.getName(),
+                        java.util.List.of());
+            }
+        }
+        // 兜底：面板本体
+        return new appeng.api.implementations.blockentities.PatternContainerGroup(
+                appeng.api.stacks.AEItemKey.of(getPartItem().asItem()),
+                getPartItem().asItem().getDescription(),
+                java.util.List.of());
+    }
+
 
     @Override
     public boolean activeExtract() {
@@ -890,6 +1037,25 @@ public class InfiniteInterfacePart extends AEBasePart
         } catch (RuntimeException ignored) {
             extractSide = RelativeSide.FRONT;
         }
+        pStockTarget = data.contains("pStockTarget") ? data.getLong("pStockTarget") : -1;
+        pRestockInterval = data.contains("pRestockInterval") ? data.getInt("pRestockInterval") : -1;
+        pFeedBudget = data.contains("pFeedBudget") ? data.getInt("pFeedBudget") : -1;
+        markerTargets.clear();
+        ListTag targetList = data.getList("markerTargets", Tag.TAG_COMPOUND);
+        for (int i = 0; i < targetList.size(); i++) {
+            CompoundTag entry = targetList.getCompound(i);
+            try {
+                var stack = ItemStack.of(entry.getCompound("Key"));
+                AEKey wrapped = null;
+                if (stack.getItem() instanceof WrappedGenericStack wgs) {
+                    wrapped = wgs.unwrapWhat(stack);
+                }
+                if (wrapped != null) {
+                    markerTargets.put(wrapped, entry.getLong("Target"));
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
         reservoir.clear();
         patternKeys.clear();
         pendingNetworkKeys.clear();
@@ -934,6 +1100,17 @@ public class InfiniteInterfacePart extends AEBasePart
         data.putBoolean("activeFeed", activeFeed);
         data.putBoolean("activeMarkerFeed", activeMarkerFeed);
         data.putString("extractSide", extractSide.name());
+        data.putLong("pStockTarget", pStockTarget);
+        data.putInt("pRestockInterval", pRestockInterval);
+        data.putInt("pFeedBudget", pFeedBudget);
+        ListTag targetList = new ListTag();
+        for (var e : markerTargets.entrySet()) {
+            CompoundTag ent = new CompoundTag();
+            ent.put("Key", WrappedGenericStack.wrap(e.getKey(), 1).save(new CompoundTag()));
+            ent.putLong("Target", e.getValue());
+            targetList.add(ent);
+        }
+        data.put("markerTargets", targetList);
         ListTag reservoirList = new ListTag();
         for (var entry : reservoir.entrySet()) {
             CompoundTag ent = new CompoundTag();

@@ -82,4 +82,10 @@ public interface FeederHost {
     void toggleActive(String which);
 
     void cycleExtractSide();
+
+    /** GUI 参数保存（key: stockTarget/restockInterval/feedBudget）。 */
+    void setPerBlockParam(String key, long value);
+
+    /** 每标记独立缓存目标（中键循环）。 */
+    void setMarkerTarget(int markerIndex, long target);
 }

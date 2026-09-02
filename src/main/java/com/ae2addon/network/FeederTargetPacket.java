@@ -39,11 +39,11 @@ public class FeederTargetPacket {
                 if (level == null || !level.hasChunkAt(msg.pos)) {
                     return;
                 }
-                if (level.getBlockEntity(msg.pos)
-                        instanceof com.ae2addon.block.InfiniteInterfaceBE be) {
-                    be.setMarkerTarget(msg.markerIndex, msg.target);
-                }
-            });
+                var fh = com.ae2addon.network.FeederHostResolver.resolve(level, msg.pos);
+                    if (fh != null) {
+                        fh.setMarkerTarget(msg.markerIndex, msg.target);
+                    }
+                            });
         }
         ctx.get().setPacketHandled(true);
     }
