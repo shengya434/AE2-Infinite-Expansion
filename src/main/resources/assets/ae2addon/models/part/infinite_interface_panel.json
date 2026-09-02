@@ -1,33 +1,10 @@
 {
+  "parent": "ae2:part/interface_base",
   "textures": {
-    "particle": "ae2addon:block/infinite_interface",
     "front": "ae2addon:block/infinite_interface_front",
-    "side": "ae2addon:block/infinite_interface"
-  },
-  "elements": [
-    {
-      "from": [5, 5, 2],
-      "to": [11, 11, 4],
-      "faces": {
-        "north": { "uv": [5, 5, 11, 11], "texture": "#side" },
-        "south": { "uv": [5, 5, 11, 11], "texture": "#side" },
-        "up": { "uv": [5, 2, 11, 4], "texture": "#side" },
-        "down": { "uv": [5, 2, 11, 4], "texture": "#side" },
-        "west": { "uv": [2, 5, 4, 11], "texture": "#side" },
-        "east": { "uv": [2, 5, 4, 11], "texture": "#side" }
-      }
-    },
-    {
-      "from": [2, 2, 0],
-      "to": [14, 14, 2],
-      "faces": {
-        "north": { "uv": [2, 2, 14, 14], "texture": "#front" },
-        "south": { "uv": [2, 2, 14, 14], "texture": "#side" },
-        "up": { "uv": [2, 0, 14, 2], "texture": "#side" },
-        "down": { "uv": [2, 0, 14, 2], "texture": "#side" },
-        "west": { "uv": [0, 2, 2, 14], "texture": "#side" },
-        "east": { "uv": [0, 2, 2, 14], "texture": "#side" }
-      }
-    }
-  ]
+    "back": "ae2addon:block/infinite_interface",
+    "sides": "ae2addon:block/infinite_interface",
+    "sidesStatus": "ae2addon:block/infinite_interface",
+    "particle": "ae2addon:block/infinite_interface"
+  }
 }
