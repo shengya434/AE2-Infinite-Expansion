@@ -613,6 +613,17 @@ public class InfiniteInterfacePart extends AEBasePart
         return getBlockEntity().getBlockPos();
     }
 
+    /**
+     * ⚠️ 必须显式覆写：AE2 jar 官方映射直用（方法名 getLevel 未混淆），但本 mod reobf 时
+     * getLevel() 签名与 MC BlockEntity.getLevel 相同会被 SRG 映射成 m_58904_ → 不覆写则
+     * 运行期 AbstractMethodError（2026-09-02 崩溃实锤 mclo.gs/rMn1RLH）。
+     */
+    @Override
+    public Level getLevel() {
+        var be = getBlockEntity();
+        return be == null ? null : be.getLevel();
+    }
+
     @Override
     public boolean isRemoved() {
         return removed;
