@@ -1180,8 +1180,8 @@ public class InfiniteInterfacePart extends AEBasePart
     // ── GUI ──
 
     @Override
-    public boolean onShiftActivate(Player p, InteractionHand hand, Vec3 pos) {
-        // shift+右键：升级卡插入 / 配置卡粘贴（AE2 的 shift 交互走这里，2026-09-03）
+    public boolean onPartShiftActivate(Player p, InteractionHand hand, Vec3 pos) {
+        // shift+右键：升级卡插入 / 配置卡粘贴（AEBasePart.onShiftActivate 门面调此钩子，2026-09-03）
         if (p.getCommandSenderWorld().isClientSide()) {
             return true;
         }
