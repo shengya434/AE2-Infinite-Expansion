@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "group": "ae2addon",
+  "ingredients": [
+    {
+      "item": "ae2addon:infinite_interface"
+    }
+  ],
+  "result": {
+    "item": "ae2addon:infinite_interface_panel"
+  }
+}

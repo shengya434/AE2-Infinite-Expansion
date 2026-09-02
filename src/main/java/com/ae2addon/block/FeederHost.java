@@ -120,4 +120,25 @@ public interface FeederHost {
     void markerTargetsPut(AEKey key, long target);
 
     void setChanged();
+
+    /** Jade 等外部显示：蓄水池全部条目文本行（物品/流体/化学物每类都列，不截断）。 */
+    java.util.List<String> reservoirTooltipLines();
+
+    /** 通用实现：遍历蓄水池生成 "显示名 §7x数量" 行（物品/流体/化学物统一处理）。 */
+    static java.util.List<String> buildReservoirLines(
+            java.util.Map<AEKey, java.math.BigInteger> reservoir) {
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        for (var e : reservoir.entrySet()) {
+            if (e.getValue().signum() <= 0) {
+                continue;
+            }
+            try {
+                String name = e.getKey().getDisplayName().getString();
+                lines.add(name + " §7x" + com.ae2addon.block.InfiniteInterfaceBE.fmt(e.getValue()));
+            } catch (RuntimeException ignored) {
+                // 个别 key 显示名异常不阻塞整体
+            }
+        }
+        return lines;
+    }
 }

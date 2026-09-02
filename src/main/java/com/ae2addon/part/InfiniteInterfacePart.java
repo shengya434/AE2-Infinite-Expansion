@@ -754,6 +754,11 @@ public class InfiniteInterfacePart extends AEBasePart
     }
 
     @Override
+    public java.util.List<String> reservoirTooltipLines() {
+        return FeederHost.buildReservoirLines(reservoir);
+    }
+
+    @Override
     public String[] reservoirSummary() {
         int types = 0;
         BigInteger total = BigInteger.ZERO;

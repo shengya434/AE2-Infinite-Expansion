@@ -122,6 +122,9 @@ dependencies {
 
     // ExtendedAE+（可选集成：频道卡无线连网 / 虚拟合成卡）
     compileOnly fg.deobf(files("libs/extendedae_plus-1.5.5.jar"))
+
+    // Jade（玉）— 可选集成：供料站蓄水池/面板信息显示
+    compileOnly fg.deobf("maven.modrinth:jade:11.13.3+forge")
 }
 
 jar {

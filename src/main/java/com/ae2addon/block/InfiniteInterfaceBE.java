@@ -3033,6 +3033,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         updateChannelLink();
     }
 
+    @Override
+    public java.util.List<String> reservoirTooltipLines() {
+        return FeederHost.buildReservoirLines(reservoir);
+    }
+
     /** 蓄水池概览（GUI 状态用）。返回 [物品种类数, 合计(字符串)]。 */
     public String[] reservoirSummary() {
         int types = 0;
