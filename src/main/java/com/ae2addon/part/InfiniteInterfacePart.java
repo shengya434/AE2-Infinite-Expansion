@@ -366,7 +366,9 @@ public class InfiniteInterfacePart extends AEBasePart
         if (feedable <= 0) {
             return;
         }
-        int budget = Math.min(InfiniteInterfaceBE.FEED_BUDGET, 1_000_000);
+        // 速度卡：每张喂出预算 ×2（最高 ×4；与方块版一致）
+        int mult = 1 << Math.min(speedCards(), 2);
+        int budget = Math.min(feedBudgetValue() * mult, 1_000_000);
         int perItemBudget = Math.max(1, budget / feedable);
         int totalBudget = budget;
         long fedAll = 0;
@@ -605,12 +607,19 @@ public class InfiniteInterfacePart extends AEBasePart
 
     @Override
     public int capacityCards() {
-        return 0;
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.CAPACITY_CARD.asItem());
+    }
+
+    /** 速度卡数量（每张喂出预算 ×2，最高 ×4）。 */
+    private int speedCards() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.SPEED_CARD.asItem());
     }
 
     @Override
     public int maxPage() {
-        return 0;
+        return capacityCards();
     }
 
     @Override
@@ -635,22 +644,83 @@ public class InfiniteInterfacePart extends AEBasePart
     }
 
     @Override
-    public boolean handleMarkerRightClick(int markerIndex, ItemStack carried) {
+    public boolean handleMarkerClick(int markerIndex, ItemStack carried, boolean content) {
         if (markerIndex < 0 || markerIndex >= markerInv.getContainerSize()) {
             return false;
         }
         if (carried.isEmpty()) {
-            // 空手右键 = 清空标记
             markerInv.setItem(markerIndex, ItemStack.EMPTY);
-            setChanged();
+            onMarkersChanged();
             return true;
         }
-        // 手上物品（或 WGS）→ 设为标记；不放真实物品进槽
-        ItemStack ghost = carried.copy();
-        ghost.setCount(1);
-        markerInv.setItem(markerIndex, ghost);
+        if (content) {
+            // 右键：容器内容物优先（流体/气体容器 → 内容物）
+            var contained = net.minecraftforge.fluids.FluidUtil.getFluidContained(carried);
+            if (contained.isPresent() && !contained.get().isEmpty()) {
+                markByKey(markerIndex, appeng.api.stacks.AEFluidKey.of(contained.get()));
+                return true;
+            }
+            AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.chemicalInContainer(carried);
+            if (gasKey != null) {
+                markByKey(markerIndex, gasKey);
+                return true;
+            }
+        }
+        // 普通物品 / 左键：一律标记本体（WGS 虚拟标记，不占用真实物品）
+        var itemKey = appeng.api.stacks.AEItemKey.of(carried);
+        if (itemKey != null) {
+            markByKey(markerIndex, itemKey);
+            return true;
+        }
+        return false;
+    }
+
+    /** 当前标记的 key 集合（退缓存对比用）。 */
+    private Set<AEKey> wantedKeys() {
+        Set<AEKey> keys = new HashSet<>();
+        for (int i = 0; i < markerInv.getContainerSize(); i++) {
+            ItemStack st = markerInv.getItem(i);
+            if (st.isEmpty() || !(st.getItem() instanceof WrappedGenericStack wgs)) {
+                continue;
+            }
+            AEKey key = wgs.unwrapWhat(st);
+            if (key != null) {
+                keys.add(key);
+            }
+        }
+        return keys;
+    }
+
+    /** 上次标记的 key 集合（变化检测：消失的标记 → 退回蓄水池缓存到网络）。 */
+    private Set<AEKey> lastMarkedKeys = java.util.Collections.emptySet();
+
+    private void onMarkersChanged() {
         setChanged();
-        return true;
+        // 标记区不占真实存储：标记取消 → 对应蓄水池缓存退回网络（2026-09-02 part 对齐方块版）
+        Set<AEKey> now = wantedKeys();
+        Level lvl = getLevel();
+        if (lvl == null || lvl.isClientSide() || now.equals(lastMarkedKeys)) {
+            lastMarkedKeys = now;
+            return;
+        }
+        IGrid grid = getMainNode().getGrid();
+        if (grid != null) {
+            var storage = grid.getStorageService().getInventory();
+            for (AEKey gone : lastMarkedKeys) {
+                if (now.contains(gone)) {
+                    continue;
+                }
+                BigInteger amount = reservoir.remove(gone);
+                if (amount != null && amount.signum() > 0 && storage != null) {
+                    try {
+                        long back = amount.min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
+                        storage.insert(gone, back, Actionable.MODULATE, actionSource);
+                    } catch (RuntimeException ignored) {
+                    }
+                }
+            }
+        }
+        lastMarkedKeys = now;
     }
 
     @Override
@@ -665,6 +735,7 @@ public class InfiniteInterfacePart extends AEBasePart
                     appeng.items.misc.WrappedGenericStack.wrap(key, 1));
         }
         setChanged();
+        onMarkersChanged(); // 消失的标记 → 退回蓄水池缓存（2026-09-02）
     }
 
     @Override

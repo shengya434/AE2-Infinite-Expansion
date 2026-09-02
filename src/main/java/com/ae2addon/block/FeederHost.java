@@ -43,7 +43,11 @@ public interface FeederHost {
 
     BlockPos getBlockPos();
 
-    boolean handleMarkerRightClick(int markerIndex, ItemStack carried);
+    /**
+     * 标记槽点击：content=true（右键）= 容器内容物优先（流体/气体容器 → 内容物，普通物品 → 本体）；
+     * content=false（左键）= 一律标记容器/物品本体。
+     */
+    boolean handleMarkerClick(int markerIndex, ItemStack carried, boolean content);
 
     void cycleMarkerTarget(int markerIndex);
 

@@ -2005,7 +2005,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
      * 不放入槽、不消耗容器）。流体/气体包成 WrappedGenericStack 显示，
      * 普通物品放 1 个作视觉；空手右键 = 清空标记。
      */
-    public boolean handleMarkerRightClick(int markerIndex, ItemStack carried) {
+    public boolean handleMarkerClick(int markerIndex, ItemStack carried, boolean content) {
         if (markerIndex < 0 || markerIndex >= markerInv.getContainerSize()) {
             return false;
         }
@@ -2013,19 +2013,20 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             markerInv.setItem(markerIndex, ItemStack.EMPTY);
             return true;
         }
-        // 流体容器 → 标记流体
-        var contained = FluidUtil.getFluidContained(carried);
-        if (contained.isPresent() && !contained.get().isEmpty()) {
-            markByKey(markerIndex, AEFluidKey.of(contained.get()));
-            return true;
+        if (content) {
+            // 右键：容器内容物优先（流体/气体容器 → 内容物）
+            var contained = FluidUtil.getFluidContained(carried);
+            if (contained.isPresent() && !contained.get().isEmpty()) {
+                markByKey(markerIndex, AEFluidKey.of(contained.get()));
+                return true;
+            }
+            AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.chemicalInContainer(carried);
+            if (gasKey != null) {
+                markByKey(markerIndex, gasKey);
+                return true;
+            }
         }
-        // 气体容器（气罐/气桶）→ 标记气体
-        AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.chemicalInContainer(carried);
-        if (gasKey != null) {
-            markByKey(markerIndex, gasKey);
-            return true;
-        }
-        // 普通物品 → 虚拟标记（WrappedGenericStack，不占用真实物品）
+        // 普通物品 / 左键：一律标记本体（WrappedGenericStack，不占用真实物品）
         var itemKey = appeng.api.stacks.AEItemKey.of(carried);
         if (itemKey != null) {
             markByKey(markerIndex, itemKey);

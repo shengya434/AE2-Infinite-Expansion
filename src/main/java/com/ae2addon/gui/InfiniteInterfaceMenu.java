@@ -254,8 +254,8 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             net.minecraft.world.inventory.ClickType clickType, Player player) {
         if (clickType == net.minecraft.world.inventory.ClickType.PICKUP
                 && button == 1 && slotId >= markerSlotStart() && slotId < markerSlotEnd()) {
-            if (feeder.handleMarkerRightClick(slotId - markerSlotStart(), getCarried())) {
-                return; // 已作为标记处理，跳过原版拆分/放置
+            if (feeder.handleMarkerClick(slotId - markerSlotStart(), getCarried(), true)) {
+                return; // 右键：容器内容物优先；已作为标记处理，跳过原版拆分/放置
             }
         }
         // 中键点击标记槽 = 循环切换该标记的独立缓存目标
@@ -278,9 +278,9 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         if (slotId >= markerSlotStart() && slotId < markerSlotEnd()
                 && !getCarried().isEmpty()
                 && clickType == net.minecraft.world.inventory.ClickType.PICKUP) {
-            // 左键放入 = 标记（与右键一致）；不放物品进槽
-            if (button == 0 && feeder.handleMarkerRightClick(
-                    slotId - markerSlotStart(), getCarried())) {
+            // 左键放入 = 标记容器/物品本体（与右键区分：右键容器内容物优先，2026-09-02）
+            if (button == 0 && feeder.handleMarkerClick(
+                    slotId - markerSlotStart(), getCarried(), false)) {
                 return;
             }
         }
