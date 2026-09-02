@@ -180,4 +180,32 @@ public interface FeederHost {
             out.add("  §7…等 " + (group.size() - limit) + " 种");
         }
     }
+
+    /** 手持升级卡右键接口 = 直接插入（AE2 玩法；已满/不支持返回 false）。 */
+    default boolean insertUpgradeCard(ItemStack held) {
+        if (held.isEmpty() || !appeng.api.upgrades.Upgrades.isUpgradeCardItem(held)) {
+            return false;
+        }
+        IUpgradeInventory inv = getUpgrades();
+        net.minecraft.world.level.ItemLike card = held.getItem();
+        try {
+            int installed = inv.getInstalledUpgrades(card);
+            int max = inv.getMaxInstalled(card);
+            if (max <= 0 || installed >= max) {
+                return false; // 本机不支持或已满
+            }
+            for (int i = 0; i < inv.size(); i++) {
+                if (inv.getStackInSlot(i).isEmpty()) {
+                    ItemStack put = held.copy();
+                    put.setCount(1);
+                    inv.setItemDirect(i, put);
+                    held.shrink(1);
+                    setChanged();
+                    return true;
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return false;
+    }
 }

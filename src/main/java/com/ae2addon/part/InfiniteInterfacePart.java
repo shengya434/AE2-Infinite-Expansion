@@ -1169,9 +1169,13 @@ public class InfiniteInterfacePart extends AEBasePart
 
     @Override
     public boolean onPartActivate(Player p, InteractionHand hand, Vec3 pos) {
+        ItemStack held = p.getItemInHand(hand);
         if (!p.getCommandSenderWorld().isClientSide()) {
+            // 手持升级卡右键 = 直接插入（AE2 玩法；2026-09-03 sensei）
+            if (insertUpgradeCard(held)) {
+                return true;
+            }
             // 配置卡/内存卡复制粘贴（与方块版一致；shift+右键绕过 useOn 走到这里）
-            ItemStack held = p.getItemInHand(hand);
             if (held.getItem() instanceof com.ae2addon.item.ConfigCardItem
                     || held.getItem() instanceof appeng.items.tools.MemoryCardItem) {
                 boolean paste = p.isShiftKeyDown();

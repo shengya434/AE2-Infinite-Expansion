@@ -72,6 +72,11 @@ public class InfiniteInterfaceBlock extends AEBaseEntityBlock<InfiniteInterfaceB
         if (level.isClientSide) {
             return InteractionResult.SUCCESS;
         }
+        // 手持升级卡右键 = 直接插入（AE2 玩法；2026-09-03 sensei）——先于 GUI/配置卡处理
+        var hostBe = getBlockEntity(level, pos);
+        if (hostBe != null && hostBe.insertUpgradeCard(heldStack)) {
+            return InteractionResult.sidedSuccess(level.isClientSide);
+        }
         // AE2 内存卡 doesSneakBypassUse=true：shift+右键绕过物品交互走到这里。
         // 检测内存卡 → 复制/粘贴配置（与正常右键 useOn 路径同一套逻辑）
         // Forge 交互链：block.use 先于 item.useOn —— 配置卡/内存卡必须在
