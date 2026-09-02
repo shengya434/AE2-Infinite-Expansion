@@ -290,7 +290,8 @@ public class InfiniteInterfacePart extends AEBasePart
         setChanged();
     }
 
-    private void setChanged() {
+    @Override
+    public void setChanged() {
         getHost().markForSave();
     }
 
@@ -786,6 +787,79 @@ public class InfiniteInterfacePart extends AEBasePart
     // ── 每接口参数（GUI 保存；缺省 -1 用全局） ──
 
     @Override
+    public long pStockTarget() {
+        return pStockTarget;
+    }
+
+    @Override
+    public void pStockTarget(long v) {
+        pStockTarget = v;
+        setChanged();
+    }
+
+    @Override
+    public int pRestockInterval() {
+        return pRestockInterval;
+    }
+
+    @Override
+    public void pRestockInterval(int v) {
+        pRestockInterval = v;
+        setChanged();
+    }
+
+    @Override
+    public int pFeedBudget() {
+        return pFeedBudget;
+    }
+
+    @Override
+    public void pFeedBudget(int v) {
+        pFeedBudget = v;
+        setChanged();
+    }
+
+    @Override
+    public void setActiveExtract(boolean v) {
+        activeExtract = v;
+        setChanged();
+    }
+
+    @Override
+    public void setActiveFeed(boolean v) {
+        activeFeed = v;
+        setChanged();
+    }
+
+    @Override
+    public void setExtractSide(RelativeSide side) {
+        extractSide = side;
+        setChanged();
+    }
+
+    @Override
+    public Map<AEKey, Long> markerTargetsSnapshot() {
+        return markerTargets;
+    }
+
+    @Override
+    public void markerTargetsClear() {
+        markerTargets.clear();
+        setChanged();
+    }
+
+    @Override
+    public void markerTargetsPut(AEKey key, long target) {
+        if (target > 0) {
+            markerTargets.put(key, target);
+        } else {
+            markerTargets.remove(key);
+        }
+        setChanged();
+    }
+
+
+    @Override
     public long stockTargetValue() {
         return pStockTarget > 0 ? pStockTarget : InfiniteInterfaceBE.STOCK_TARGET;
     }
@@ -1091,6 +1165,18 @@ public class InfiniteInterfacePart extends AEBasePart
     @Override
     public boolean onPartActivate(Player p, InteractionHand hand, Vec3 pos) {
         if (!p.getCommandSenderWorld().isClientSide()) {
+            // 配置卡/内存卡复制粘贴（与方块版一致；shift+右键绕过 useOn 走到这里）
+            ItemStack held = p.getItemInHand(hand);
+            if (held.getItem() instanceof com.ae2addon.item.ConfigCardItem
+                    || held.getItem() instanceof appeng.items.tools.MemoryCardItem) {
+                boolean paste = p.isShiftKeyDown();
+                boolean handled = paste
+                        ? com.ae2addon.util.MemoryCardHelper.handlePaste(this, p, held)
+                        : com.ae2addon.util.MemoryCardHelper.handleCopy(this, p, held);
+                if (handled) {
+                    return true;
+                }
+            }
             if (p instanceof ServerPlayer sp) {
                 NetworkHooks.openScreen(sp,
                         new SimpleMenuProvider((containerId, inventory, ignored) ->

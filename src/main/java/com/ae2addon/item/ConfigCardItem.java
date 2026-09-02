@@ -26,9 +26,9 @@ public class ConfigCardItem extends Item {
     @Override
     public InteractionResult useOn(UseOnContext ctx) {
         Level level = ctx.getLevel();
-        BlockEntity be = level.getBlockEntity(ctx.getClickedPos());
-        if (!(be instanceof com.ae2addon.block.InfiniteInterfaceBE feeder)) {
-            return InteractionResult.PASS; // 只对本 mod 接口生效
+        var feeder = com.ae2addon.network.FeederHostResolver.resolve(level, ctx.getClickedPos());
+        if (feeder == null) {
+            return InteractionResult.PASS; // 只对本 mod 接口/面板生效
         }
         if (level.isClientSide) {
             return InteractionResult.SUCCESS; // 客户端不处理，等服务端

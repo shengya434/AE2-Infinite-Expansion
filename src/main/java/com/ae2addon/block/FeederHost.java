@@ -92,4 +92,32 @@ public interface FeederHost {
 
     /** 每标记独立缓存目标（中键循环）。 */
     void setMarkerTarget(int markerIndex, long target);
+
+    // ── 配置卡/内存卡复制粘贴所需（2026-09-02 part 兼容） ──
+
+    long pStockTarget();
+
+    void pStockTarget(long v);
+
+    int pRestockInterval();
+
+    void pRestockInterval(int v);
+
+    int pFeedBudget();
+
+    void pFeedBudget(int v);
+
+    void setActiveExtract(boolean v);
+
+    void setActiveFeed(boolean v);
+
+    void setExtractSide(RelativeSide side);
+
+    java.util.Map<AEKey, Long> markerTargetsSnapshot();
+
+    void markerTargetsClear();
+
+    void markerTargetsPut(AEKey key, long target);
+
+    void setChanged();
 }

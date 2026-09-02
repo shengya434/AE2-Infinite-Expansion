@@ -32,8 +32,9 @@ public class MemoryCardItemMixin {
     @Inject(method = "useOn", at = @At("HEAD"), cancellable = true)
     private void ae2addon$handleFeeder(UseOnContext ctx, CallbackInfoReturnable<InteractionResult> cir) {
         Level level = ctx.getLevel();
-        BlockEntity be = level.getBlockEntity(ctx.getClickedPos());
-        if (!(be instanceof com.ae2addon.block.InfiniteInterfaceBE feeder)) {
+        // 方块接口 + 线缆面板 part 都支持（2026-09-02）
+        var feeder = com.ae2addon.network.FeederHostResolver.resolve(level, ctx.getClickedPos());
+        if (feeder == null) {
             return; // 非本 mod 方块：交给原逻辑
         }
         Player player = ctx.getPlayer();

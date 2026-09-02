@@ -377,6 +377,57 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return extractSide;
     }
 
+    @Override
+    public long pStockTarget() {
+        return pStockTarget;
+    }
+
+    @Override
+    public void pStockTarget(long v) {
+        pStockTarget = v;
+        setChanged();
+    }
+
+    @Override
+    public int pRestockInterval() {
+        return pRestockInterval;
+    }
+
+    @Override
+    public void pRestockInterval(int v) {
+        pRestockInterval = v;
+        setChanged();
+    }
+
+    @Override
+    public int pFeedBudget() {
+        return pFeedBudget;
+    }
+
+    @Override
+    public void pFeedBudget(int v) {
+        pFeedBudget = v;
+        setChanged();
+    }
+
+    @Override
+    public void setActiveExtract(boolean v) {
+        activeExtract = v;
+        setChanged();
+    }
+
+    @Override
+    public void setActiveFeed(boolean v) {
+        activeFeed = v;
+        setChanged();
+    }
+
+    @Override
+    public void setExtractSide(appeng.api.orientation.RelativeSide side) {
+        extractSide = side;
+        setChanged();
+    }
+
     /** 主动喂出（蓄水池 → 正面机器）。 */
     public boolean activeFeed = true;
 
