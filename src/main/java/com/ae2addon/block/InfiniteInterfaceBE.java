@@ -176,6 +176,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     private long rejectWindow;
     private long currentRejectRate;
 
+    /** 「蓄水池有货但喂不出」WARN 冷却 tick（同一卡住状态最多每 6000 tick 提示一次，防刷屏）。 */
+    private long lastFeederWarnTick = Long.MIN_VALUE;
+
     // ── 样板槽（3×3，声明可处理的配方；CPU 路由靠它） ──
 
     private final SimpleContainer patternInv = new SimpleContainer(45) {
@@ -1532,9 +1535,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         } else {
             rejectWindow++; // 有货但整 tick 零喂出 → 机器满/拒收（诊断瓶颈）
             // 诊断：蓄水池含流体/气体但喂不出（机器无对应槽 or 拒收）
-            if (hasUnfedFluidOrGas() && (level.getGameTime() & 0x7F) == 0) {
+            // 限流：同一卡住状态最多每 6000 tick（5 分钟）warn 一次，防刷屏（2026-09-02）
+            long nowTick = level.getGameTime();
+            if (hasUnfedFluidOrGas() && nowTick - lastFeederWarnTick >= 6000) {
+                lastFeederWarnTick = nowTick;
                 com.ae2addon.AE2Addon.LOGGER.warn(
-                        "[ae2addon][feeder] 蓄水池含流体/气体但未喂出：物品槽={} 流体槽={} 气体可喂={}，"
+                        "[ae2addon][feeder] 蓄水池含流体/气体但未喂出（5分钟内不再重复提示）：物品槽={} 流体槽={} 气体可喂={}，"
                                 + "蓄水池={}种/合计{}",
                         handler != null, fluidHandler != null,
                         com.ae2addon.compat.MekanismGasCompat.isLoaded(),
