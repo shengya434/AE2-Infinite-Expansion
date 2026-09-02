@@ -1339,6 +1339,25 @@ public class InfiniteInterfacePart extends AEBasePart
         }
     }
 
+    // ── 掉落：part item 由 AE2 自动掉；这里补样板 + 升级卡（蓄水池属于网络/CPU 不退防刷） ──
+
+    @Override
+    public void addAdditionalDrops(java.util.List<ItemStack> drops, boolean wrenched) {
+        super.addAdditionalDrops(drops, wrenched);
+        for (int i = 0; i < patternInv.getContainerSize(); i++) {
+            ItemStack st = patternInv.getItem(i);
+            if (!st.isEmpty()) {
+                drops.add(st);
+            }
+        }
+        for (int i = 0; i < upgrades.size(); i++) {
+            ItemStack st = upgrades.getStackInSlot(i);
+            if (!st.isEmpty()) {
+                drops.add(st);
+            }
+        }
+    }
+
     // ── 其他 ──
 
     public void saveChanges() {
