@@ -22,14 +22,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * 手持内存卡右键接口 = 导出（升级卡+每接口参数+标记+开关+方向），
  * 再右键另一接口 = 导入。Alt+右键仍为原版清卡。
  */
-@Mixin(MemoryCardItem.class)
+@Mixin(value = MemoryCardItem.class, remap = false)
 public class MemoryCardItemMixin {
 
     static {
         com.ae2addon.AE2Addon.LOGGER.info("[ae2addon] MemoryCardItemMixin 类已加载");
     }
 
-    @Inject(method = "m_6225_", at = @At("HEAD"), cancellable = true)
+    @Inject(method = "useOn", at = @At("HEAD"), cancellable = true)
     private void ae2addon$handleFeeder(UseOnContext ctx, CallbackInfoReturnable<InteractionResult> cir) {
         Level level = ctx.getLevel();
         BlockEntity be = level.getBlockEntity(ctx.getClickedPos());

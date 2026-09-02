@@ -67,7 +67,7 @@ import java.util.Set;
  *         网络 ──无上限拉取─────────► [蓄水池] ◄──extractItem── 机器/漏斗
  */
 public class InfiniteInterfaceBE extends AENetworkBlockEntity
-        implements ICraftingProvider, appeng.helpers.patternprovider.PatternContainer,
+        implements FeederHost, ICraftingProvider, appeng.helpers.patternprovider.PatternContainer,
         appeng.api.upgrades.IUpgradeableObject,
         appeng.api.networking.crafting.ICraftingRequester {
 
@@ -354,6 +354,28 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
 
     /** 主动抽取（正面机器产物 → 网络）。 */
     public boolean activeExtract = true;
+
+    // ── FeederHost 接口读方法（字段同名 0 参方法，GUI 经接口访问；2026-09-02 part 解耦） ──
+
+    @Override
+    public boolean activeExtract() {
+        return activeExtract;
+    }
+
+    @Override
+    public boolean activeFeed() {
+        return activeFeed;
+    }
+
+    @Override
+    public boolean activeMarkerFeed() {
+        return activeMarkerFeed;
+    }
+
+    @Override
+    public appeng.api.orientation.RelativeSide extractSide() {
+        return extractSide;
+    }
 
     /** 主动喂出（蓄水池 → 正面机器）。 */
     public boolean activeFeed = true;

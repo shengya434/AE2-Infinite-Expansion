@@ -3,6 +3,7 @@ package com.ae2addon.gui;
 import appeng.api.crafting.PatternDetailsHelper;
 import appeng.menu.locator.MenuLocators;
 import com.ae2addon.AE2Addon;
+import com.ae2addon.block.FeederHost;
 import com.ae2addon.block.InfiniteInterfaceBE;
 import com.ae2addon.init.ModMenuTypes;
 import com.ae2addon.network.FeederStatusPacket;
@@ -26,7 +27,7 @@ import java.util.List;
  */
 public class InfiniteInterfaceMenu extends AbstractContainerMenu {
 
-    private final InfiniteInterfaceBE feeder;
+    private final FeederHost feeder;
 
     /** 打开菜单的玩家（服务端广播用；AbstractContainerMenu 无 getPlayer()）。 */
     private final Player opener;
@@ -46,7 +47,7 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
     /** 服务端：上次发送的状态指纹（变化检测，防高频刷包）。 */
     private String lastStatusKey = "";
 
-    public InfiniteInterfaceMenu(int id, Inventory playerInventory, InfiniteInterfaceBE feeder) {
+    public InfiniteInterfaceMenu(int id, Inventory playerInventory, FeederHost feeder) {
         super(ModMenuTypes.INFINITE_INTERFACE.get(), id);
         this.feeder = feeder;
         this.opener = playerInventory.player;
@@ -204,14 +205,19 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
     public static InfiniteInterfaceMenu fromNetwork(int id, Inventory playerInventory,
             FriendlyByteBuf buffer) {
         var locator = MenuLocators.readFromPacket(buffer);
-        var host = locator.locate(playerInventory.player, InfiniteInterfaceBE.class);
+        Object host = locator.locate(playerInventory.player, InfiniteInterfaceBE.class);
         if (host == null) {
-            throw new IllegalStateException("Could not locate InfiniteInterfaceBE host");
+            // 线缆面板 part 形态（2026-09-02）
+            host = locator.locate(playerInventory.player,
+                    (Class) com.ae2addon.part.InfiniteInterfacePart.class);
         }
-        return new InfiniteInterfaceMenu(id, playerInventory, host);
+        if (host == null) {
+            throw new IllegalStateException("Could not locate feeder host");
+        }
+        return new InfiniteInterfaceMenu(id, playerInventory, (FeederHost) host);
     }
 
-    public InfiniteInterfaceBE getFeeder() {
+    public FeederHost getFeeder() {
         return feeder;
     }
 
@@ -385,13 +391,13 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         }
         lines.add(json(Component.translatable("gui.ae2addon.feeder.target", machine)));
         lines.add(json(Component.translatable("gui.ae2addon.feeder.switch",
-                Component.translatable(feeder.activeExtract
+                Component.translatable(feeder.activeExtract()
                         ? "gui.ae2addon.feeder.on" : "gui.ae2addon.feeder.off"),
                 Component.translatable("gui.ae2addon.side."
-                        + feeder.extractSide.name().toLowerCase(java.util.Locale.ROOT)),
-                Component.translatable(feeder.activeFeed
+                        + feeder.extractSide().name().toLowerCase(java.util.Locale.ROOT)),
+                Component.translatable(feeder.activeFeed()
                         ? "gui.ae2addon.feeder.on" : "gui.ae2addon.feeder.off"),
-                Component.translatable(feeder.activeMarkerFeed
+                Component.translatable(feeder.activeMarkerFeed()
                         ? "gui.ae2addon.feeder.on" : "gui.ae2addon.feeder.off"))));
         lines.add(json(Component.translatable("gui.ae2addon.feeder.params",
                 feeder.stockTargetValue(), feeder.restockIntervalValue(), feeder.feedBudgetValue())));

@@ -20,6 +20,14 @@ public class ClientSetup {
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
         event.enqueueWork(() -> {
+            // 线缆面板 part 模型注册到 AE2（2026-09-02；需在 AE2 冻结前）
+            try {
+                var models = appeng.items.parts.PartModelsHelper
+                        .createModels(com.ae2addon.part.InfiniteInterfacePart.class);
+                appeng.api.parts.PartModels.registerModels(models);
+            } catch (RuntimeException e) {
+                AE2Addon.LOGGER.warn("[ae2addon] part 模型注册跳过: {}", e.getMessage());
+            }
             MenuScreens.register(ModMenuTypes.MODE_SELECT.get(), ModeSelectScreen::new);
             MenuScreens.register(ModMenuTypes.MODE2_CONFIG.get(), Mode2ConfigScreen::new);
             MenuScreens.register(ModMenuTypes.INTEGRATED_CPU.get(), IntegratedCPUScreen::new);

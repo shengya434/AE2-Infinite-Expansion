@@ -172,5 +172,5 @@
   "gui.ae2addon.side.right": "Right",
   "gui.ae2addon.side.top": "Top",
   "gui.ae2addon.side.bottom": "Bottom",
-  "block.ae2addon.infinite_interface_panel": "ME Interface (Infinite) Panel"
+  "item.ae2addon.infinite_interface_panel": "ME Interface (Infinite) Panel"
 }
