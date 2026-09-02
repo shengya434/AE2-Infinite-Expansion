@@ -1,0 +1,11 @@
+# 统一 LF 行尾，防止 Windows 工具批量转 CRLF 造成全文件 diff 噪音
+* text=auto
+*.java text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.gradle text eol=lf
+*.properties text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.png binary
+*.jar binary
