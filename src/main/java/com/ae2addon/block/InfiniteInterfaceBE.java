@@ -1982,17 +1982,26 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 if (now.contains(gone)) {
                     continue;
                 }
+                if (patternKeys.contains(gone)) {
+                    continue; // 样板喂料中的材料不退（2026-09-02：防取消标记误退喂料致机器断料）
+                }
                 java.math.BigInteger amount = reservoir.remove(gone);
                 if (amount != null && amount.signum() > 0 && storage != null) {
                     try {
                         long back = amount.min(java.math.BigInteger.valueOf(Long.MAX_VALUE)).longValue();
                         long inserted = storage.insert(gone, back, Actionable.MODULATE, actionSource);
+                        if (inserted < back) {
+                            // 网络空间不足：未退回部分放回蓄水池，不丢（2026-09-02）
+                            java.math.BigInteger left = java.math.BigInteger.valueOf(back - inserted);
+                            reservoir.merge(gone, left, java.math.BigInteger::add);
+                        }
                         com.ae2addon.AE2Addon.LOGGER.info(
                                 "[ae2addon][feeder] 标记取消，退回缓存 {} x{}（蓄水池余 {}）",
                                 gone, inserted, reservoirAmount(gone));
                     } catch (RuntimeException e) {
                         com.ae2addon.AE2Addon.LOGGER.warn(
                                 "[ae2addon][feeder] 退回缓存失败 {} {}", gone, e);
+                        reservoir.merge(gone, amount, java.math.BigInteger::add); // 回滚防丢
                     }
                 }
             }

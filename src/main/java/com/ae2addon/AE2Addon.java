@@ -177,30 +177,16 @@ public class AE2Addon {
         }
         try {
             var block = ModBlocks.INFINITE_INTERFACE.get();
-            // AE2 自带卡片（容量4/红石/反向/合成）
+            // 升级卡注册到两个宿主：方块版 + 线缆面板 part（2026-09-02 part 卡无效根因）
             // ⚠️ Upgrades.add(upgrade, supportedBy, max)：卡片在前，机器在后！
+            registerInterfaceUpgrades(block);
+            var partItem = com.ae2addon.init.ModItems.INFINITE_INTERFACE_PANEL_ITEM.get();
+            registerInterfaceUpgrades(partItem);
+            // 速度卡：喂出预算 ×2/张（part 版已实现；方块版沿用注释意图——注册上供网络工具卡槽可用）
             appeng.api.upgrades.Upgrades.add(
-                    appeng.core.definitions.AEItems.CAPACITY_CARD.asItem(), block, 4);
+                    appeng.core.definitions.AEItems.SPEED_CARD.asItem(), block, 2);
             appeng.api.upgrades.Upgrades.add(
-                    appeng.core.definitions.AEItems.REDSTONE_CARD.asItem(), block, 1);
-            appeng.api.upgrades.Upgrades.add(
-                    appeng.core.definitions.AEItems.INVERTER_CARD.asItem(), block, 1);
-            appeng.api.upgrades.Upgrades.add(
-                    appeng.core.definitions.AEItems.CRAFTING_CARD.asItem(), block, 1);
-            // AppFlux 感应卡（供电卡；未装 AppFlux 时为 null 跳过）
-            var inductionCard = com.ae2addon.compat.AppFluxPowerCompat.inductionCard();
-            if (inductionCard != null) {
-                appeng.api.upgrades.Upgrades.add(inductionCard, block, 1);
-            }
-            // ExtendedAE+ 频道卡（无线连网） + 虚拟合成卡（末批即完成）
-            var channelCard = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
-            if (channelCard != null) {
-                appeng.api.upgrades.Upgrades.add(channelCard, block, 1);
-            }
-            var virtualCard = com.ae2addon.compat.ExtendedAEPlusCompat.virtualCraftingCard();
-            if (virtualCard != null) {
-                appeng.api.upgrades.Upgrades.add(virtualCard, block, 1);
-            }
+                    appeng.core.definitions.AEItems.SPEED_CARD.asItem(), partItem, 2);
             COMPAT_UPGRADES.set(true); // 全部成功才置位
             LOGGER.info("[ae2addon] 升级卡注册完成（{} 张卡类型）",
                     appeng.api.upgrades.Upgrades.getMaxInstallable(
@@ -208,6 +194,34 @@ public class AE2Addon {
         } catch (Throwable t) {
             // 失败不置位：下次 BE 构造重试，并打堆栈定位
             LOGGER.warn("[ae2addon] 升级卡注册失败（将重试）", t);
+        }
+    }
+
+    /** 给某机器 item 注册 AE2 自带卡 + 跨 mod 卡（容量/红石/反向/合成/感应/频道/虚拟）。 */
+    private static void registerInterfaceUpgrades(net.minecraft.world.level.ItemLike machine) {
+        try {
+            appeng.api.upgrades.Upgrades.add(
+                    appeng.core.definitions.AEItems.CAPACITY_CARD.asItem(), machine, 4);
+            appeng.api.upgrades.Upgrades.add(
+                    appeng.core.definitions.AEItems.REDSTONE_CARD.asItem(), machine, 1);
+            appeng.api.upgrades.Upgrades.add(
+                    appeng.core.definitions.AEItems.INVERTER_CARD.asItem(), machine, 1);
+            appeng.api.upgrades.Upgrades.add(
+                    appeng.core.definitions.AEItems.CRAFTING_CARD.asItem(), machine, 1);
+            var inductionCard = com.ae2addon.compat.AppFluxPowerCompat.inductionCard();
+            if (inductionCard != null) {
+                appeng.api.upgrades.Upgrades.add(inductionCard, machine, 1);
+            }
+            var channelCard = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
+            if (channelCard != null) {
+                appeng.api.upgrades.Upgrades.add(channelCard, machine, 1);
+            }
+            var virtualCard = com.ae2addon.compat.ExtendedAEPlusCompat.virtualCraftingCard();
+            if (virtualCard != null) {
+                appeng.api.upgrades.Upgrades.add(virtualCard, machine, 1);
+            }
+        } catch (Throwable ignored) {
+            // 单宿主失败不阻塞另一个
         }
     }
 }

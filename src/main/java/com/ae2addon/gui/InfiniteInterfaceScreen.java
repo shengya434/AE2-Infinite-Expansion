@@ -138,9 +138,9 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                 b -> getMenu().flipPage(1)
         ).bounds(leftPos + 158, topPos + 4, 16, 12).build());
         long[] values = {
-                AE2AddonConfig.feederStockTarget(),
-                AE2AddonConfig.feederRestockInterval(),
-                AE2AddonConfig.feederFeedBudget()
+                getMenu().getFeeder().stockTargetValue(),
+                getMenu().getFeeder().restockIntervalValue(),
+                getMenu().getFeeder().feedBudgetValue()
         };
         for (int i = 0; i < 3; i++) {
             final int idx = i;
