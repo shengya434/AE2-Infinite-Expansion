@@ -124,21 +124,60 @@ public interface FeederHost {
     /** Jade 等外部显示：蓄水池全部条目文本行（物品/流体/化学物每类都列，不截断）。 */
     java.util.List<String> reservoirTooltipLines();
 
-    /** 通用实现：遍历蓄水池生成 "显示名 §7x数量" 行（物品/流体/化学物统一处理）。 */
+    /** Jade 等外部显示：蓄水池条目按类型分组，每类最多 {@code perTypeLimit} 行（其余隐去）。 */
     static java.util.List<String> buildReservoirLines(
             java.util.Map<AEKey, java.math.BigInteger> reservoir) {
-        java.util.List<String> lines = new java.util.ArrayList<>();
+        return buildReservoirLines(reservoir, 3);
+    }
+
+    /** 通用实现：物品/流体/化学物分组，每类限行数，超出显示「…等 N 种」。 */
+    static java.util.List<String> buildReservoirLines(
+            java.util.Map<AEKey, java.math.BigInteger> reservoir, int perTypeLimit) {
+        java.util.List<String> items = new java.util.ArrayList<>();
+        java.util.List<String> fluids = new java.util.ArrayList<>();
+        java.util.List<String> chems = new java.util.ArrayList<>();
+        java.util.List<String> others = new java.util.ArrayList<>();
         for (var e : reservoir.entrySet()) {
             if (e.getValue().signum() <= 0) {
                 continue;
             }
+            String line;
             try {
                 String name = e.getKey().getDisplayName().getString();
-                lines.add(name + " §7x" + com.ae2addon.block.InfiniteInterfaceBE.fmt(e.getValue()));
+                line = name + " §7x" + com.ae2addon.block.InfiniteInterfaceBE.fmt(e.getValue());
             } catch (RuntimeException ignored) {
-                // 个别 key 显示名异常不阻塞整体
+                continue;
+            }
+            AEKey key = e.getKey();
+            if (key instanceof appeng.api.stacks.AEItemKey) {
+                items.add(line);
+            } else if (key instanceof appeng.api.stacks.AEFluidKey) {
+                fluids.add(line);
+            } else if (key instanceof me.ramidzkh.mekae2.ae2.MekanismKey) {
+                chems.add(line);
+            } else {
+                others.add(line);
             }
         }
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        appendGroup(lines, "§e物品", items, perTypeLimit);
+        appendGroup(lines, "§b流体", fluids, perTypeLimit);
+        appendGroup(lines, "§d化学", chems, perTypeLimit);
+        appendGroup(lines, "§7其他", others, perTypeLimit);
         return lines;
+    }
+
+    private static void appendGroup(java.util.List<String> out, String header,
+            java.util.List<String> group, int limit) {
+        if (group.isEmpty()) {
+            return;
+        }
+        out.add(header);
+        for (int i = 0; i < Math.min(group.size(), limit); i++) {
+            out.add("  " + group.get(i));
+        }
+        if (group.size() > limit) {
+            out.add("  §7…等 " + (group.size() - limit) + " 种");
+        }
     }
 }
