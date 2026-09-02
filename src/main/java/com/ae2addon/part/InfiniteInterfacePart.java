@@ -96,8 +96,20 @@ public class InfiniteInterfacePart extends AEBasePart
     private final Map<AEKey, BigInteger> reservoir = new java.util.LinkedHashMap<>();
     private final Set<AEKey> patternKeys = new HashSet<>();
     private final Set<AEKey> pendingNetworkKeys = new HashSet<>();
-    private final SimpleContainer patternInv = new SimpleContainer(45);
-    private final SimpleContainer markerInv = new SimpleContainer(45);
+    private final SimpleContainer patternInv = new SimpleContainer(45) {
+        @Override
+        public void setChanged() {
+            super.setChanged();
+            patternDirty = true; // 样板变更 → 下个 tick 重建 patterns 并通知 CPU（2026-09-03）
+        }
+    };
+    private final SimpleContainer markerInv = new SimpleContainer(45) {
+        @Override
+        public void setChanged() {
+            super.setChanged();
+            onMarkersChanged(); // 标记变更 → 退缓存检查（2026-09-03 统一入口）
+        }
+    };
     private final IActionSource actionSource = new MachineSource(this::getActionableNode);
 
     private boolean activeExtract = true;
