@@ -26,7 +26,7 @@ public class ClientSetup {
                         .createModels(com.ae2addon.part.InfiniteInterfacePart.class);
                 appeng.api.parts.PartModels.registerModels(models);
             } catch (RuntimeException e) {
-                AE2Addon.LOGGER.warn("[ae2addon] part 模型注册跳过: {}", e.getMessage());
+                AE2Addon.LOGGER.warn("[ae2addon] part 模型注册失败: ", e);
             }
             MenuScreens.register(ModMenuTypes.MODE_SELECT.get(), ModeSelectScreen::new);
             MenuScreens.register(ModMenuTypes.MODE2_CONFIG.get(), Mode2ConfigScreen::new);

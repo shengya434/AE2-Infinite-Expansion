@@ -76,6 +76,16 @@ public class AE2Addon {
                     net.minecraftforge.client.ConfigScreenHandler.ConfigScreenFactory.class,
                     () -> new net.minecraftforge.client.ConfigScreenHandler.ConfigScreenFactory(
                             screen -> new com.ae2addon.client.gui.AE2AddonConfigScreen(screen)));
+            // 线缆面板 part 模型注册（2026-09-02）：必须早于 AE2 的
+            // PartModels.freeze()（ModelEvent.RegisterAdditional）；此处为最早时机。
+            try {
+                var partModels = appeng.items.parts.PartModelsHelper
+                        .createModels(com.ae2addon.part.InfiniteInterfacePart.class);
+                appeng.api.parts.PartModels.registerModels(partModels);
+                LOGGER.info("[ae2addon] part 模型已注册: {}", partModels.size());
+            } catch (Throwable t) {
+                LOGGER.warn("[ae2addon] part 模型注册失败(构造期): ", t);
+            }
         }
 
         // 注册物品
