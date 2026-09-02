@@ -213,7 +213,7 @@ public class InfiniteInterfacePart extends AEBasePart
             currentRejectRate = rejectWindow;
             rejectWindow = 0;
         }
-        if ((t % InfiniteInterfaceBE.RESTOCK_INTERVAL) == 0) {
+        if ((t % Math.max(1, restockIntervalValue())) == 0) {
             restockFromNetwork();
         }
         if ((t % InfiniteInterfaceBE.EXTRACT_INTERVAL) == 0) {
