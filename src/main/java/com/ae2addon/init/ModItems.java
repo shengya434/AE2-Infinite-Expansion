@@ -67,6 +67,12 @@ public class ModItems {
             () -> new BlockItem(ModBlocks.INFINITE_INTERFACE.get(), new Item.Properties())
     );
 
+    /** ME接口（无限级）· 面板方块物品（2026-09-02） */
+    public static final RegistryObject<Item> INFINITE_INTERFACE_PANEL_ITEM = ITEMS.register(
+            "infinite_interface_panel",
+            () -> new BlockItem(ModBlocks.INFINITE_INTERFACE_PANEL.get(), new Item.Properties())
+    );
+
     /** 配置存储卡：复制/粘贴接口配置（自研，绕开 AE2 内存卡限制） */
     public static final RegistryObject<Item> CONFIG_CARD = ITEMS.register(
             "config_card",
@@ -89,6 +95,7 @@ public class ModItems {
                         acceptTabItem(output, ModBlocks.INFINITE_CO_PROCESSING.get());
                         acceptTabItem(output, ModBlocks.INTEGRATED_CPU.get());
                         acceptTabItem(output, ModBlocks.INFINITE_INTERFACE.get());
+                        acceptTabItem(output, ModBlocks.INFINITE_INTERFACE_PANEL.get());
                         acceptTabItem(output, CONFIG_CARD.get());
                         acceptTabItem(output, MATTER_BALL.get());
                     })

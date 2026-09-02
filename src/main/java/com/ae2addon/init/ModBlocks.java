@@ -4,6 +4,7 @@ import com.ae2addon.AE2Addon;
 import com.ae2addon.block.InfiniteCraftingStorageBlock;
 import com.ae2addon.block.InfiniteCoProcessingBlock;
 import com.ae2addon.block.InfiniteInterfaceBlock;
+import com.ae2addon.block.InfiniteInterfacePanelBlock;
 import com.ae2addon.block.IntegratedCPUBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraftforge.registries.DeferredRegister;
@@ -46,5 +47,11 @@ public class ModBlocks {
     public static final RegistryObject<Block> INFINITE_INTERFACE = BLOCKS.register(
             "infinite_interface",
             InfiniteInterfaceBlock::new
+    );
+
+    /** ME接口（无限级）· 面板 — 薄型贴面变种（2026-09-02），功能与整格版一致，复用同一 BE */
+    public static final RegistryObject<Block> INFINITE_INTERFACE_PANEL = BLOCKS.register(
+            "infinite_interface_panel",
+            InfiniteInterfacePanelBlock::new
     );
 }

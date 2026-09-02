@@ -49,6 +49,7 @@ public class ModBlockEntities {
             BLOCK_ENTITIES.register("infinite_interface",
                     () -> BlockEntityType.Builder.of(
                             InfiniteInterfaceBE::new,
-                            ModBlocks.INFINITE_INTERFACE.get()
+                            ModBlocks.INFINITE_INTERFACE.get(),
+                            ModBlocks.INFINITE_INTERFACE_PANEL.get()   // 面板变种共用同一 BE（2026-09-02）
                     ).build(null));
 }
