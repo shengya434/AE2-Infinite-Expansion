@@ -78,7 +78,8 @@ import net.minecraft.network.chat.Component;
  */
 public class InfiniteInterfacePart extends AEBasePart
         implements FeederHost, ICraftingProvider, IGridTickable,
-        appeng.helpers.patternprovider.PatternContainer {
+        appeng.helpers.patternprovider.PatternContainer,
+        appeng.api.upgrades.IUpgradeableObject {
 
     public static final ResourceLocation MODEL_BASE =
             new ResourceLocation(AE2Addon.MODID, "part/infinite_interface_panel");
@@ -686,6 +687,17 @@ public class InfiniteInterfacePart extends AEBasePart
     @Override
     public IUpgradeInventory getUpgrades() {
         return upgrades;
+    }
+
+    // IUpgradeableObject（AE2 升级卡 shift+右键插卡走此接口，2026-09-03）
+    @Override
+    public int getInstalledUpgrades(net.minecraft.world.level.ItemLike card) {
+        return upgrades.getInstalledUpgrades(card);
+    }
+
+    @Override
+    public boolean isUpgradedWith(net.minecraft.world.level.ItemLike card) {
+        return upgrades.getInstalledUpgrades(card) > 0;
     }
 
     @Override
