@@ -55,6 +55,7 @@ import appeng.api.upgrades.UpgradeInventories;
 import appeng.items.misc.WrappedGenericStack;
 import appeng.items.parts.PartModels;
 import appeng.me.helpers.MachineSource;
+import appeng.api.storage.MEStorage;
 import appeng.menu.locator.MenuLocators;
 import appeng.parts.AEBasePart;
 import appeng.parts.PartModel;
@@ -79,7 +80,8 @@ import net.minecraft.network.chat.Component;
 public class InfiniteInterfacePart extends AEBasePart
         implements FeederHost, ICraftingProvider, IGridTickable,
         appeng.helpers.patternprovider.PatternContainer,
-        appeng.api.upgrades.IUpgradeableObject {
+        appeng.api.upgrades.IUpgradeableObject,
+        appeng.api.networking.crafting.ICraftingRequester {
 
     public static final ResourceLocation MODEL_BASE =
             new ResourceLocation(AE2Addon.MODID, "part/infinite_interface_panel");
@@ -138,6 +140,15 @@ public class InfiniteInterfacePart extends AEBasePart
     private long currentRejectRate;
     private BigInteger totalFed = BigInteger.ZERO;
 
+    /** 虚拟合成卡：key → 上次发起合成请求的 gameTime（防重复请求节流）。 */
+    private final java.util.Map<AEKey, Long> craftingRequests = new java.util.HashMap<>();
+    /** 同 key 合成请求冷却（tick；5 秒，与方块版一致）。 */
+    private static final long CRAFT_COOLDOWN = 100;
+
+    /** 频道卡无线从端链路（ExtendedAE+；惰性持有——缺依赖不崩类加载）。 */
+    private final com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink channelLink =
+            new com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink();
+
     public InfiniteInterfacePart(IPartItem<?> partItem) {
         super(partItem);
         this.upgrades = UpgradeInventories.forMachine(partItem.asItem(), 9, this::setChanged);
@@ -162,6 +173,7 @@ public class InfiniteInterfacePart extends AEBasePart
 
     @Override
     public void removeFromWorld() {
+        channelLink.unload(); // 频道卡无线链路断开（与方块版生命周期一致）
         super.removeFromWorld();
         removed = true;
         ACTIVE_PARTS.remove(this);
@@ -215,6 +227,119 @@ public class InfiniteInterfacePart extends AEBasePart
     /** 供方块版静态重置遍历调用（2026-09-03）。 */
     public void resetPushedForClusterPublic(Object cluster) {
         resetPushedForCluster(cluster);
+    }
+
+    // ── 虚拟合成卡（CRAFTING_CARD）：补货提取失败且可合成时请求 CPU 合成 ──
+
+    /** 网络是否可合成该 key（虚拟合成卡）。 */
+    private boolean isCraftable(AEKey key) {
+        IGrid grid = getMainNode().getGrid();
+        if (grid == null) {
+            return false;
+        }
+        try {
+            return grid.getCraftingService().isCraftable(key);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** 发起 CPU 合成请求（异步；与方块版一致——AE2-VM 接管 beginCraftingCalculation）。 */
+    private void requestCrafting(AEKey key, long amount) {
+        IGrid grid = getMainNode().getGrid();
+        if (grid == null) {
+            return;
+        }
+        Level lvl = getLevel();
+        if (lvl == null || lvl.isClientSide) {
+            return;
+        }
+        long now = lvl.getGameTime();
+        Long last = craftingRequests.get(key);
+        if (last != null && now - last < CRAFT_COOLDOWN) {
+            return; // 冷却中，防刷屏
+        }
+        craftingRequests.put(key, now);
+        try {
+            var service = grid.getCraftingService();
+            // 匿名模拟请求者（part 不能直接实现：getGridNode 与 AEBasePart 冲突风险同方块版）
+            var simulationRequester = new appeng.api.networking.crafting.ICraftingSimulationRequester() {
+                @Override
+                public appeng.api.networking.security.IActionSource getActionSource() {
+                    return actionSource;
+                }
+            };
+            java.util.concurrent.Future<appeng.api.networking.crafting.ICraftingPlan> future =
+                    service.beginCraftingCalculation(lvl, simulationRequester, key, amount,
+                            appeng.api.networking.crafting.CalculationStrategy.CRAFT_LESS);
+            // Future（非 CompletableFuture）：后台线程等待计算结果，完成后切主线程提交
+            java.util.concurrent.CompletableFuture
+                    .supplyAsync(() -> {
+                        try {
+                            return future.get(15, java.util.concurrent.TimeUnit.SECONDS);
+                        } catch (Exception e) {
+                            com.ae2addon.AE2Addon.LOGGER.warn(
+                                    "[ae2addon][feeder] 虚拟合成计算失败(part): {} {}", key, e);
+                            return null;
+                        }
+                    })
+                    .thenAccept(plan -> {
+                        if (plan == null || plan.simulation() || plan.bytes() <= 0) {
+                            return;
+                        }
+                        if (lvl.getServer() != null) {
+                            lvl.getServer().execute(() -> {
+                                try {
+                                    var result = service.submitJob(plan, this, null, false, actionSource);
+                                    if (result != null && result.successful()) {
+                                        com.ae2addon.AE2Addon.LOGGER.info(
+                                                "[ae2addon][feeder] 虚拟合成卡(part): 提交合成 {} x{}",
+                                                key, plan.bytes());
+                                    } else {
+                                        com.ae2addon.AE2Addon.LOGGER.warn(
+                                                "[ae2addon][feeder] 虚拟合成卡(part)提交未成功: {} 错误={}",
+                                                key, result == null ? "null" : result.errorCode());
+                                    }
+                                } catch (RuntimeException e) {
+                                    com.ae2addon.AE2Addon.LOGGER.warn(
+                                            "[ae2addon][feeder] 虚拟合成卡(part)提交失败: {} {}", key, e);
+                                }
+                            });
+                        }
+                    });
+        } catch (RuntimeException e) {
+            craftingRequests.remove(key);
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon][feeder] 虚拟合成请求异常(part): {} {}", key, e);
+        }
+    }
+
+    // ── ICraftingRequester（虚拟合成卡：CPU 产物直接进蓄水池） ──
+
+    @Override
+    public com.google.common.collect.ImmutableSet<appeng.api.networking.crafting.ICraftingLink> getRequestedJobs() {
+        return com.google.common.collect.ImmutableSet.of();
+    }
+
+    @Override
+    public long insertCraftedItems(appeng.api.networking.crafting.ICraftingLink link,
+            AEKey what, long amount, appeng.api.config.Actionable actionable) {
+        if (actionable == appeng.api.config.Actionable.MODULATE && amount > 0) {
+            addReservoir(what, BigInteger.valueOf(amount));
+            setChanged();
+        }
+        return amount; // 全收（进蓄水池，随后按机器容量喂出）
+    }
+
+    @Override
+    public void jobStateChange(appeng.api.networking.crafting.ICraftingLink link) {
+        // 合成结束/取消：清冷却，允许稍后重试（与方块版一致）
+        if (link != null && link.getCraftingID() != null) {
+            craftingRequests.entrySet().removeIf(e ->
+                    e.getKey().toString().equals(link.getCraftingID().toString()));
+        } else {
+            craftingRequests.clear();
+        }
     }
 
     // ── 模型/碰撞 ──
@@ -279,6 +404,9 @@ public class InfiniteInterfacePart extends AEBasePart
         if (patternDirty) {
             rebuildPatterns();
         }
+        if ((t & 0x3F) == 0) {
+            updateChannelLink(); // 每 3 秒刷新无线链路（主端变动/延迟连接）
+        }
         if ((t & 19) == 0) {
             currentFeedRate = rateWindowFed;
             rateWindowFed = 0;
@@ -294,6 +422,7 @@ public class InfiniteInterfacePart extends AEBasePart
         if ((t % 10) == 0) {
             pushPendingToNetwork();
         }
+        feedMachinePower(); // 感应卡供电独立于喂出（蓄水池空也供电）
         feedMachine();
         return TickRateModulation.IDLE;
     }
@@ -407,6 +536,9 @@ public class InfiniteInterfacePart extends AEBasePart
             if (got > 0) {
                 addReservoir(key, BigInteger.valueOf(got));
                 setChanged();
+            } else if (hasCraftingCard() && isCraftable(key)) {
+                // 虚拟合成卡：网络没有 → 请求 CPU 合成（与方块版一致）
+                requestCrafting(key, want);
             }
         }
     }
@@ -416,6 +548,9 @@ public class InfiniteInterfacePart extends AEBasePart
     private void feedMachine() {
         if (!activeFeed) {
             return;
+        }
+        if (!redstoneAllowsFeed()) {
+            return; // 红石卡：信号不允许时暂停喂出（反向卡则反转）
         }
         Level lvl = getLevel();
         Direction front = getFront();
@@ -432,11 +567,12 @@ public class InfiniteInterfacePart extends AEBasePart
         IItemHandler handler = itemCap.isPresent() ? itemCap.orElse(null) : null;
         int slots = handler == null ? 0 : handler.getSlots();
 
-        // 可喂种类（物品/流体）
+        // 可喂种类（物品/流体/化学物）
         int feedable = 0;
         for (var entry : reservoir.entrySet()) {
             if ((entry.getKey() instanceof appeng.api.stacks.AEItemKey
-                    || entry.getKey() instanceof appeng.api.stacks.AEFluidKey)
+                    || entry.getKey() instanceof appeng.api.stacks.AEFluidKey
+                    || com.ae2addon.compat.MekanismGasCompat.isFeedable(entry.getKey()))
                     && entry.getValue().signum() > 0) {
                 if (pendingNetworkKeys.contains(entry.getKey())) {
                     continue;
@@ -505,6 +641,19 @@ public class InfiniteInterfacePart extends AEBasePart
                             amount -= filled;
                         }
                     }
+                }
+            } else if (com.ae2addon.compat.MekanismGasCompat.isFeedable(key)) {
+                // 化学物喂出：insertChemical 到机器化学槽（Mekanism 可选集成，与方块版一致）
+                while (amount > 0 && itemBudget > 0 && totalBudget > 0) {
+                    long fedOnce = com.ae2addon.compat.MekanismGasCompat.feed(
+                            target, front.getOpposite(), key, amount);
+                    if (fedOnce <= 0) {
+                        break; // 机器化学槽满/不吃该化学物
+                    }
+                    fed += fedOnce;
+                    amount -= fedOnce;
+                    itemBudget--;
+                    totalBudget--;
                 }
             }
             if (fed > 0) {
@@ -615,8 +764,112 @@ public class InfiniteInterfacePart extends AEBasePart
                     }
                 }
             }
+            // 化学物（气体/灌注/颜料/浆液）逐罐抽（产物；Mekanism 可选集成）
+            if (com.ae2addon.compat.MekanismGasCompat.isLoaded()) {
+                extractChemicalsFrom(target, side, storage,
+                        mekanism.common.capabilities.Capabilities.GAS_HANDLER);
+                extractChemicalsFrom(target, side, storage,
+                        mekanism.common.capabilities.Capabilities.INFUSION_HANDLER);
+                extractChemicalsFrom(target, side, storage,
+                        mekanism.common.capabilities.Capabilities.PIGMENT_HANDLER);
+                extractChemicalsFrom(target, side, storage,
+                        mekanism.common.capabilities.Capabilities.SLURRY_HANDLER);
+            }
         } catch (RuntimeException ignored) {
         }
+    }
+
+    /** 从机器某化学 handler 抽产物入网/缓存（仅 isLoaded() 时调用，与方块版一致）。 */
+    private void extractChemicalsFrom(BlockEntity target, Direction side, MEStorage storage,
+            net.minecraftforge.common.capabilities.Capability<?> cap) {
+        var lo = target.getCapability(cap, side);
+        if (!lo.isPresent()) {
+            return;
+        }
+        Object h = lo.orElse(null);
+        if (!(h instanceof mekanism.api.chemical.IChemicalHandler<?, ?> ch) || ch.getTanks() <= 0) {
+            return;
+        }
+        for (int tank = 0; tank < ch.getTanks(); tank++) {
+            var inTank = ch.getChemicalInTank(tank);
+            if (inTank == null || inTank.isEmpty()) {
+                continue;
+            }
+            AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(inTank);
+            if (key == null || isMarkedMaterial(key)) {
+                continue;
+            }
+            long amount = Math.min(inTank.getAmount(), InfiniteInterfaceBE.EXTRACT_GAS);
+            if (amount <= 0) {
+                continue;
+            }
+            var sim = ch.extractChemical(tank, amount, mekanism.api.Action.SIMULATE);
+            if (sim == null || sim.isEmpty()) {
+                continue;
+            }
+            long got = Math.min(sim.getAmount(), amount);
+            if (got <= 0) {
+                continue;
+            }
+            long inserted = storage.insert(key, got, Actionable.MODULATE, actionSource);
+            long cached = got - inserted;
+            if (inserted > 0 || cached > 0) {
+                // 从机器抽走：网络收下的入网，收不下的进待入网缓存
+                ch.extractChemical(tank, got, mekanism.api.Action.EXECUTE);
+                if (cached > 0) {
+                    cacheForNetwork(key, cached);
+                }
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][feeder] 主动抽取(part): {} {}单位 → 网络{}（罐{}）", key, inserted,
+                        cached > 0 ? " + 缓存" + cached : "", tank);
+            }
+        }
+    }
+
+    /** 感应卡供电：网络 FE → 正面机器能量槽（独立于喂出；蓄水池空也供电）。 */
+    private void feedMachinePower() {
+        if (!hasInductionCard()) {
+            return;
+        }
+        Level lvl = getLevel();
+        if (lvl == null || lvl.isClientSide) {
+            return;
+        }
+        try {
+            Direction front = getFront();
+            if (front == null) {
+                return;
+            }
+            BlockEntity target = lvl.getBlockEntity(getBlockPos().relative(front));
+            if (target == null) {
+                return;
+            }
+            long fe = com.ae2addon.compat.AppFluxPowerCompat.feedEnergy(
+                    target, front.getOpposite(), getMainNode().getGrid(), actionSource);
+            if (fe > 0 && (lvl.getGameTime() & 0x3F) == 0) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][feeder] 供电(part) {} FE/tick（感应卡）", fe);
+            }
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    // ── 频道卡无线链路（ExtendedAE+） ──
+
+    /** 按卡刷新无线链路（每 64 tick；无卡自动断开）。 */
+    private void updateChannelLink() {
+        var card = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
+        net.minecraft.world.item.ItemStack cardStack = net.minecraft.world.item.ItemStack.EMPTY;
+        if (card != null) {
+            for (int i = 0; i < upgrades.size(); i++) {
+                var stack = upgrades.getStackInSlot(i);
+                if (stack.getItem() == card) {
+                    cardStack = stack;
+                    break;
+                }
+            }
+        }
+        channelLink.update(() -> getBlockEntity(), () -> getMainNode().getNode(), cardStack);
     }
 
     private boolean isMarkedMaterial(AEKey key) {
@@ -710,6 +963,45 @@ public class InfiniteInterfacePart extends AEBasePart
     private int speedCards() {
         return upgrades.getInstalledUpgrades(
                 appeng.core.definitions.AEItems.SPEED_CARD.asItem());
+    }
+
+    /** 红石卡（红石门控喂出）。 */
+    public boolean hasRedstoneCard() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.REDSTONE_CARD.asItem()) > 0;
+    }
+
+    /** 反向卡（反转红石信号；无红石卡时无效）。 */
+    public boolean hasInverterCard() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.INVERTER_CARD.asItem()) > 0;
+    }
+
+    /** 虚拟合成卡（补货不足时请求 CPU 合成）。 */
+    public boolean hasCraftingCard() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.CRAFTING_CARD.asItem()) > 0;
+    }
+
+    /** AppFlux 感应卡（给前方机器供电）。 */
+    public boolean hasInductionCard() {
+        var card = com.ae2addon.compat.AppFluxPowerCompat.inductionCard();
+        return card != null && upgrades.getInstalledUpgrades(card) > 0;
+    }
+
+    /** ExtendedAE+ 频道卡（无线链路）。 */
+    public boolean hasChannelCard() {
+        var card = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
+        return card != null && upgrades.getInstalledUpgrades(card) > 0;
+    }
+
+    /** 红石门控：红石卡安装时，信号高=喂出（反向卡则反转；无红石卡恒放行）。 */
+    private boolean redstoneAllowsFeed() {
+        if (!hasRedstoneCard()) {
+            return true;
+        }
+        boolean powered = getLevel() != null && getLevel().hasNeighborSignal(getBlockPos());
+        return hasInverterCard() ? !powered : powered;
     }
 
     @Override

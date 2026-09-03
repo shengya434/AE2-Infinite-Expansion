@@ -1078,7 +1078,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 }
             }
         }
-        channelLink.update(this, cardStack);
+        channelLink.update(() -> this, () -> getMainNode().getNode(), cardStack);
     }
 
     private void disconnectChannelLink() {

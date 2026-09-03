@@ -57,8 +57,16 @@ public final class ExtendedAEPlusCompat {
         /** WirelessSlaveLink（仅 isLoaded() 时非 null）。 */
         private Object link;
 
-        /** 按卡刷新链路（无卡/无效卡自动断开）；卡栈为空也断开。 */
-        public void update(com.ae2addon.block.InfiniteInterfaceBE be, net.minecraft.world.item.ItemStack cardStack) {
+        /**
+         * 按卡刷新链路（无卡/无效卡自动断开）；卡栈为空也断开。
+         * 2026-09-03 part v0.2：签名从绑定 InfiniteInterfaceBE 泛化为
+         * (BlockEntity supplier, IGridNode supplier)——方块版/线缆 part 共用
+         * （GenericNodeEndpointImpl 构造即这两个 Supplier）。
+         */
+        public void update(
+                java.util.function.Supplier<net.minecraft.world.level.block.entity.BlockEntity> beSup,
+                java.util.function.Supplier<appeng.api.networking.IGridNode> nodeSup,
+                net.minecraft.world.item.ItemStack cardStack) {
             if (!isLoaded()) {
                 return;
             }
@@ -75,7 +83,7 @@ public final class ExtendedAEPlusCompat {
                 }
                 if (link == null) {
                     var endpoint = new com.extendedae_plus.ae.wireless.endpoint.GenericNodeEndpointImpl(
-                            () -> be, () -> be.getMainNode().getNode());
+                            beSup, nodeSup);
                     link = new com.extendedae_plus.ae.wireless.WirelessSlaveLink(endpoint);
                 }
                 var slave = (com.extendedae_plus.ae.wireless.WirelessSlaveLink) link;
