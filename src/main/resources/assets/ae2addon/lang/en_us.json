@@ -47,6 +47,7 @@
   "gui.ae2addon.cpu.title": "Integrated CPU",
   "gui.ae2addon.cpu.quantum_split": "§e⚡Quantum-Split Threads",
   "gui.ae2addon.cpu.infinite_status": "Storage ∞ · Parallel ∞",
+  "gui.ae2addon.cpu.status": "§eStorage %s · Parallel %s",
   "gui.ae2addon.cpu.overview": "§fThreads: %s  Busy: %s%s  §7[click to switch]",
   "gui.ae2addon.cpu.formed": "  §aFormed",
   "gui.ae2addon.cpu.unformed": "  §cUnformed",

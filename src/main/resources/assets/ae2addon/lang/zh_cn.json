@@ -47,6 +47,7 @@
   "gui.ae2addon.cpu.title": "集成CPU",
   "gui.ae2addon.cpu.quantum_split": "§e⚡量子分裂线程",
   "gui.ae2addon.cpu.infinite_status": "存储 ∞ · 并行 ∞",
+  "gui.ae2addon.cpu.status": "§e存储 %s · 并行 %s",
   "gui.ae2addon.cpu.overview": "§f线程: %s  忙: %s%s  §7[点击切换]",
   "gui.ae2addon.cpu.formed": "  §a成型",
   "gui.ae2addon.cpu.unformed": "  §c未成型",

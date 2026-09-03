@@ -31,13 +31,19 @@ public abstract class TooltipsMixin {
     /**
      * 注入 getByteAmount：在原方法返回前，用正确的 6 级二进制单位覆盖返回值。
      * 原版 BYTE_NUMS 数组只有 4 个元素，TB/PB/EB 缺失导致 ≥1TB 时数组越界。
+     * 无限存储哨兵（Long.MAX_VALUE）：config cpuDisplayBytes 填具体值时按显示值格式化
+     * （默认 MAX 仍显示 ∞；2026-09-03 sensei）。
      */
     @Inject(method = "getByteAmount", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private static void onGetByteAmount(long value, CallbackInfoReturnable<Tooltips.Amount> cir) {
-        // 无限存储哨兵：直接显示 ∞（集成 CPU 的 getStorageBytes 返回 Long.MAX_VALUE）
-        if (value == Long.MAX_VALUE) {
-            cir.setReturnValue(new Tooltips.Amount("∞", ""));
-            return;
+        long v = value;
+        if (v == Long.MAX_VALUE) {
+            long disp = com.ae2addon.config.AE2AddonConfig.cpuDisplayBytes();
+            if (disp == Long.MAX_VALUE) {
+                cir.setReturnValue(new Tooltips.Amount("∞", ""));
+                return;
+            }
+            v = disp; // config 填值：按显示值继续格式化
         }
 
         final long[] BYTE_THRESHOLDS = {
@@ -49,15 +55,15 @@ public abstract class TooltipsMixin {
                 1152921504606846976L      // 5: EB (2^60)
         };
 
-        if (value < BYTE_THRESHOLDS[0]) {
-            cir.setReturnValue(new Tooltips.Amount(Long.toString(value), ""));
+        if (v < BYTE_THRESHOLDS[0]) {
+            cir.setReturnValue(new Tooltips.Amount(Long.toString(v), ""));
             return;
         }
 
         for (int i = 0; i < BYTE_THRESHOLDS.length; i++) {
-            if (value / BYTE_THRESHOLDS[i] < 1000) {
+            if (v / BYTE_THRESHOLDS[i] < 1000) {
                 cir.setReturnValue(new Tooltips.Amount(
-                        getAmount((double) value, BYTE_THRESHOLDS[i]),
+                        getAmount((double) v, BYTE_THRESHOLDS[i]),
                         units[i]
                 ));
                 return;
@@ -66,7 +72,7 @@ public abstract class TooltipsMixin {
 
         int last = BYTE_THRESHOLDS.length - 1;
         cir.setReturnValue(new Tooltips.Amount(
-                getAmount((double) value, BYTE_THRESHOLDS[last]),
+                getAmount((double) v, BYTE_THRESHOLDS[last]),
                 units[last]
         ));
     }
