@@ -83,6 +83,18 @@ public final class AE2AddonConfig {
                     "Display thread count for integrated CPU (0 = max out)")
             .defineInRange("cpuDisplayThreads", 0, 0, 100_000_000);
 
+    /** 存储显示文本覆盖（非空时直接显示该文本，如「无限」「MAX」；空 = 数值/∞ 逻辑）。 */
+    public static final ForgeConfigSpec.ConfigValue<String> CPU_STORAGE_TEXT = BUILDER
+            .comment("集成 CPU 存储显示文本覆盖（非空时直接显示，如 无限/MAX/∞；留空=数值或∞）",
+                    "Storage display text override for integrated CPU (non-empty wins; empty = number/∞)")
+            .define("cpuStorageText", "");
+
+    /** 并行显示文本覆盖（非空时直接显示该文本，如「拉满」「MAX」；空 = 数值/∞ 逻辑）。 */
+    public static final ForgeConfigSpec.ConfigValue<String> CPU_THREADS_TEXT = BUILDER
+            .comment("集成 CPU 并行显示文本覆盖（非空时直接显示，如 拉满/MAX/∞；留空=数值或∞）",
+                    "Parallel display text override for integrated CPU (non-empty wins; empty = number/∞)")
+            .define("cpuThreadsText", "");
+
     // ── ME接口（无限级） ──
 
     /** 每个物品的蓄水池目标保有量（机器消耗后自动从网络补足；0=不自动补货只收CPU推送）。 */
@@ -239,6 +251,16 @@ public final class AE2AddonConfig {
     public static int cpuDisplayThreads() {
         int v = CPU_DISPLAY_THREADS.get();
         return v <= 0 ? Integer.MAX_VALUE - 1 : v;
+    }
+
+    /** 存储显示文本覆盖（去空格；空 = 未设置）。 */
+    public static String cpuStorageText() {
+        return CPU_STORAGE_TEXT.get() == null ? "" : CPU_STORAGE_TEXT.get().trim();
+    }
+
+    /** 并行显示文本覆盖（去空格；空 = 未设置）。 */
+    public static String cpuThreadsText() {
+        return CPU_THREADS_TEXT.get() == null ? "" : CPU_THREADS_TEXT.get().trim();
     }
 
     /** ME接口(无限级)：每物品蓄水池目标保有量（0=关闭自动补货）。 */

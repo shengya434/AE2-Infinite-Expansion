@@ -43,11 +43,40 @@ public abstract class CPUSelectionListMixin {
         return com.ae2addon.config.AE2AddonConfig.cpuDisplayThreads();
     }
 
+    /** 存储显示：文本覆盖 > config 数值（MAX=∞）> 实际值格式化。 */
+    @Unique
+    private static String ae2addon$storageTextOrNull(long sentinelValue) {
+        if (sentinelValue == Long.MAX_VALUE) {
+            String text = com.ae2addon.config.AE2AddonConfig.cpuStorageText();
+            if (!text.isEmpty()) {
+                return text;
+            }
+        }
+        return null;
+    }
+
+    /** 并行显示：文本覆盖 > config 数值（MAX-1=∞）> 实际值。 */
+    @Unique
+    private static String ae2addon$threadsTextOrNull(int sentinelValue) {
+        if (sentinelValue == Integer.MAX_VALUE - 1) {
+            String text = com.ae2addon.config.AE2AddonConfig.cpuThreadsText();
+            if (!text.isEmpty()) {
+                return text;
+            }
+        }
+        return null;
+    }
+
     @Inject(method = "formatStorage", at = @At("HEAD"), cancellable = true, require = 0)
     private void ae2addon$formatInfiniteStorage(
             CraftingStatusMenu.CraftingCpuListEntry cpu,
             CallbackInfoReturnable<String> callback) {
         if (cpu.storage() == Long.MAX_VALUE) {
+            String text = ae2addon$storageTextOrNull(cpu.storage());
+            if (text != null) {
+                callback.setReturnValue(text);
+                return;
+            }
             long disp = ae2addon$displayBytes();
             if (disp == Long.MAX_VALUE) {
                 callback.setReturnValue(AE2ADDON_INFINITE_TEXT);
@@ -65,6 +94,10 @@ public abstract class CPUSelectionListMixin {
         if (value != Integer.MAX_VALUE - 1) {
             return String.valueOf(value);
         }
+        String text = ae2addon$threadsTextOrNull(value);
+        if (text != null) {
+            return text;
+        }
         int disp = ae2addon$displayThreads();
         return disp == Integer.MAX_VALUE - 1 ? AE2ADDON_INFINITE_TEXT : String.valueOf(disp);
     }
@@ -77,6 +110,10 @@ public abstract class CPUSelectionListMixin {
     private MutableComponent ae2addon$tooltipInfiniteParallelism(long value) {
         if (value != Integer.MAX_VALUE - 1) {
             return Tooltips.ofNumber(value);
+        }
+        String text = ae2addon$threadsTextOrNull((int) value);
+        if (text != null) {
+            return Component.literal(text);
         }
         int disp = ae2addon$displayThreads();
         return disp == Integer.MAX_VALUE - 1
@@ -92,6 +129,10 @@ public abstract class CPUSelectionListMixin {
     private MutableComponent ae2addon$tooltipInfiniteStorage(long value) {
         if (value != Long.MAX_VALUE) {
             return Tooltips.ofBytes(value);
+        }
+        String text = ae2addon$storageTextOrNull(value);
+        if (text != null) {
+            return Component.literal(text);
         }
         long disp = ae2addon$displayBytes();
         return disp == Long.MAX_VALUE

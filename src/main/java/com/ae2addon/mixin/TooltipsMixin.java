@@ -38,6 +38,12 @@ public abstract class TooltipsMixin {
     private static void onGetByteAmount(long value, CallbackInfoReturnable<Tooltips.Amount> cir) {
         long v = value;
         if (v == Long.MAX_VALUE) {
+            // 文本覆盖优先（config cpuStorageText，2026-09-03 sensei）
+            String text = com.ae2addon.config.AE2AddonConfig.cpuStorageText();
+            if (!text.isEmpty()) {
+                cir.setReturnValue(new Tooltips.Amount(text, ""));
+                return;
+            }
             long disp = com.ae2addon.config.AE2AddonConfig.cpuDisplayBytes();
             if (disp == Long.MAX_VALUE) {
                 cir.setReturnValue(new Tooltips.Amount("∞", ""));

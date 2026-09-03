@@ -44,17 +44,23 @@ public abstract class CraftConfirmScreenMixin {
         return com.ae2addon.config.AE2AddonConfig.cpuDisplayThreads();
     }
 
-    /** 状态行组件：存储段 + 并行段（∞ 或 config 显示值）。 */
+    /** 状态行组件：存储段 + 并行段（文本覆盖 > ∞/数值）。 */
     @Unique
     private static MutableComponent ae2addon$statusComponent() {
         long bytes = ae2addon$dispBytes();
         int threads = ae2addon$dispThreads();
-        Component bytesPart = bytes == Long.MAX_VALUE
-                ? Component.literal("∞")
-                : appeng.core.localization.Tooltips.ofBytes(bytes);
-        Component threadsPart = threads == Integer.MAX_VALUE - 1
-                ? Component.literal("∞")
-                : Component.literal(String.valueOf(threads));
+        String bytesText = com.ae2addon.config.AE2AddonConfig.cpuStorageText();
+        String threadsText = com.ae2addon.config.AE2AddonConfig.cpuThreadsText();
+        Component bytesPart = !bytesText.isEmpty()
+                ? Component.literal(bytesText)
+                : bytes == Long.MAX_VALUE
+                        ? Component.literal("∞")
+                        : appeng.core.localization.Tooltips.ofBytes(bytes);
+        Component threadsPart = !threadsText.isEmpty()
+                ? Component.literal(threadsText)
+                : threads == Integer.MAX_VALUE - 1
+                        ? Component.literal("∞")
+                        : Component.literal(String.valueOf(threads));
         return Component.translatable("gui.ae2addon.cpu.status", bytesPart, threadsPart);
     }
 
