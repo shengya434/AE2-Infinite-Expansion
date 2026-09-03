@@ -152,6 +152,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     /** 主动抽取配置（applyConfig 同步）。 */
     public static volatile int EXTRACT_INTERVAL = 4;
     public static volatile int EXTRACT_STACK = 64;
+    /** 主动抽取循环累计上限（0 = 关闭循环；默认不设限）。 */
+    public static volatile int EXTRACT_LOOP_CAP = Integer.MAX_VALUE;
     public static volatile int EXTRACT_FLUID = 1000;
     public static volatile int EXTRACT_GAS = 1000;
     /** 补货间隔（tick）。4 = 每秒 5 次全量补货。 */
@@ -165,6 +167,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         RESTOCK_INTERVAL = Math.max(1, AE2AddonConfig.feederRestockInterval());
         EXTRACT_INTERVAL = Math.max(1, AE2AddonConfig.feederExtractInterval());
         EXTRACT_STACK = Math.max(1, AE2AddonConfig.feederExtractStack());
+        EXTRACT_LOOP_CAP = Math.max(0, AE2AddonConfig.feederExtractLoopCap());
         EXTRACT_FLUID = Math.max(1, AE2AddonConfig.feederExtractFluid());
         EXTRACT_GAS = Math.max(1, AE2AddonConfig.feederExtractGas());
     }
@@ -1697,25 +1700,34 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         // ⚠️ 部分机器的 IItemHandler 把单次 extractItem 钳制在物品最大堆叠
                         // （Mekanism 箱子/箱柜 = min(槽内数量, maxStackSize)，原版物品=64），
                         // 配置的每次抽取量一次拿不完 → 循环试探凑满（2026-08-29 sensei 实测 1024 只出 64）。
-                        // 先模拟收集可抽总量（一次入网），再按网络实际接收量实抽。
+                        // 循环累计上限 EXTRACT_LOOP_CAP 可配置（0=关循环，每次仅单次钳制量；2026-09-03 sensei）。
                         int remaining = EXTRACT_STACK;
                         long available = 0;
-                        int guard = 0;
-                        while (remaining > 0 && guard++ < 65536) {
-                            var part = handler.extractItem(slot, remaining, true);
-                            if (part.isEmpty()) {
-                                break;
+                        int loopCap = EXTRACT_LOOP_CAP;
+                        if (loopCap > 0) {
+                            int guard = 0;
+                            while (remaining > 0 && available < loopCap && guard++ < 65536) {
+                                int want = (int) Math.min((long) remaining, (long) loopCap - available);
+                                if (want <= 0) {
+                                    break;
+                                }
+                                var part = handler.extractItem(slot, want, true);
+                                if (part.isEmpty()) {
+                                    break;
+                                }
+                                var partKey = appeng.api.stacks.AEItemKey.of(part);
+                                if (partKey == null || !partKey.equals(key)) {
+                                    break; // 槽内容变化（防御）
+                                }
+                                int n = Math.min(part.getCount(), want);
+                                if (n <= 0) {
+                                    break;
+                                }
+                                available += n;
+                                remaining -= n;
                             }
-                            var partKey = appeng.api.stacks.AEItemKey.of(part);
-                            if (partKey == null || !partKey.equals(key)) {
-                                break; // 槽内容变化（防御）
-                            }
-                            int n = Math.min(part.getCount(), remaining);
-                            if (n <= 0) {
-                                break;
-                            }
-                            available += n;
-                            remaining -= n;
+                        } else {
+                            available = extracted.getCount(); // 关闭循环：仅单次钳制量
                         }
                         if (available <= 0) {
                             continue;

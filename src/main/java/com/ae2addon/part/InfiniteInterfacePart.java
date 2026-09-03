@@ -714,25 +714,35 @@ public class InfiniteInterfacePart extends AEBasePart
                         }
                         // ⚠️ 部分机器 IItemHandler 把单次 extractItem 钳制在最大堆叠
                         // （Mekanism 箱柜 = min(槽内数量, maxStackSize)），配置的大抽取量一次
-                        // 拿不完 → 循环试探凑满（对齐方块版 2026-08-29 修复；part v0.2 漏抄）
+                        // 拿不完 → 循环试探凑满（对齐方块版 2026-08-29 修复）。
+                        // 循环累计上限 EXTRACT_LOOP_CAP 可配置（0=关循环，仅单次钳制量；2026-09-03 sensei）。
                         int remaining = InfiniteInterfaceBE.EXTRACT_STACK;
                         long available = 0;
-                        int guard = 0;
-                        while (remaining > 0 && guard++ < 65536) {
-                            var part = handler.extractItem(slot, remaining, true);
-                            if (part.isEmpty()) {
-                                break;
+                        int loopCap = InfiniteInterfaceBE.EXTRACT_LOOP_CAP;
+                        if (loopCap > 0) {
+                            int guard = 0;
+                            while (remaining > 0 && available < loopCap && guard++ < 65536) {
+                                int want = (int) Math.min((long) remaining, (long) loopCap - available);
+                                if (want <= 0) {
+                                    break;
+                                }
+                                var part = handler.extractItem(slot, want, true);
+                                if (part.isEmpty()) {
+                                    break;
+                                }
+                                var partKey = appeng.api.stacks.AEItemKey.of(part);
+                                if (partKey == null || !partKey.equals(key)) {
+                                    break; // 槽内容变化（防御）
+                                }
+                                int n = Math.min(part.getCount(), want);
+                                if (n <= 0) {
+                                    break;
+                                }
+                                available += n;
+                                remaining -= n;
                             }
-                            var partKey = appeng.api.stacks.AEItemKey.of(part);
-                            if (partKey == null || !partKey.equals(key)) {
-                                break; // 槽内容变化（防御）
-                            }
-                            int n = Math.min(part.getCount(), remaining);
-                            if (n <= 0) {
-                                break;
-                            }
-                            available += n;
-                            remaining -= n;
+                        } else {
+                            available = extracted.getCount(); // 关闭循环：仅单次钳制量
                         }
                         if (available <= 0) {
                             continue;
