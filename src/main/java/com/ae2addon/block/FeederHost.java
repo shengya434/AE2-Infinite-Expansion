@@ -121,30 +121,31 @@ public interface FeederHost {
 
     void setChanged();
 
-    /** Jade 等外部显示：蓄水池全部条目文本行（物品/流体/化学物每类都列，不截断）。 */
-    java.util.List<String> reservoirTooltipLines();
+    /** Jade 等外部显示：蓄水池全部条目（物品/流体/化学物每类都列，不截断）；文本 translatable，语言在客户端解析。 */
+    java.util.List<net.minecraft.network.chat.Component> reservoirTooltipLines();
 
     /** Jade 等外部显示：蓄水池条目按类型分组，每类最多 {@code perTypeLimit} 行（其余隐去）。 */
-    static java.util.List<String> buildReservoirLines(
+    static java.util.List<net.minecraft.network.chat.Component> buildReservoirLines(
             java.util.Map<AEKey, java.math.BigInteger> reservoir) {
         return buildReservoirLines(reservoir, 3);
     }
 
-    /** 通用实现：物品/流体/化学物分组，每类限行数，超出显示「…等 N 种」。 */
-    static java.util.List<String> buildReservoirLines(
+    /** 通用实现：物品/流体/化学物分组，每类限行数，超出显示「…等 N 种」；文本 translatable（2026-09-03 i18n）。 */
+    static java.util.List<net.minecraft.network.chat.Component> buildReservoirLines(
             java.util.Map<AEKey, java.math.BigInteger> reservoir, int perTypeLimit) {
-        java.util.List<String> items = new java.util.ArrayList<>();
-        java.util.List<String> fluids = new java.util.ArrayList<>();
-        java.util.List<String> chems = new java.util.ArrayList<>();
-        java.util.List<String> others = new java.util.ArrayList<>();
+        java.util.List<net.minecraft.network.chat.Component> items = new java.util.ArrayList<>();
+        java.util.List<net.minecraft.network.chat.Component> fluids = new java.util.ArrayList<>();
+        java.util.List<net.minecraft.network.chat.Component> chems = new java.util.ArrayList<>();
+        java.util.List<net.minecraft.network.chat.Component> others = new java.util.ArrayList<>();
         for (var e : reservoir.entrySet()) {
             if (e.getValue().signum() <= 0) {
                 continue;
             }
-            String line;
+            net.minecraft.network.chat.Component line;
             try {
-                String name = e.getKey().getDisplayName().getString();
-                line = name + " §7x" + com.ae2addon.block.InfiniteInterfaceBE.fmt(e.getValue());
+                // 显示名 Component（translatable 保留 key → 客户端本地化）
+                line = e.getKey().getDisplayName().copy()
+                        .append(" §7x" + com.ae2addon.block.InfiniteInterfaceBE.fmt(e.getValue()));
             } catch (RuntimeException ignored) {
                 continue;
             }
@@ -159,25 +160,27 @@ public interface FeederHost {
                 others.add(line);
             }
         }
-        java.util.List<String> lines = new java.util.ArrayList<>();
-        appendGroup(lines, "§e物品", items, perTypeLimit);
-        appendGroup(lines, "§b流体", fluids, perTypeLimit);
-        appendGroup(lines, "§d化学", chems, perTypeLimit);
-        appendGroup(lines, "§7其他", others, perTypeLimit);
+        java.util.List<net.minecraft.network.chat.Component> lines = new java.util.ArrayList<>();
+        appendGroup(lines, "ae2addon.jade.group.items", items, perTypeLimit);
+        appendGroup(lines, "ae2addon.jade.group.fluids", fluids, perTypeLimit);
+        appendGroup(lines, "ae2addon.jade.group.chems", chems, perTypeLimit);
+        appendGroup(lines, "ae2addon.jade.group.others", others, perTypeLimit);
         return lines;
     }
 
-    private static void appendGroup(java.util.List<String> out, String header,
-            java.util.List<String> group, int limit) {
+    private static void appendGroup(java.util.List<net.minecraft.network.chat.Component> out,
+            String headerKey, java.util.List<net.minecraft.network.chat.Component> group, int limit) {
         if (group.isEmpty()) {
             return;
         }
-        out.add(header);
+        out.add(net.minecraft.network.chat.Component.translatable(headerKey));
         for (int i = 0; i < Math.min(group.size(), limit); i++) {
-            out.add("  " + group.get(i));
+            out.add(net.minecraft.network.chat.Component.literal("  ").copy()
+                    .append(group.get(i)));
         }
         if (group.size() > limit) {
-            out.add("  §7…等 " + (group.size() - limit) + " 种");
+            out.add(net.minecraft.network.chat.Component.translatable(
+                    "ae2addon.jade.more", group.size() - limit));
         }
     }
 

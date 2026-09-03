@@ -1,6 +1,9 @@
 package com.ae2addon.integration.jade;
 
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.StringTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -25,7 +28,8 @@ import snownee.jade.api.config.IPluginConfig;
 /**
  * 玉（Jade）集成（2026-09-03 sensei）：显示供料站蓄水池全部条目
  * （物品/流体/化学物每种都列，不截断）+ 面板 part 同样支持。
- * 服务端算好文本行 → NBT → 客户端渲染。
+ * 服务端构造 translatable Component → JSON 序列化进 NBT → 客户端反序列化渲染，
+ * 语言在客户端解析（中/英随游戏语言，2026-09-03 i18n）。
  */
 @WailaPlugin(AE2Addon.MODID)
 public class FeederJadePlugin implements IWailaPlugin {
@@ -48,7 +52,7 @@ public class FeederJadePlugin implements IWailaPlugin {
         return null;
     }
 
-    // ── 服务端：蓄水池明细 → NBT ──
+    // ── 服务端：蓄水池明细 → translatable Component JSON 列表 → NBT ──
 
     private static final IServerDataProvider<BlockAccessor> SERVER_PROVIDER =
             new IServerDataProvider<>() {
@@ -65,13 +69,18 @@ public class FeederJadePlugin implements IWailaPlugin {
                         return;
                     }
                     var lines = host.reservoirTooltipLines();
-                    lines.add(0, "§e蓄水池 §7" + host.reservoirSummary()[0] + " 种 / 合计 "
-                            + host.reservoirSummary()[1]);
-                    data.putString(LINES_KEY, String.join("\n", lines));
+                    var summary = host.reservoirSummary();
+                    lines.add(0, Component.translatable("ae2addon.jade.header",
+                            summary[0], summary[1]));
+                    ListTag list = new ListTag();
+                    for (Component c : lines) {
+                        list.add(StringTag.valueOf(Component.Serializer.toJson(c)));
+                    }
+                    data.put(LINES_KEY, list);
                 }
             };
 
-    // ── 客户端：渲染文本行 ──
+    // ── 客户端：反序列化渲染（translatable 按客户端语言解析） ──
 
     private static final IBlockComponentProvider CLIENT_PROVIDER =
             new IBlockComponentProvider() {
@@ -87,9 +96,11 @@ public class FeederJadePlugin implements IWailaPlugin {
                     if (data == null || !data.contains(LINES_KEY)) {
                         return;
                     }
-                    for (String line : data.getString(LINES_KEY).split("\n")) {
-                        if (!line.isEmpty()) {
-                            tooltip.add(Component.literal(line));
+                    ListTag list = data.getList(LINES_KEY, Tag.TAG_STRING);
+                    for (Tag t : list) {
+                        Component c = Component.Serializer.fromJson(t.getAsString());
+                        if (c != null) {
+                            tooltip.add(c);
                         }
                     }
                 }

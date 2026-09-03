@@ -172,5 +172,11 @@
   "gui.ae2addon.side.right": "Right",
   "gui.ae2addon.side.top": "Top",
   "gui.ae2addon.side.bottom": "Bottom",
-  "item.ae2addon.infinite_interface_panel": "ME Interface (Infinite) Panel"
+  "item.ae2addon.infinite_interface_panel": "ME Interface (Infinite) Panel",
+  "ae2addon.jade.header": "§eReservoir §7%s types / Total %s",
+  "ae2addon.jade.group.items": "§eItems",
+  "ae2addon.jade.group.fluids": "§bFluids",
+  "ae2addon.jade.group.chems": "§dChemicals",
+  "ae2addon.jade.group.others": "§7Others",
+  "ae2addon.jade.more": "§7… and %s more"
 }

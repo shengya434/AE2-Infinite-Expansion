@@ -1140,7 +1140,7 @@ public class InfiniteInterfacePart extends AEBasePart
     }
 
     @Override
-    public java.util.List<String> reservoirTooltipLines() {
+    public java.util.List<net.minecraft.network.chat.Component> reservoirTooltipLines() {
         return FeederHost.buildReservoirLines(reservoir);
     }
 

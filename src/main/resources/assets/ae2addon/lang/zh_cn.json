@@ -172,5 +172,11 @@
   "gui.ae2addon.side.right": "右",
   "gui.ae2addon.side.top": "上",
   "gui.ae2addon.side.bottom": "下",
-  "item.ae2addon.infinite_interface_panel": "ME接口（无限级）·线缆面板"
+  "item.ae2addon.infinite_interface_panel": "ME接口（无限级）·线缆面板",
+  "ae2addon.jade.header": "§e蓄水池 §7%s 种 / 合计 %s",
+  "ae2addon.jade.group.items": "§e物品",
+  "ae2addon.jade.group.fluids": "§b流体",
+  "ae2addon.jade.group.chems": "§d化学",
+  "ae2addon.jade.group.others": "§7其他",
+  "ae2addon.jade.more": "§7…等 %s 种"
 }

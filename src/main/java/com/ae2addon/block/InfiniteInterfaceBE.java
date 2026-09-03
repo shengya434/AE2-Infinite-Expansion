@@ -3045,7 +3045,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     }
 
     @Override
-    public java.util.List<String> reservoirTooltipLines() {
+    public java.util.List<net.minecraft.network.chat.Component> reservoirTooltipLines() {
         return FeederHost.buildReservoirLines(reservoir);
     }
 
