@@ -136,18 +136,11 @@ public final class AE2AddonConfig {
                     "Infinite Interface gas units per extract (default 1000)")
             .defineInRange("feederExtractGas", 1000, 1, Integer.MAX_VALUE);
 
-    /**
-     * 主动抽取循环累计上限（排在 gas 后，与文件/界面预期位置一致）。
-     * 部分机器单次 extractItem 钳制在最大堆叠（Mekanism 箱柜等），配置大抽取量需循环试探凑满；
-     * 此值限制每 tick 循环累计的物品总量（0 = 关闭循环累计，每次仅抽机器单次允许量；
-     * 调小可限制单 tick 抽取峰值防卡顿）。
-     */
+    /** 主动抽取循环累计上限（0=关闭循环；0=off, loop accumulate; 2026-09-03）。 */
     public static final ForgeConfigSpec.IntValue FEEDER_EXTRACT_LOOP_CAP = BUILDER
-            .comment("ME接口(无限级)主动抽取循环累计上限（0=关闭循环，每次仅单次抽取量；N=循环累计到 N 或槽空为止；"
-                            + "调小可限制单tick抽取峰值防卡顿）",
-                    "Infinite Interface active-extract loop cap (0=off, single attempt per call; "
-                            + "N=max items accumulated per cycle; lower to cap per-tick extract peak)")
-            .defineInRange("feederExtractLoopCap", Integer.MAX_VALUE, 0, Integer.MAX_VALUE);
+            .comment("Infinite Interface active-extract loop limit",
+                    "feederExtractLoopLimit")
+            .defineInRange("feederExtractLoopLimit", 1_000_000, 0, 2_000_000_000);
 
     // ── 调试 ──
 
@@ -165,6 +158,13 @@ public final class AE2AddonConfig {
     /** 在 mod 构造时调用注册。 */
     public static void register() {
         ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, SPEC);
+        // 运行时诊断：确认 loopCap 已注册且可读（排查 config 界面缺失选项问题，2026-09-03）
+        try {
+            com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][config] loopCap 注册诊断: get()={} 默认={}",
+                    FEEDER_EXTRACT_LOOP_CAP.get(), FEEDER_EXTRACT_LOOP_CAP.getDefault());
+        } catch (Throwable t) {
+            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon][config] loopCap 诊断失败", t);
+        }
     }
 
     /**
