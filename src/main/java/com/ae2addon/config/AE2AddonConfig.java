@@ -124,18 +124,6 @@ public final class AE2AddonConfig {
                     "Infinite Interface items per extract (64=vanilla cap; raise for speed)")
             .defineInRange("feederExtractStack", 64, 1, Integer.MAX_VALUE);
 
-    /**
-     * 主动抽取循环累计上限。部分机器单次 extractItem 钳制在最大堆叠
-     * （Mekanism 箱柜等），配置大抽取量需循环试探凑满；此值限制每 tick 循环累计的物品总量
-     * （0 = 关闭循环累计，每次仅抽机器单次允许量；调小可限制单 tick 抽取峰值防卡顿）。
-     */
-    public static final ForgeConfigSpec.IntValue FEEDER_EXTRACT_LOOP_CAP = BUILDER
-            .comment("ME接口(无限级)主动抽取循环累计上限（0=关闭循环，每次仅单次抽取量；N=循环累计到 N 或槽空为止；"
-                            + "调小可限制单tick抽取峰值防卡顿）",
-                    "Infinite Interface active-extract loop cap (0=off, single attempt per call; "
-                            + "N=max items accumulated per cycle; lower to cap per-tick extract peak)")
-            .defineInRange("feederExtractLoopCap", Integer.MAX_VALUE, 0, Integer.MAX_VALUE);
-
     /** 主动抽取每次流体 mB（默认1000=1桶）。 */
     public static final ForgeConfigSpec.IntValue FEEDER_EXTRACT_FLUID = BUILDER
             .comment("ME接口(无限级)主动抽取每次流体量 mB（默认1000=1桶）",
@@ -147,6 +135,19 @@ public final class AE2AddonConfig {
             .comment("ME接口(无限级)主动抽取每次气体量（默认1000）",
                     "Infinite Interface gas units per extract (default 1000)")
             .defineInRange("feederExtractGas", 1000, 1, Integer.MAX_VALUE);
+
+    /**
+     * 主动抽取循环累计上限（排在 gas 后，与文件/界面预期位置一致）。
+     * 部分机器单次 extractItem 钳制在最大堆叠（Mekanism 箱柜等），配置大抽取量需循环试探凑满；
+     * 此值限制每 tick 循环累计的物品总量（0 = 关闭循环累计，每次仅抽机器单次允许量；
+     * 调小可限制单 tick 抽取峰值防卡顿）。
+     */
+    public static final ForgeConfigSpec.IntValue FEEDER_EXTRACT_LOOP_CAP = BUILDER
+            .comment("ME接口(无限级)主动抽取循环累计上限（0=关闭循环，每次仅单次抽取量；N=循环累计到 N 或槽空为止；"
+                            + "调小可限制单tick抽取峰值防卡顿）",
+                    "Infinite Interface active-extract loop cap (0=off, single attempt per call; "
+                            + "N=max items accumulated per cycle; lower to cap per-tick extract peak)")
+            .defineInRange("feederExtractLoopCap", Integer.MAX_VALUE, 0, Integer.MAX_VALUE);
 
     // ── 调试 ──
 
