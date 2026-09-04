@@ -35,6 +35,9 @@ public class AssemblerMenu extends AbstractContainerMenu {
     /** 首次同步标志：打开瞬间窗口为空，必须先加载再允许写回
      *  （否则空窗口会把 core 里已有样板清掉——2026-09-04 吞样板真凶）。 */
     private boolean windowInitialized;
+    /** 窗口内容所属页（写回仅限同页——翻页后窗口是旧页残留，写回会把旧页样板
+     *  复制进新页 = 每页样板同步，2026-09-04 23:05 sensei 反馈）。 */
+    private int windowPage = -1;
 
     // 槽区几何
     private static final int COLS = 9;
@@ -137,12 +140,12 @@ public class AssemblerMenu extends AbstractContainerMenu {
     @Override
     public void broadcastChanges() {
         if (!clientSide) {
-            // 服务端权威同步。顺序关键（2026-09-04 吞样板真凶）：
-            // 首次 broadcast 只加载（core → 窗口），绝不写回——新菜单窗口是空的，
-            // 写回会把 core 里已有样板清掉。首次加载后每 tick：先写回玩家改动
-            // （窗口 → core 落盘）再重载（core → 窗口），随后 super 广播。
-            int base = core.getPage() * AssemblerCoreBE.PAGE_SIZE;
-            if (windowInitialized) {
+            // 服务端权威同步。三个防错原则（2026-09-04）：
+            // ① 首帧只加载不写回（空窗口清库）② 仅同页才写回（翻页后窗口是
+            // 旧页残留，写回会把旧页样板复制进新页 = 每页同步）③ 先写回后重载
+            int page = core.getPage();
+            int base = page * AssemblerCoreBE.PAGE_SIZE;
+            if (windowInitialized && page == windowPage) {
                 boolean dirty = false;
                 for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
                     if (!ItemStack.matches(core.getSlot(base + i), pageContainer.getItem(i))) {
@@ -153,7 +156,7 @@ public class AssemblerMenu extends AbstractContainerMenu {
                 if (dirty && com.ae2addon.crafting.CraftingCompat.debugLogs) {
                     com.ae2addon.AE2Addon.LOGGER.info(
                             "[assembler][menu] broadcastChanges 写回: page={} dirty=true 槽0={} core槽0={}",
-                            core.getPage(),
+                            page,
                             pageContainer.getItem(0).getHoverName().getString(),
                             core.getSlot(base).getHoverName().getString());
                 }
@@ -162,6 +165,7 @@ public class AssemblerMenu extends AbstractContainerMenu {
                 }
             }
             windowInitialized = true;
+            windowPage = page;
             for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
                 pageContainer.setItem(i, core.getSlot(base + i));
             }
@@ -185,9 +189,10 @@ public class AssemblerMenu extends AbstractContainerMenu {
 
     @Override
     public void removed(Player player) {
-        // 关闭前落盘：窗口内容写回 core（玩家最后改动）。若从未 broadcast（秒开秒关）
-        // 窗口未加载——跳过写回，防空窗口清库（同 broadcastChanges 首帧逻辑）。
-        if (!clientSide && windowInitialized) {
+        // 关闭前落盘：窗口内容写回 core（玩家最后改动）。仅当窗口已初始化且
+        // 未翻页（窗口内容属于当前页）才写回——否则跳过，防空窗口/旧页残留清库。
+        if (!clientSide && windowInitialized
+                && core.getPage() == windowPage) {
             int base = core.getPage() * AssemblerCoreBE.PAGE_SIZE;
             boolean dirty = false;
             for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
