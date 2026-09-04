@@ -84,7 +84,7 @@ public class FeederGhostHandler implements IGhostIngredientHandler<InfiniteInter
                 key = AEFluidKey.of(fluid);
             } else if (ModList.get().isLoaded("mekanism")
                     && ingredient instanceof mekanism.api.chemical.ChemicalStack<?> chemical) {
-                key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(chemical);
+                key = com.ae2addon.compat.MekanismChemCompat.keyOfChemical(chemical);
             }
             if (key == null) {
                 return;

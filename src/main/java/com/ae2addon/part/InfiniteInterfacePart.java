@@ -829,7 +829,7 @@ public class InfiniteInterfacePart extends AEBasePart
             if (inTank == null || inTank.isEmpty()) {
                 continue;
             }
-            AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(inTank);
+            AEKey key = com.ae2addon.compat.MekanismChemCompat.keyOfChemical(inTank);
             if (key == null || isMarkedMaterial(key)) {
                 continue;
             }

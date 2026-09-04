@@ -1840,7 +1840,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if (inTank == null || inTank.isEmpty()) {
                 continue;
             }
-            AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(inTank);
+            AEKey key = com.ae2addon.compat.MekanismChemCompat.keyOfChemical(inTank);
             if (key == null || isMarkedMaterial(key)) {
                 continue;
             }
@@ -2284,7 +2284,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (best == null) {
                             return mekanism.api.chemical.gas.GasStack.EMPTY;
                         }
-                        var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                        var mk = com.ae2addon.compat.MekanismChemCompat.mekKeyOf(best.getKey());
                         if (mk == null || !(mk.getStack() instanceof mekanism.api.chemical.gas.GasStack gs)) {
                             return mekanism.api.chemical.gas.GasStack.EMPTY;
                         }
@@ -2330,7 +2330,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                             return resource;
                         }
                         try {
-                            AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(resource);
+                            AEKey key = com.ae2addon.compat.MekanismChemCompat.keyOfChemical(resource);
                             if (key == null) {
                                 return resource;
                             }
@@ -2358,7 +2358,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (best == null) {
                             return mekanism.api.chemical.gas.GasStack.EMPTY;
                         }
-                        var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                        var mk = com.ae2addon.compat.MekanismChemCompat.mekKeyOf(best.getKey());
                         if (mk == null || !(mk.getStack() instanceof mekanism.api.chemical.gas.GasStack gs)) {
                             return mekanism.api.chemical.gas.GasStack.EMPTY;
                         }
@@ -2380,7 +2380,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (stack.isEmpty()) {
                             return mekanism.api.chemical.gas.GasStack.EMPTY;
                         }
-                        AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(stack);
+                        AEKey key = com.ae2addon.compat.MekanismChemCompat.keyOfChemical(stack);
                         if (key == null) {
                             return mekanism.api.chemical.gas.GasStack.EMPTY;
                         }
@@ -2409,7 +2409,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 return resource;
             }
             try {
-                AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(resource);
+                AEKey key = com.ae2addon.compat.MekanismChemCompat.keyOfChemical(resource);
                 if (key == null) {
                     return resource;
                 }
@@ -2437,7 +2437,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if (stack.isEmpty()) {
                 return stack;
             }
-            AEKey key = com.ae2addon.compat.MekanismGasCompat.keyOfChemical(stack);
+            AEKey key = com.ae2addon.compat.MekanismChemCompat.keyOfChemical(stack);
             if (key == null) {
                 return stack;
             }
@@ -2473,7 +2473,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (best == null) {
                             return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
                         }
-                        var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                        var mk = com.ae2addon.compat.MekanismChemCompat.mekKeyOf(best.getKey());
                         if (mk == null
                                 || !(mk.getStack() instanceof mekanism.api.chemical.infuse.InfusionStack st)) {
                             return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
@@ -2525,7 +2525,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (best == null) {
                             return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
                         }
-                        var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                        var mk = com.ae2addon.compat.MekanismChemCompat.mekKeyOf(best.getKey());
                         if (mk == null
                                 || !(mk.getStack() instanceof mekanism.api.chemical.infuse.InfusionStack st)) {
                             return mekanism.api.chemical.infuse.InfusionStack.EMPTY;
@@ -2565,7 +2565,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (best == null) {
                             return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
                         }
-                        var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                        var mk = com.ae2addon.compat.MekanismChemCompat.mekKeyOf(best.getKey());
                         if (mk == null
                                 || !(mk.getStack() instanceof mekanism.api.chemical.pigment.PigmentStack st)) {
                             return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
@@ -2617,7 +2617,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (best == null) {
                             return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
                         }
-                        var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                        var mk = com.ae2addon.compat.MekanismChemCompat.mekKeyOf(best.getKey());
                         if (mk == null
                                 || !(mk.getStack() instanceof mekanism.api.chemical.pigment.PigmentStack st)) {
                             return mekanism.api.chemical.pigment.PigmentStack.EMPTY;
@@ -2657,7 +2657,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (best == null) {
                             return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
                         }
-                        var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                        var mk = com.ae2addon.compat.MekanismChemCompat.mekKeyOf(best.getKey());
                         if (mk == null
                                 || !(mk.getStack() instanceof mekanism.api.chemical.slurry.SlurryStack st)) {
                             return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
@@ -2709,7 +2709,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (best == null) {
                             return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
                         }
-                        var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(best.getKey());
+                        var mk = com.ae2addon.compat.MekanismChemCompat.mekKeyOf(best.getKey());
                         if (mk == null
                                 || !(mk.getStack() instanceof mekanism.api.chemical.slurry.SlurryStack st)) {
                             return mekanism.api.chemical.slurry.SlurryStack.EMPTY;
@@ -2752,7 +2752,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         private Map.Entry<AEKey, BigInteger> largestChemical(byte form) {
             Map.Entry<AEKey, BigInteger> best = null;
             for (var entry : reservoir.entrySet()) {
-                var mk = com.ae2addon.compat.MekanismGasCompat.mekKeyOf(entry.getKey());
+                var mk = com.ae2addon.compat.MekanismChemCompat.mekKeyOf(entry.getKey());
                 if (mk == null || mk.getForm() != form || entry.getValue().signum() <= 0) {
                     continue;
                 }

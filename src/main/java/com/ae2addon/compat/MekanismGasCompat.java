@@ -112,22 +112,6 @@ public final class MekanismGasCompat {
         }
     }
 
-    /** AEKey → MekanismKey（无/非化学返回 null）。 */
-    public static MekanismKey mekKeyOf(AEKey key) {
-        if (!isLoaded() || !(key instanceof MekanismKey mk)) {
-            return null;
-        }
-        return mk;
-    }
-
-    /** 化学物 JEI 拖取 → AEKey（MekanismKey.of，气体/灌注/颜料/泥浆均可）。 */
-    public static AEKey keyOfChemical(mekanism.api.chemical.ChemicalStack<?> stack) {
-        if (!isLoaded() || stack == null || stack.isEmpty()) {
-            return null;
-        }
-        return MekanismKey.of(stack);
-    }
-
     /** 喂出：把化学物的 amount 量插入机器对应槽（气体/灌注/颜料/泥浆）；
      * 返回实际喂出量（0=机器满/拒收）。带失败原因诊断（节流）。 */
     public static long feed(BlockEntity target, Direction side, AEKey key, long amount) {
