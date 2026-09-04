@@ -153,8 +153,8 @@ public class AssemblerCoreBE extends CraftingBlockEntity
         return index >= 0 && index < patterns.size() ? patterns.get(index) : ItemStack.EMPTY;
     }
 
-    /** 槽位是否只接受合成类样板（crafting pattern）：处理样板/普通物品一律拒绝
-     *  （装配处理器只虚拟结算合成类；2026-09-04 sensei 反馈「没阻止放入」）。 */
+    /** 槽位是否只接受合成族样板（合成/切石机/锻造台，2026-09-04 sensei 指正：
+     *  矩阵不只放合成样板）；处理样板/普通物品/空气一律拒绝。 */
     public static boolean isCraftingPatternItem(ItemStack stack, Level level) {
         if (stack == null || stack.isEmpty() || level == null) {
             return false;
@@ -164,7 +164,14 @@ public class AssemblerCoreBE extends CraftingBlockEntity
             if (details == null) {
                 return false;
             }
-            return details.getClass().getName().endsWith("AECraftingPattern");
+            String name = details.getClass().getName();
+            if (name.endsWith("AEProcessingPattern")) {
+                return false; // 处理样板 → 走 feeder/机器，不进装配处理器
+            }
+            return name.endsWith("AECraftingPattern")
+                    || name.endsWith("AEStonecuttingPattern")
+                    || name.endsWith("AESmithingTablePattern")
+                    || name.contains("CraftingPattern");
         } catch (RuntimeException e) {
             return false;
         }

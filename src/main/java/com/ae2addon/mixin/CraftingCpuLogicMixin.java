@@ -551,25 +551,24 @@ public abstract class CraftingCpuLogicMixin {
                         patternDetails.getClass().getSimpleName(), n, taskRemaining);
             }
         } else if (ae2addon$isCraftingPattern(patternDetails)) {
-            // 2026-08-22：合成样板（AECraftingPattern）强制 1× 推送。
-            // 合成机器（ExtendedAE PatternCore/普通样板供应器）按单次配方执行，
-            // N× ScaledPattern 输入会导致拒收/错乱（sensei 实测：AECraftingPattern
-            // 单 tick 206 次拒收、任务值卡 1、CPU 永久 busy，阻塞全部后续订单）。
-            // 处理样板（AEProcessingPattern）保留批量推送。
+            // 2026-08-22：合成族样板（合成/切石/锻造，MA 执行族）强制 1× 推送。
+            // 真实合成机器按单次配方执行，N× ScaledPattern 输入会导致拒收/错乱
+            // （sensei 实测：AECraftingPattern 单 tick 206 次拒收、任务卡 1、CPU
+            // 永久 busy）。处理样板（AEProcessingPattern）保留批量推送。
             if (ae2addon$virtualSettleActive(patternDetails)) {
                 // M1c（2026-09-04）：虚拟结算无真实装配瓶颈 → 一次提取全部任务材料，
                 // 整层瞬时结算（ScaledPattern multiplyExact 防溢出，溢出自动回退 1×）
                 n = Math.min(taskRemaining, ae2addon$batchMaxMultiplier());
                 if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
                     com.ae2addon.AE2Addon.LOGGER.info(
-                            "[ae2addon][debug] 合成样板虚拟结算全量: pattern={} n={} taskRemaining={}",
+                            "[ae2addon][debug] 合成族样板虚拟结算全量: pattern={} n={} taskRemaining={}",
                             patternDetails, n, taskRemaining);
                 }
             } else {
                 n = 1;
                 if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
                     com.ae2addon.AE2Addon.LOGGER.info(
-                            "[ae2addon][debug] 合成样板强制1×: pattern={} batchNext={} taskRemaining={}",
+                            "[ae2addon][debug] 合成族样板强制1×: pattern={} batchNext={} taskRemaining={}",
                             patternDetails,
                             ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
                 }
@@ -649,10 +648,18 @@ public abstract class CraftingCpuLogicMixin {
      */
     @Unique
     private static boolean ae2addon$isCraftingPattern(IPatternDetails pattern) {
+        // 合成族（MA 可执行、可虚拟结算）：合成/切石机/锻造台样板（2026-09-04 sensei：
+        // 切石/锻造的虚拟兼容也要做）；处理样板 AEProcessingPattern 不在族内。
+        // 按类名判断（不引用具体类，兼容 AE2 民间重置版/gtlcore 改名）。
         if (pattern == null) {
             return false;
         }
-        return pattern.getClass().getName().endsWith("AECraftingPattern");
+        String name = pattern.getClass().getName();
+        return !name.endsWith("AEProcessingPattern")
+                && (name.endsWith("AECraftingPattern")
+                        || name.endsWith("AEStonecuttingPattern")
+                        || name.endsWith("AESmithingTablePattern")
+                        || name.contains("CraftingPattern"));
     }
 
     /**
@@ -796,7 +803,7 @@ public abstract class CraftingCpuLogicMixin {
     private KeyCounter ae2addon$pendingSettle;
 
     /**
-     * 判定（v0.3 M3）：仅限合成类样板（AECraftingPattern）；且当前 CPU 簇的
+     * 判定（v0.3 M3）：仅限合成族样板（合成/切石/锻造，非处理类）；且当前 CPU 簇的
      * 集成 CPU（主簇或虚拟 lane）挂了装配处理器模块并声明了该样板（样板槽白名单）
      * 才虚拟结算。无模块/未声明 → 一律真实合成。
      */
