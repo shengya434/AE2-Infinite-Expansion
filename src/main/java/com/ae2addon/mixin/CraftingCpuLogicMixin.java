@@ -931,11 +931,20 @@ public abstract class CraftingCpuLogicMixin {
                     // ⚠️ AE2 insert 返回「已插入量」（非剩余量）——2026-09-04 20:40 修正误报
                     long insertedAmt = networkStorage.insert(key, amount,
                             appeng.api.config.Actionable.MODULATE, cluster.getSrc());
+                    if (CraftingCompat.debugLogs) {
+                        AE2Addon.LOGGER.info(
+                                "[ae2addon][settle] 物理入网: key={} 期望{} 实插{} root=true",
+                                key, amount, insertedAmt);
+                    }
                     if (insertedAmt < amount && CraftingCompat.debugLogs) {
                         AE2Addon.LOGGER.warn(
                                 "[ae2addon][settle] 根产物入网部分失败: key={} 已插{} 期望{}（网络满？）",
                                 key, insertedAmt, amount);
                     }
+                } else if (CraftingCompat.debugLogs && networkStorage != null) {
+                    AE2Addon.LOGGER.info(
+                            "[ae2addon][settle] 中间产物(不入网): key={} 量={} rootKey={}",
+                            key, amount, rootKey);
                 }
                 // 账务：waitingFor 冲抵 + 根产物→link 交割/finishJob；中间产物→crafting storage
                 logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
