@@ -853,6 +853,24 @@ public abstract class CraftingCpuLogicMixin {
             var logic = cluster.craftingLogic;
             var grid = cluster.getGrid();
             var networkStorage = grid == null ? null : grid.getStorageService().getInventory();
+            if (CraftingCompat.debugLogs) {
+                try {
+                    var cached = grid == null ? null : grid.getStorageService().getCachedInventory();
+                    StringBuilder sb = new StringBuilder();
+                    for (var entry : pending) {
+                        sb.append(entry.getKey()).append('=').append(entry.getLongValue()).append(' ');
+                    }
+                    AE2Addon.LOGGER.info("[ae2addon][settle][probe] grid@{} storage={} cached={} pending={} rootKey={} src={}",
+                            System.identityHashCode(grid),
+                            networkStorage == null ? "null" : networkStorage.getClass().getName(),
+                            cached == null ? "null" : String.valueOf(cached.size()),
+                            sb.toString(),
+                            rootKey == null ? "null" : String.valueOf(rootKey),
+                            cluster.getSrc() == null ? "null" : cluster.getSrc().toString());
+                } catch (Throwable t) {
+                    AE2Addon.LOGGER.warn("[ae2addon][settle][probe] 探针失败: {}", t.toString());
+                }
+            }
             for (var entry : pending) {
                 if (entry == null || entry.getKey() == null || entry.getLongValue() <= 0) {
                     continue;
@@ -871,7 +889,12 @@ public abstract class CraftingCpuLogicMixin {
                     }
                 }
                 // 账务：waitingFor 冲抵 + 根产物→link 交割/finishJob；中间产物→crafting storage
-                logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
+                long accepted = logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
+                if (CraftingCompat.debugLogs && accepted != amount) {
+                    AE2Addon.LOGGER.info(
+                            "[ae2addon][settle][probe] logic.insert({}) 返回={} 期望={}（差=账务未全额处理）",
+                            key, accepted, amount);
+                }
             }
             // 根产物 insert 触发 finishJob → job 置 null：终止本 tick 任务迭代，防外层 NPE
             if (ae2addon$getJob() == null) {
