@@ -556,12 +556,23 @@ public abstract class CraftingCpuLogicMixin {
             // N× ScaledPattern 输入会导致拒收/错乱（sensei 实测：AECraftingPattern
             // 单 tick 206 次拒收、任务值卡 1、CPU 永久 busy，阻塞全部后续订单）。
             // 处理样板（AEProcessingPattern）保留批量推送。
-            n = 1;
-            if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
-                com.ae2addon.AE2Addon.LOGGER.info(
-                        "[ae2addon][debug] 合成样板强制1×: pattern={} batchNext={} taskRemaining={}",
-                        patternDetails,
-                        ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
+            if (ae2addon$virtualSettleActive(patternDetails)) {
+                // M1c（2026-09-04）：虚拟结算无真实装配瓶颈 → 一次提取全部任务材料，
+                // 整层瞬时结算（ScaledPattern multiplyExact 防溢出，溢出自动回退 1×）
+                n = Math.min(taskRemaining, ae2addon$batchMaxMultiplier());
+                if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+                    com.ae2addon.AE2Addon.LOGGER.info(
+                            "[ae2addon][debug] 合成样板虚拟结算全量: pattern={} n={} taskRemaining={}",
+                            patternDetails, n, taskRemaining);
+                }
+            } else {
+                n = 1;
+                if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+                    com.ae2addon.AE2Addon.LOGGER.info(
+                            "[ae2addon][debug] 合成样板强制1×: pattern={} batchNext={} taskRemaining={}",
+                            patternDetails,
+                            ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
+                }
             }
         }
         if (n <= 1) {
@@ -799,11 +810,18 @@ public abstract class CraftingCpuLogicMixin {
      * 待任务循环 hasNext 处（记账后）调原版 insert 回收：
      * - 根产物（finalOutput 匹配）→ CraftingLink 送达请求者 + remainingAmount 归零 + finishJob
      * - 中间产物 → crafting storage（inventory），上游节点 extract 直接命中
-     * 每次结算 1×（合成类样板现强制 1×；N× 快速结算在 M1c 接入）。
+     * N× 结算（M1c）：批量上下文激活时按 batchMultiplier 一次结算 N 份（产物×N 入
+     * pendingSettle，任务值补减 N−1）；1× 为回退/非批量路径。
      */
     @Unique
     private boolean ae2addon$virtualSettle(IPatternDetails patternDetails) {
         try {
+            long n = 1;
+            if (ae2addon$batchActive && ae2addon$batchBasePattern != null
+                    && ae2addon$batchBasePattern.equals(patternDetails)
+                    && ae2addon$batchMultiplier > 1) {
+                n = ae2addon$batchMultiplier;
+            }
             var outputs = patternDetails.getOutputs();
             if (outputs == null || outputs.length == 0) {
                 return false;
@@ -819,15 +837,23 @@ public abstract class CraftingCpuLogicMixin {
                     continue;
                 }
                 settledAny = true;
-                pending.add(out.what(), out.amount());
+                // N× 产物：ScaledPattern 构造时对 inputs/outputs 均 multiplyExact 验溢，
+                // 能走到批量提取说明 n×amount 未溢出（1× 路径无溢出问题）
+                pending.add(out.what(), out.amount() * n);
             }
             if (!settledAny) {
                 return false;
             }
+            if (n > 1) {
+                // 任务值补减 n−1（AE2 外层还会 −1，共 −n → 归零移除）；decrementTaskValue
+                // 自带 current<=amount 保护（归零交给 AE2），不重复清批量上下文——
+                // 同 tick 缓存提取二次 push 时仍需按同 N 结算（材料已按 N× 扣出）
+                ae2addon$decrementTaskValue(patternDetails, n - 1);
+            }
             if (CraftingCompat.debugLogs) {
                 AE2Addon.LOGGER.info(
-                        "[ae2addon][settle] 虚拟结算: pattern={} 产物{}种 → 待回收（外层记账后 insert）",
-                        patternDetails.getClass().getSimpleName(), outputs.length);
+                        "[ae2addon][settle] 虚拟结算: pattern={} N={} 产物{}种 → 待回收（外层记账后 insert）",
+                        patternDetails.getClass().getSimpleName(), n, outputs.length);
             }
             return true;
         } catch (Throwable t) {
@@ -853,62 +879,6 @@ public abstract class CraftingCpuLogicMixin {
             var logic = cluster.craftingLogic;
             var grid = cluster.getGrid();
             var networkStorage = grid == null ? null : grid.getStorageService().getInventory();
-            if (CraftingCompat.debugLogs) {
-                try {
-                    var cached = grid == null ? null : grid.getStorageService().getCachedInventory();
-                    StringBuilder sb = new StringBuilder();
-                    for (var entry : pending) {
-                        sb.append(entry.getKey()).append('=').append(entry.getLongValue()).append(' ');
-                    }
-                    AE2Addon.LOGGER.info("[ae2addon][settle][probe] grid@{} storage={} cached={} pending={} rootKey={} src={}",
-                            System.identityHashCode(grid),
-                            networkStorage == null ? "null" : networkStorage.getClass().getName(),
-                            cached == null ? "null" : String.valueOf(cached.size()),
-                            sb.toString(),
-                            rootKey == null ? "null" : String.valueOf(rootKey),
-                            cluster.getSrc() == null ? "null" : cluster.getSrc().toString());
-                    // 探针：NetworkStorage 内部可写 cell 清单（priorityInventory）
-                    try {
-                        var svc = grid.getStorageService();
-                        var svcClass = svc.getClass();
-                        var storageF = svcClass.getDeclaredField("storage");
-                        storageF.setAccessible(true);
-                        Object ns = storageF.get(svc);
-                        var piF = ns.getClass().getDeclaredField("priorityInventory");
-                        piF.setAccessible(true);
-                        Object pi = piF.get(ns);
-                        StringBuilder cells = new StringBuilder();
-                        int total = 0;
-                        if (pi instanceof java.util.Map<?, ?> map) {
-                            for (Object e : map.values()) {
-                                if (!(e instanceof java.util.List<?> list)) {
-                                    continue;
-                                }
-                                for (Object cell : list) {
-                                    total++;
-                                    if (cells.length() < 300) {
-                                        cells.append(cell.getClass().getSimpleName()).append(',');
-                                    }
-                                }
-                            }
-                        } else {
-                            cells.append(pi == null ? "null" : pi.getClass().getName());
-                        }
-                        AE2Addon.LOGGER.info(
-                                "[ae2addon][settle][probe] NetworkStorage mounts={} cells={}",
-                                pi instanceof java.util.Map<?, ?> map ? map.size() : -1,
-                                cells.length() == 0 ? "(空!)" : cells.toString());
-                        if (total == 0) {
-                            AE2Addon.LOGGER.warn(
-                                    "[ae2addon][settle][probe] ★ 网络无可写存储 cell —— insert 必然全拒！");
-                        }
-                    } catch (Throwable t) {
-                        AE2Addon.LOGGER.warn("[ae2addon][settle][probe] mounts 探针失败: {}", t.toString());
-                    }
-                } catch (Throwable t) {
-                    AE2Addon.LOGGER.warn("[ae2addon][settle][probe] 探针失败: {}", t.toString());
-                }
-            }
             for (var entry : pending) {
                 if (entry == null || entry.getKey() == null || entry.getLongValue() <= 0) {
                     continue;
@@ -928,15 +898,11 @@ public abstract class CraftingCpuLogicMixin {
                     }
                 }
                 // 账务：waitingFor 冲抵 + 根产物→link 交割/finishJob；中间产物→crafting storage
-                long accepted = logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
-                if (CraftingCompat.debugLogs) {
-                    ae2addon$probeJobState(key, amount);
-                    if (accepted != amount) {
-                        AE2Addon.LOGGER.info(
-                                "[ae2addon][settle][probe] logic.insert({}) 返回={} 期望={}（差=账务未全额处理）",
-                                key, accepted, amount);
-                    }
-                }
+                logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
+            }
+            if (CraftingCompat.debugLogs) {
+                AE2Addon.LOGGER.info("[ae2addon][settle] 回收完成: {} 种产物已注入（root 已入网）",
+                        pending.size());
             }
             // 根产物 insert 触发 finishJob → job 置 null：终止本 tick 任务迭代，防外层 NPE
             if (ae2addon$getJob() == null) {
@@ -997,42 +963,6 @@ public abstract class CraftingCpuLogicMixin {
         } catch (RuntimeException | ReflectiveOperationException e) {
             ae2addon$finalOutputFieldFailed = true;
             return null;
-        }
-    }
-
-    /** 探针：flush 时打印 job 状态/waitingFor 记账量/remainingAmount（M1 调试用）。 */
-    @Unique
-    private void ae2addon$probeJobState(AEKey key, long amount) {
-        try {
-            Object job = ae2addon$getJob();
-            if (job == null) {
-                AE2Addon.LOGGER.info("[ae2addon][settle][probe] job=null（已被 finishJob 清除）");
-                return;
-            }
-            long waiting = -1;
-            long remaining = -1;
-            try {
-                var wf = job.getClass().getField("waitingFor");
-                Object inv = wf.get(job);
-                var listF = inv.getClass().getField("list");
-                Object list = listF.get(inv);
-                var getM = list.getClass().getMethod("get", appeng.api.stacks.AEKey.class);
-                waiting = (Long) getM.invoke(list, key);
-            } catch (Throwable t) {
-                waiting = Long.MIN_VALUE;
-            }
-            try {
-                var rf = job.getClass().getDeclaredField("remainingAmount");
-                rf.setAccessible(true);
-                remaining = rf.getLong(job);
-            } catch (Throwable t) {
-                remaining = Long.MIN_VALUE;
-            }
-            AE2Addon.LOGGER.info(
-                    "[ae2addon][settle][probe] flush时 job@{} waitingFor[{}]={} remainingAmount={}",
-                    System.identityHashCode(job), key, waiting, remaining);
-        } catch (Throwable t) {
-            AE2Addon.LOGGER.warn("[ae2addon][settle][probe] probeJobState 异常: {}", t.toString());
         }
     }
 
