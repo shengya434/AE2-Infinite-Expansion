@@ -924,6 +924,26 @@ public abstract class CraftingCpuLogicMixin {
                         AE2Addon.LOGGER.warn(
                                 "[ae2addon][settle] 根产物入网未全部成功: key={} 剩{}（网络满？）",
                                 key, leftover);
+                        // 探针：NetworkStorage.mountsInUse 状态（嵌套遍历时会拒插）
+                        try {
+                            var svc = grid.getStorageService();
+                            var storageF = svc.getClass().getDeclaredField("storage");
+                            storageF.setAccessible(true);
+                            Object ns = storageF.get(svc);
+                            var mF = ns.getClass().getDeclaredField("mountsInUse");
+                            mF.setAccessible(true);
+                            AE2Addon.LOGGER.info("[ae2addon][settle][probe] NetworkStorage.mountsInUse={}",
+                                    mF.getBoolean(ns));
+                            // 模拟试插确认拒绝源
+                            long sim = networkStorage.insert(key, amount,
+                                    appeng.api.config.Actionable.SIMULATE, cluster.getSrc());
+                            AE2Addon.LOGGER.info(
+                                    "[ae2addon][settle][probe] SIMULATE 试插 key={} 剩={}（0=可插/全拒=网络层拒绝）",
+                                    key, sim);
+                        } catch (Throwable t) {
+                            AE2Addon.LOGGER.warn("[ae2addon][settle][probe] mountsInUse 探针失败: {}",
+                                    t.toString());
+                        }
                     }
                 }
                 // 账务：waitingFor 冲抵 + 根产物→link 交割/finishJob；中间产物→crafting storage
