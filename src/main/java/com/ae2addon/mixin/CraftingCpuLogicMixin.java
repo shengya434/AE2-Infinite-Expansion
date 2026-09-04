@@ -867,6 +867,37 @@ public abstract class CraftingCpuLogicMixin {
                             sb.toString(),
                             rootKey == null ? "null" : String.valueOf(rootKey),
                             cluster.getSrc() == null ? "null" : cluster.getSrc().toString());
+                    // 探针：NetworkStorage 内部可写 cell 清单（priorityInventory）
+                    try {
+                        var svc = grid.getStorageService();
+                        var svcClass = svc.getClass();
+                        var storageF = svcClass.getDeclaredField("storage");
+                        storageF.setAccessible(true);
+                        Object ns = storageF.get(svc);
+                        var piF = ns.getClass().getDeclaredField("priorityInventory");
+                        piF.setAccessible(true);
+                        Object pi = piF.get(ns);
+                        java.util.Collection<?> entries = (java.util.Collection<?>) pi;
+                        StringBuilder cells = new StringBuilder();
+                        int total = 0;
+                        for (Object e : entries) {
+                            for (Object cell : (java.util.List<?>) e) {
+                                total++;
+                                if (cells.length() < 300) {
+                                    cells.append(cell.getClass().getSimpleName()).append(',');
+                                }
+                            }
+                        }
+                        AE2Addon.LOGGER.info(
+                                "[ae2addon][settle][probe] NetworkStorage mounts={} cells={}",
+                                entries.size(), cells.length() == 0 ? "(空!)" : cells.toString());
+                        if (total == 0) {
+                            AE2Addon.LOGGER.warn(
+                                    "[ae2addon][settle][probe] ★ 网络无可写存储 cell —— insert 必然全拒！");
+                        }
+                    } catch (Throwable t) {
+                        AE2Addon.LOGGER.warn("[ae2addon][settle][probe] mounts 探针失败: {}", t.toString());
+                    }
                 } catch (Throwable t) {
                     AE2Addon.LOGGER.warn("[ae2addon][settle][probe] 探针失败: {}", t.toString());
                 }
