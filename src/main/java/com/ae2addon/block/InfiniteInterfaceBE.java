@@ -1455,7 +1455,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 continue;
             }
             // 气体容器（气罐/气桶）→ 标记内部气体
-            AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.chemicalInContainer(stack);
+            AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.isLoaded()
+                    ? com.ae2addon.compat.MekanismChemCompat.chemicalInContainer(stack) : null;
             if (gasKey != null) {
                 keys.add(gasKey);
                 continue;
@@ -1601,7 +1602,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             } else if (com.ae2addon.compat.MekanismGasCompat.isFeedable(key)) {
                 // 气体喂出：insertChemical 到机器气体槽（Mekanism 可选集成）
                 while (amount > 0 && itemBudget > 0 && totalBudget > 0) {
-                    long fedOnce = com.ae2addon.compat.MekanismGasCompat.feed(
+                    long fedOnce = com.ae2addon.compat.MekanismChemCompat.feed(
                             target, front.getOpposite(), key, amount);
                     if (fedOnce <= 0) {
                         break; // 机器气体槽满/不吃该气体
@@ -2103,7 +2104,8 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 markByKey(markerIndex, AEFluidKey.of(contained.get()));
                 return true;
             }
-            AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.chemicalInContainer(carried);
+            AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.isLoaded()
+                    ? com.ae2addon.compat.MekanismChemCompat.chemicalInContainer(carried) : null;
             if (gasKey != null) {
                 markByKey(markerIndex, gasKey);
                 return true;
@@ -2737,7 +2739,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         private Map.Entry<AEKey, BigInteger> largestGas() {
             Map.Entry<AEKey, BigInteger> best = null;
             for (var entry : reservoir.entrySet()) {
-                if (!com.ae2addon.compat.MekanismGasCompat.isGas(entry.getKey())
+                if (!com.ae2addon.compat.MekanismChemCompat.isGas(entry.getKey())
                         || entry.getValue().signum() <= 0) {
                     continue;
                 }

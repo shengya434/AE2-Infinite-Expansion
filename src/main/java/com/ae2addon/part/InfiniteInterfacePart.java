@@ -645,7 +645,7 @@ public class InfiniteInterfacePart extends AEBasePart
             } else if (com.ae2addon.compat.MekanismGasCompat.isFeedable(key)) {
                 // 化学物喂出：insertChemical 到机器化学槽（Mekanism 可选集成，与方块版一致）
                 while (amount > 0 && itemBudget > 0 && totalBudget > 0) {
-                    long fedOnce = com.ae2addon.compat.MekanismGasCompat.feed(
+                    long fedOnce = com.ae2addon.compat.MekanismChemCompat.feed(
                             target, front.getOpposite(), key, amount);
                     if (fedOnce <= 0) {
                         break; // 机器化学槽满/不吃该化学物
@@ -1081,7 +1081,8 @@ public class InfiniteInterfacePart extends AEBasePart
                 markByKey(markerIndex, appeng.api.stacks.AEFluidKey.of(contained.get()));
                 return true;
             }
-            AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.chemicalInContainer(carried);
+            AEKey gasKey = com.ae2addon.compat.MekanismGasCompat.isLoaded()
+                    ? com.ae2addon.compat.MekanismChemCompat.chemicalInContainer(carried) : null;
             if (gasKey != null) {
                 markByKey(markerIndex, gasKey);
                 return true;
