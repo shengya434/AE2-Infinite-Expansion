@@ -926,14 +926,20 @@ public abstract class CraftingCpuLogicMixin {
                 AEKey key = entry.getKey();
                 long amount = entry.getLongValue();
                 boolean isRoot = rootKey != null && rootKey.equals(key);
+                // ① 账务先行：waitingFor 冲抵 + finalOutput 匹配 → link.insert 交割尝试
+                // （此时网络还没产物 → requester 提取 0 → 拿不到）+ remainingAmount 归零 +
+                // finishJob。顺序关键（2026-09-04 修复：先入网再账务会让 requester 把
+                // 刚入网的 root 提走——终端请求塞玩家背包、巨型量无处放 → 产物消失网络归零；
+                // sensei 语义：产物注入网络，requester 只是发起方）
+                logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
+                // ② root 物理入网（账务后：link 已完成，产物留在网络）
                 if (isRoot && networkStorage != null) {
-                    // 物理入网：requester（接口/终端）交割时从网络提取产物
                     // ⚠️ AE2 insert 返回「已插入量」（非剩余量）——2026-09-04 20:40 修正误报
                     long insertedAmt = networkStorage.insert(key, amount,
                             appeng.api.config.Actionable.MODULATE, cluster.getSrc());
                     if (CraftingCompat.debugLogs) {
                         AE2Addon.LOGGER.info(
-                                "[ae2addon][settle] 物理入网: key={} 期望{} 实插{} root=true",
+                                "[ae2addon][settle] 物理入网(账务后): key={} 期望{} 实插{} root=true",
                                 key, amount, insertedAmt);
                     }
                     if (insertedAmt < amount && CraftingCompat.debugLogs) {
@@ -946,8 +952,6 @@ public abstract class CraftingCpuLogicMixin {
                             "[ae2addon][settle] 中间产物(不入网): key={} 量={} rootKey={}",
                             key, amount, rootKey);
                 }
-                // 账务：waitingFor 冲抵 + 根产物→link 交割/finishJob；中间产物→crafting storage
-                logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
             }
             if (CraftingCompat.debugLogs) {
                 AE2Addon.LOGGER.info("[ae2addon][settle] 回收完成: {} 种产物已注入（root 已入网）",
