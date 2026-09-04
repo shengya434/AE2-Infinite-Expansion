@@ -29,6 +29,9 @@ public class AssemblerMenu extends AbstractContainerMenu {
     public int clientPage;
     /** 客户端侧标记（playerInventory 的 level 判断）。 */
     private final boolean clientSide;
+    /** 当前页窗口容器（45 槽）：服务端广播前从 core 重载，客户端渲染/拖拽走它。
+     *  直连 core 的 PatternSlot 在客户端会读 stale 页 + 广播回写错位（2026-09-04）。 */
+    private final SimpleContainer pageContainer = new SimpleContainer(AssemblerCoreBE.PAGE_SIZE);
 
     // 槽区几何
     private static final int COLS = 9;
@@ -42,11 +45,21 @@ public class AssemblerMenu extends AbstractContainerMenu {
         this.core = core;
         this.clientSide = playerInventory.player.level().isClientSide;
 
-        // 样板槽：当前页 45 格（全局下标 = page×45 + i）
+        // 样板槽：当前页窗口容器 45 格（vanilla Slot 绑定，客户端由广播维护）
         for (int row = 0; row < ROWS; row++) {
             for (int col = 0; col < COLS; col++) {
                 int i = row * COLS + col;
-                addSlot(new PatternSlot(core, i, SLOT_X0 + col * 18, SLOT_Y0 + row * 18));
+                addSlot(new Slot(pageContainer, i, SLOT_X0 + col * 18, SLOT_Y0 + row * 18) {
+                    @Override
+                    public boolean mayPlace(ItemStack stack) {
+                        return !stack.isEmpty();
+                    }
+
+                    @Override
+                    public int getMaxStackSize() {
+                        return 1;
+                    }
+                });
             }
         }
         // 玩家背包 + 快捷栏
@@ -87,28 +100,57 @@ public class AssemblerMenu extends AbstractContainerMenu {
         return core;
     }
 
-    /** 客户端请求翻页（delta = ±1，循环）。 */
+    /** 客户端请求翻页（delta = ±1，循环）。基于客户端已确认页 clientPage 计算
+     *  （客户端 BE 副本的 page 不随服务端更新——2026-09-04 修复：曾用
+     *  core.getPage() 导致永远基于 0 计算 → 只能到 1/2/200 页）。 */
     public void changePage(int delta) {
         if (clientSide) {
-            int next = Math.floorMod(core.getPage() + delta, AssemblerCoreBE.PAGES);
+            int next = Math.floorMod(clientPage + delta, AssemblerCoreBE.PAGES);
+            clientPage = next;
             com.ae2addon.AE2Addon.NETWORK.sendToServer(
                     new com.ae2addon.network.AssemblerPagePacket(core.getBlockPos(), next));
-            // 本地即时反馈（服务端确认后 broadcast 覆盖）
-            clientPage = next;
         }
     }
 
     @Override
     public void broadcastChanges() {
+        if (!clientSide) {
+            // 服务端权威同步：先把玩家可能改动的窗口内容写回 core（落盘），
+            // 再从 core 当前页重载窗口（翻页/落盘后内容一致），随后 super 广播。
+            int base = core.getPage() * AssemblerCoreBE.PAGE_SIZE;
+            boolean dirty = false;
+            for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
+                if (!ItemStack.matches(core.getSlot(base + i), pageContainer.getItem(i))) {
+                    dirty = true;
+                    core.setSlot(base + i, pageContainer.getItem(i));
+                }
+            }
+            if (dirty) {
+                core.onPatternsChanged();
+            }
+            for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
+                pageContainer.setItem(i, core.getSlot(base + i));
+            }
+        }
         clientPage = core.getPage();
         super.broadcastChanges();
     }
 
     @Override
     public void removed(Player player) {
-        // 样板槽可能被编辑过：关闭菜单时刷新 CraftingService 的 provider 声明列表
-        if (!core.getLevel().isClientSide) {
-            core.onPatternsChanged();
+        // 关闭前最后落盘一次（broadcastChanges 可能未覆盖最后改动）
+        if (!clientSide) {
+            int base = core.getPage() * AssemblerCoreBE.PAGE_SIZE;
+            boolean dirty = false;
+            for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
+                if (!ItemStack.matches(core.getSlot(base + i), pageContainer.getItem(i))) {
+                    dirty = true;
+                    core.setSlot(base + i, pageContainer.getItem(i));
+                }
+            }
+            if (dirty) {
+                core.onPatternsChanged();
+            }
         }
         super.removed(player);
     }
@@ -147,63 +189,5 @@ public class AssemblerMenu extends AbstractContainerMenu {
                 && player.distanceToSqr(core.getBlockPos().getX() + 0.5,
                         core.getBlockPos().getY() + 0.5,
                         core.getBlockPos().getZ() + 0.5) <= 64.0;
-    }
-
-    /**
-     * 直连核心样板槽的 Slot（全局下标随核心当前页动态 = page×45+pageIndex）。
-     * Slot 基类需要 Container——传一个哑容器，全部方法覆写走核心。
-     */
-    private static class PatternSlot extends Slot {
-        private static final Container DUMMY = new SimpleContainer(0);
-        private final AssemblerCoreBE core;
-        private final int pageIndex;
-
-        PatternSlot(AssemblerCoreBE core, int pageIndex, int x, int y) {
-            super(DUMMY, 0, x, y);
-            this.core = core;
-            this.pageIndex = pageIndex;
-        }
-
-        private int globalIndex() {
-            return core.getPage() * AssemblerCoreBE.PAGE_SIZE + pageIndex;
-        }
-
-        @Override
-        public boolean mayPlace(ItemStack stack) {
-            return !stack.isEmpty();
-        }
-
-        @Override
-        public ItemStack getItem() {
-            return core.getSlot(globalIndex());
-        }
-
-        @Override
-        public boolean hasItem() {
-            return !core.getSlot(globalIndex()).isEmpty();
-        }
-
-        @Override
-        public void set(ItemStack stack) {
-            core.setSlot(globalIndex(), stack);
-            setChanged();
-        }
-
-        @Override
-        public ItemStack remove(int amount) {
-            ItemStack current = core.getSlot(globalIndex());
-            if (current.isEmpty()) {
-                return ItemStack.EMPTY;
-            }
-            ItemStack taken = current.split(amount);
-            core.setSlot(globalIndex(), current);
-            setChanged();
-            return taken;
-        }
-
-        @Override
-        public int getMaxStackSize() {
-            return 1;
-        }
     }
 }

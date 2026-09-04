@@ -796,24 +796,17 @@ public abstract class CraftingCpuLogicMixin {
     private KeyCounter ae2addon$pendingSettle;
 
     /**
-     * 判定（v0.3 M3 正式化）：
-     * 1. 簇内含装配处理器核心 → 白名单判定（核心样板槽声明该 pattern 才虚拟结算）
-     * 2. 否则集成 CPU + config 全局开关（M1 调试/兜底模式）
-     * 两者都仅限合成类样板（AECraftingPattern）。
+     * 判定（v0.3 M3 正式化）：仅限合成类样板（AECraftingPattern），且簇内含装配
+     * 处理器核心并声明了该样板（样板槽白名单）才虚拟结算。全局开关已删除——
+     * 集成 CPU/原版 CPU 的合成一律真实执行（2026-09-04 sensei 决策）。
      */
     @Unique
     private boolean ae2addon$virtualSettleActive(IPatternDetails patternDetails) {
         if (patternDetails == null || !ae2addon$isCraftingPattern(patternDetails)) {
             return false;
         }
-        // M3：装配处理器核心（3×3×3 框架+核心成簇）→ 白名单
         var assemblerCore = com.ae2addon.block.AssemblerRegistry.coreIn(cluster);
-        if (assemblerCore != null) {
-            return assemblerCore.declares(patternDetails);
-        }
-        // M1 调试/兜底：集成 CPU + 全局开关
-        return CraftingCompat.virtualSettleCraftingPatterns
-                && ae2addon$isIntegratedCpu(cluster);
+        return assemblerCore != null && assemblerCore.declares(patternDetails);
     }
 
     /**

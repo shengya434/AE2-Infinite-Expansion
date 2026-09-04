@@ -29,10 +29,6 @@ public final class CraftingCompat {
     public static volatile long sharedExpCap =
             com.ae2addon.config.AE2AddonConfig.sharedExpCap();
 
-    /** CPU 虚拟结算（v0.3 M1）：合成类样板节点不真实装配，直接注入产物瞬时完成。 */
-    public static volatile boolean virtualSettleCraftingPatterns =
-            com.ae2addon.config.AE2AddonConfig.virtualSettleCraftingPatterns();
-
     /** 小额订单免估算阈值（下单量 ≤ 此值不展开配方树，防普通订单卡顿）。 */
     public static volatile long cheapOrderAmount =
             com.ae2addon.config.AE2AddonConfig.cheapOrderAmount();
@@ -43,8 +39,6 @@ public final class CraftingCompat {
         batchMaxMultiplier = com.ae2addon.config.AE2AddonConfig.batchMaxMultiplier();
         sharedExpCap = com.ae2addon.config.AE2AddonConfig.sharedExpCap();
         cheapOrderAmount = com.ae2addon.config.AE2AddonConfig.cheapOrderAmount();
-        virtualSettleCraftingPatterns =
-                com.ae2addon.config.AE2AddonConfig.virtualSettleCraftingPatterns();
     }
 
     /**

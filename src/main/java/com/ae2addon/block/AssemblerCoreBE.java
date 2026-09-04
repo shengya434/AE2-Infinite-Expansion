@@ -97,7 +97,12 @@ public class AssemblerCoreBE extends CraftingBlockEntity implements ICraftingPro
 
     @Override
     public long getStorageBytes() {
-        return isFormed() ? com.ae2addon.config.AE2AddonConfig.cpuDisplayBytes() : 0;
+        // 不能返回 Long.MAX_VALUE：CraftingCPUCluster 累加各块 getStorageBytes，
+        // 与集成 CPU（Long.MAX）或另一个装配处理器同簇时相加溢出为负（2026-09-04
+        // sensei 实测「负数字节 CPU」）。MAX/8 ≈ 1.15e18 字节：与 7 个同值块或集成
+        // CPU 同簇都不溢出，容量远超任何实际订单（含 Long.MAX 级巨型订单按物品数
+        // 结算，不受字节容量限制）。CPU 显示用 ∞ 覆盖（cpuStorageText）。
+        return isFormed() ? Long.MAX_VALUE / 8 : 0;
     }
 
     @Override
