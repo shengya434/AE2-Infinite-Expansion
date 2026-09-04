@@ -814,8 +814,35 @@ public abstract class CraftingCpuLogicMixin {
         }
         var owner = com.ae2addon.block.IntegratedCPURegistry.ownerOf(cluster);
         var module = com.ae2addon.block.AssemblerRegistry.moduleFor(owner);
-        return module != null && module.declares(patternDetails);
+        boolean declared = module != null && module.declares(patternDetails);
+        if (CraftingCompat.debugLogs) {
+            // 诊断（2026-09-04 锻造/切石不虚拟排查）：环节日志节流
+            long tick = appeng.hooks.ticking.TickHandler.instance().getCurrentTick();
+            if (ae2addon$diagSettleTick != tick) {
+                ae2addon$diagSettleTick = tick;
+                String out = "?";
+                try {
+                    var outs = patternDetails.getOutputs();
+                    if (outs != null && outs.length > 0 && outs[0] != null
+                            && outs[0].what() != null) {
+                        out = outs[0].what().toString();
+                    }
+                } catch (RuntimeException ignored) {
+                }
+                AE2Addon.LOGGER.info(
+                        "[ae2addon][settle] 判定: pattern={} 产物={} owner={} module={} declared={} 簇@{} 模块槽0={}",
+                        patternDetails.getClass().getSimpleName(), out,
+                        owner == null ? "null" : "cpu",
+                        module == null ? "null" : module.getBlockPos().toShortString(),
+                        declared, System.identityHashCode(cluster),
+                        module == null ? "-" : module.getSlot(0).getHoverName().getString());
+            }
+        }
+        return declared;
     }
+
+    @Unique
+    private long ae2addon$diagSettleTick = Long.MIN_VALUE;
 
     /**
      * 虚拟结算：不真实装配（跳过 provider.pushPattern），材料已由 extract 阶段扣出
