@@ -25,12 +25,17 @@ public final class AssemblerRegistry {
     }
 
     /**
-     * 查找服务于某集成 CPU 的装配处理器模块（该 CPU 的主簇或任一虚拟 lane 执行
-     * 合成时都会命中——模块只入主簇，但能力覆盖 owner 的全部簇）。
-     * 无模块/模块未入簇/无 owner 返回 null。
+     * 查找服务某集成 CPU 的装配处理器模块。按【同网格】匹配（2026-09-04 修复：
+     * 此前按 ownerCPU 精确匹配——多集成 CPU 同网络时模块只服务第一个，其余 CPU
+     * 的订单判定 module=null → 走 1× 强制 → 巨型订单卡死）。模块接入哪个网格，
+     * 就服务该网格的全部集成 CPU（白名单共享；一般每网一个模块）。
      */
     public static AssemblerCoreBE moduleFor(IntegratedCPUBE owner) {
         if (owner == null) {
+            return null;
+        }
+        var ownerGrid = gridOf(owner);
+        if (ownerGrid == null) {
             return null;
         }
         for (AssemblerCoreBE core : ACTIVE) {
@@ -38,13 +43,22 @@ public final class AssemblerRegistry {
                 continue;
             }
             if (core.getOwnerCPU() == null) {
-                // 惰性重试关联（网格就绪延迟/簇重组后 owner 未刷新的兜底，2026-09-04）
+                // 惰性重试关联（网格就绪延迟兜底）
                 core.refreshOwnerNow();
             }
-            if (core.getOwnerCPU() == owner) {
+            if (gridOf(core) == ownerGrid) {
                 return core;
             }
         }
         return null;
+    }
+
+    private static appeng.api.networking.IGrid gridOf(appeng.blockentity.grid.AENetworkBlockEntity be) {
+        try {
+            var node = be.getMainNode();
+            return node == null ? null : node.getGrid();
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 }
