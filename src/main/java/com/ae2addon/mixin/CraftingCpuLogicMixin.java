@@ -3,6 +3,7 @@ package com.ae2addon.mixin;
 import appeng.api.crafting.IPatternDetails;
 import appeng.api.networking.crafting.ICraftingProvider;
 import appeng.api.networking.energy.IEnergyService;
+import appeng.api.stacks.AEKey;
 import appeng.api.stacks.KeyCounter;
 import appeng.crafting.execution.CraftingCpuHelper;
 import appeng.crafting.execution.CraftingCpuLogic;
@@ -401,6 +402,11 @@ public abstract class CraftingCpuLogicMixin {
             require = 0)
     private boolean ae2addon$limitTaskIteration(Iterator<?> iterator) {
         com.ae2addon.crafting.CraftingCompat.timeSliceActive = true;
+        // 虚拟结算根产物 finishJob 后 job 已置 null：终止任务迭代防 NPE
+        if (ae2addon$settleStopIteration) {
+            ae2addon$settleStopIteration = false;
+            return false;
+        }
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
             if (ae2addon$budgetExceeded()) {
@@ -419,6 +425,11 @@ public abstract class CraftingCpuLogicMixin {
             require = 0)
     private boolean ae2addon$limitProviderIteration(Iterator<?> iterator) {
         com.ae2addon.crafting.CraftingCompat.timeSliceActive = true;
+        // 虚拟结算根产物 finishJob 后 job 已置 null：终止 provider 迭代防 NPE
+        if (ae2addon$settleStopIteration) {
+            ae2addon$settleStopIteration = false;
+            return false;
+        }
         if (ae2addon$budgetActive) {
             ae2addon$diagIterations++;
             if (ae2addon$budgetExceeded()) {
@@ -669,6 +680,12 @@ public abstract class CraftingCpuLogicMixin {
     private boolean ae2addon$pushBatch(ICraftingProvider provider,
             IPatternDetails patternDetails, KeyCounter[] inputs) {
         ae2addon$diagPushCalls++;
+        // ── 虚拟结算（v0.3 M1）：合成类样板节点不真实装配 ──
+        // 材料已在 extract 阶段从 crafting storage 提取（销毁 ✓）；产物走原版 insert
+        // 回收通道瞬时注入：根产物→CraftingLink+finishJob；中间产物→crafting storage 供上层。
+        if (ae2addon$virtualSettleActive(patternDetails)) {
+            return ae2addon$virtualSettle(patternDetails);
+        }
         if (!ae2addon$batchActive
                 || ae2addon$batchBasePattern == null
                 || !ae2addon$batchBasePattern.equals(patternDetails)
@@ -745,6 +762,69 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$recordStuck(patternDetails);
         }
         return accepted;
+    }
+
+    // ── 虚拟结算（v0.3 M1，开发中）──
+
+    /** 虚拟结算后根产物 finishJob 置 job=null，需终止本 tick 任务迭代防 NPE。 */
+    @Unique
+    private boolean ae2addon$settleStopIteration;
+
+    /** 判定：虚拟结算开关 && 合成类样板 && 集成 CPU（M1 宿主；原版 CPU 不受影响）。 */
+    @Unique
+    private boolean ae2addon$virtualSettleActive(IPatternDetails patternDetails) {
+        return CraftingCompat.virtualSettleCraftingPatterns
+                && patternDetails != null
+                && ae2addon$isCraftingPattern(patternDetails)
+                && ae2addon$isIntegratedCpu(cluster);
+    }
+
+    /**
+     * 虚拟结算：不真实装配（跳过 provider.pushPattern），材料已由 extract 阶段扣出
+     * （= 销毁），产物走原版 insert 回收通道瞬时注入。
+     * <p>
+     * insert 自动分流（AE2 原版逻辑，2026-09-04 字节码确认）：
+     * - 根产物（finalOutput 匹配）→ CraftingLink 送达请求者 + remainingAmount 归零 + finishJob
+     * - 中间产物 → crafting storage（inventory），上游节点 extract 直接命中
+     * <p>
+     * 返回 true = 外层照常记账（waitingFor 残留无害，finishJob 时清空）并 break provider 循环。
+     * 每次结算 1×（合成类样板现强制 1×；N× 快速结算在 M1c 接入）。
+     */
+    @Unique
+    private boolean ae2addon$virtualSettle(IPatternDetails patternDetails) {
+        try {
+            var outputs = patternDetails.getOutputs();
+            if (outputs == null || outputs.length == 0) {
+                return false;
+            }
+            boolean settledAny = false;
+            var logic = cluster.craftingLogic;
+            for (var out : outputs) {
+                if (out == null || out.what() == null || out.amount() <= 0) {
+                    continue;
+                }
+                settledAny = true;
+                logic.insert(out.what(), out.amount(), appeng.api.config.Actionable.MODULATE);
+            }
+            if (!settledAny) {
+                return false;
+            }
+            // 根产物 insert 触发 finishJob → job 置 null：终止本 tick 任务迭代，防外层 NPE
+            if (ae2addon$getJob() == null) {
+                ae2addon$settleStopIteration = true;
+            }
+            if (CraftingCompat.debugLogs) {
+                AE2Addon.LOGGER.info(
+                        "[ae2addon][settle] 虚拟结算: pattern={} 产物{}种 → 已注入 CPU（材料已销毁）",
+                        patternDetails.getClass().getSimpleName(), outputs.length);
+            }
+            return true;
+        } catch (Throwable t) {
+            if (CraftingCompat.debugLogs) {
+                AE2Addon.LOGGER.warn("[ae2addon][settle] 虚拟结算异常: {}", t.toString());
+            }
+            return false;
+        }
     }
 
     // ── getCoProcessors 保护（与 OmniSequence 共存）──

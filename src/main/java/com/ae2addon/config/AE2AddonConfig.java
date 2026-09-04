@@ -162,6 +162,12 @@ public final class AE2AddonConfig {
                     "Debug logs for hot paths (submitJob/batch/push), may lag slightly")
             .define("debugLogs", false);
 
+    /** CPU 虚拟结算调试开关（v0.3 M1）：合成类样板节点不真实装配，直接注入产物瞬时完成。 */
+    public static final ForgeConfigSpec.BooleanValue VIRTUAL_SETTLE_CRAFTING_PATTERNS = BUILDER
+            .comment("CPU 虚拟结算（v0.3 M1 开发中，默认关闭）：合成类样板节点不真实装配，",
+                    "材料提取即销毁、产物直接注入完成（Virtual settle for crafting patterns, M1 WIP）")
+            .define("virtualSettleCraftingPatterns", false);
+
     public static final ForgeConfigSpec SPEC = BUILDER.build();
 
     private AE2AddonConfig() {
@@ -302,5 +308,9 @@ public final class AE2AddonConfig {
 
     public static int feederRestockInterval() {
         return Math.max(1, FEEDER_RESTOCK_INTERVAL.get());
+    }
+
+    public static boolean virtualSettleCraftingPatterns() {
+        return VIRTUAL_SETTLE_CRAFTING_PATTERNS.get();
     }
 }

@@ -64,6 +64,7 @@ public class AE2AddonConfigScreen extends Screen {
         entries.add(new Entry("feederExtractLoopLimit — 主动抽取循环累计上限（0=关）", AE2AddonConfig.FEEDER_EXTRACT_LOOP_CAP, 0, 2_000_000_000));
         entries.add(new Entry("feederStockTarget — 接口补货目标/种（0=关）", AE2AddonConfig.FEEDER_STOCK_TARGET, 0, Long.MAX_VALUE));
         entries.add(new Entry("debugLogs — 调试日志", AE2AddonConfig.DEBUG_LOGS, 0, 0));
+        entries.add(new Entry("virtualSettleCraftingPatterns — CPU 虚拟结算（M1 开发中）", AE2AddonConfig.VIRTUAL_SETTLE_CRAFTING_PATTERNS, 0, 0));
     }
 
     @Override
