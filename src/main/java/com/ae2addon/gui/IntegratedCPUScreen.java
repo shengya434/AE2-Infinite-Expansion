@@ -27,11 +27,17 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
     /** 面板位置是否已初始化（drawFG 每帧重算会重置拖动——2026-09-04 sensei：
      *  面板做成可拖动，位置只在首帧初始化）。 */
     private boolean panelPosInitialized;
-    /** 拖动的面板：0=无 1=量子分裂线程面板（巨型订单面板联动跟随） */
+    /** 巨型订单面板独立位置（2026-09-04：两面板各自拖动，互不跳变） */
+    private int orderPanelX;
+    private int orderPanelY;
+    /** 拖动的面板：0=无 1=量子分裂线程面板 2=巨型订单面板 */
     private int draggingPanel;
     /** 拖动抓取点（面板内相对偏移，避免跳变） */
     private double dragGrabX;
     private double dragGrabY;
+    private static final java.io.File UI_STATE_FILE = new java.io.File(
+            net.minecraftforge.fml.loading.FMLPaths.CONFIGDIR.get().toFile(),
+            "ae2addon-cpu-ui.json");
     private int scrollOffset;
     private boolean draggingScrollbar = false;
     private int orderScrollOffset;
@@ -54,12 +60,18 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             int mouseX, int mouseY) {
         super.drawFG(graphics, offsetX, offsetY, mouseX, mouseY);
 
-        // ── 量子分裂线程面板（可拖动；位置首帧初始化，拖动后保持）──
+        // ── 量子分裂线程面板 + 巨型订单面板（可拖动；位置持久化）──
         if (!panelPosInitialized) {
-            int screenWidth = Minecraft.getInstance().getWindow().getGuiScaledWidth();
-            panelX = screenWidth / 2 - PANEL_WIDTH / 2 - 300;
-            panelY = 170;
-            panelPosInitialized = true;
+            loadUiState();
+            if (!panelPosInitialized) {
+                // 无存档：默认位（线程面板屏幕左侧；订单面板在其左）
+                int screenWidth = Minecraft.getInstance().getWindow().getGuiScaledWidth();
+                panelX = screenWidth / 2 - PANEL_WIDTH / 2 - 300;
+                panelY = 170;
+                orderPanelX = panelX - ORDER_PANEL_WIDTH - 10;
+                orderPanelY = panelY;
+                panelPosInitialized = true;
+            }
         }
         drawLanePanel(graphics);
         drawOrderPanel(graphics);
@@ -71,24 +83,23 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         if (orders == null || orders.isEmpty()) {
             return;
         }
-        int orderPanelX = orderPanelLeft();
         int visible = Math.min(VISIBLE_ORDERS, orders.size());
         int height = 12 + ROW_HEIGHT * visible + 4;
 
-        graphics.fill(orderPanelX - 3, panelY - 3,
-                orderPanelX + ORDER_PANEL_WIDTH, panelY + height, 0xCC000000);
-        graphics.fill(orderPanelX - 3, panelY - 3,
-                orderPanelX + ORDER_PANEL_WIDTH, panelY + 2, 0xFF666666);
+        graphics.fill(orderPanelX - 3, orderPanelY - 3,
+                orderPanelX + ORDER_PANEL_WIDTH, orderPanelY + height, 0xCC000000);
+        graphics.fill(orderPanelX - 3, orderPanelY - 3,
+                orderPanelX + ORDER_PANEL_WIDTH, orderPanelY + 2, 0xFF666666);
         graphics.drawString(font,
                 Component.translatable("gui.ae2addon.order.title"),
-                orderPanelX, panelY, 0xFFFFAA, false);
+                orderPanelX, orderPanelY, 0xFFFFAA, false);
 
         int maxScroll = Math.max(0, orders.size() - VISIBLE_ORDERS);
         orderScrollOffset = Math.max(0, Math.min(orderScrollOffset, maxScroll));
 
         int start = orderScrollOffset;
         int end = Math.min(start + VISIBLE_ORDERS, orders.size());
-        int y = panelY + 12;
+        int y = orderPanelY + 12;
         for (int row = 0; row < VISIBLE_ORDERS; row++) {
             orderRowY[row] = y;
             int index = start + row;
@@ -217,8 +228,13 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             int handle = hitPanelHandle(lx, ly);
             if (handle != 0) {
                 draggingPanel = handle;
-                dragGrabX = lx - (handle == 1 ? panelX : orderPanelLeft());
-                dragGrabY = ly - panelY;
+                if (handle == 1) {
+                    dragGrabX = lx - panelX;
+                    dragGrabY = ly - panelY;
+                } else {
+                    dragGrabX = lx - orderPanelX;
+                    dragGrabY = ly - orderPanelY;
+                }
                 return true;
             }
             boolean inPanel = isInPanel(lx, ly);
@@ -266,8 +282,13 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         if (button == 0 && draggingPanel != 0) {
             double lx = mouseX - leftPos;
             double ly = mouseY - topPos;
-            panelX = (int) Math.round(lx - dragGrabX);
-            panelY = (int) Math.round(ly - dragGrabY);
+            if (draggingPanel == 1) {
+                panelX = (int) Math.round(lx - dragGrabX);
+                panelY = (int) Math.round(ly - dragGrabY);
+            } else {
+                orderPanelX = (int) Math.round(lx - dragGrabX);
+                orderPanelY = (int) Math.round(ly - dragGrabY);
+            }
             return true;
         }
         if (button == 0 && draggingScrollbar) {
@@ -285,6 +306,7 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         if (button == 0 && draggingPanel != 0) {
             draggingPanel = 0;
+            saveUiState();
             return true;
         }
         if (button == 0 && draggingScrollbar) {
@@ -304,11 +326,10 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         if (orders == null || orders.isEmpty()) {
             return false;
         }
-        int orderPanelX = orderPanelLeft();
         int visible = Math.min(VISIBLE_ORDERS, orders.size());
         int height = 12 + ROW_HEIGHT * visible + 4;
         return mx >= orderPanelX - 3 && mx <= orderPanelX + ORDER_PANEL_WIDTH
-                && my >= panelY - 3 && my <= panelY + height;
+                && my >= orderPanelY - 3 && my <= orderPanelY + height;
     }
 
     /** 鼠标是否在订单滑条轨道上 */
@@ -317,10 +338,9 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         if (orders == null || orders.size() <= VISIBLE_ORDERS) {
             return false;
         }
-        int orderPanelX = orderPanelLeft();
         int height = 12 + ROW_HEIGHT * VISIBLE_ORDERS + 4;
-        int trackTop = panelY + 16;
-        int trackBottom = panelY + height - 4;
+        int trackTop = orderPanelY + 16;
+        int trackBottom = orderPanelY + height - 4;
         return mx >= orderPanelX + ORDER_PANEL_WIDTH - 7 && mx <= orderPanelX + ORDER_PANEL_WIDTH - 2
                 && my >= trackTop - 1 && my <= trackBottom + 1;
     }
@@ -332,8 +352,8 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             return;
         }
         int height = 12 + ROW_HEIGHT * VISIBLE_ORDERS + 4;
-        int trackTop = panelY + 16;
-        int trackBottom = panelY + height - 4;
+        int trackTop = orderPanelY + 16;
+        int trackBottom = orderPanelY + height - 4;
         int trackH = trackBottom - trackTop;
         int maxScroll = Math.max(0, orders.size() - VISIBLE_ORDERS);
         int thumbH = Math.max(12, trackH * VISIBLE_ORDERS / orders.size());
@@ -378,6 +398,14 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
     }
 
     @Override
+    public void onClose() {
+        if (panelPosInitialized) {
+            saveUiState();
+        }
+        super.onClose();
+    }
+
+    @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
         double lx = mouseX - leftPos;
         double ly = mouseY - topPos;
@@ -404,9 +432,42 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         return super.mouseScrolled(mouseX, mouseY, delta);
     }
 
-    /** 巨型订单面板左缘（联动跟随线程面板）。 */
-    private int orderPanelLeft() {
-        return panelX - ORDER_PANEL_WIDTH - 10;
+    /** 从 config/ae2addon-cpu-ui.json 读取面板位置（无存档/损坏则保持默认）。 */
+    private void loadUiState() {
+        try {
+            if (UI_STATE_FILE.exists() && UI_STATE_FILE.length() > 0) {
+                var gson = new com.google.gson.Gson();
+                var json = new String(java.nio.file.Files.readAllBytes(
+                        UI_STATE_FILE.toPath()), java.nio.charset.StandardCharsets.UTF_8);
+                var obj = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+                if (obj.has("px") && obj.has("py") && obj.has("ox") && obj.has("oy")) {
+                    panelX = obj.get("px").getAsInt();
+                    panelY = obj.get("py").getAsInt();
+                    orderPanelX = obj.get("ox").getAsInt();
+                    orderPanelY = obj.get("oy").getAsInt();
+                    panelPosInitialized = true;
+                }
+            }
+        } catch (Throwable t) {
+            // 存档损坏/IO 失败：回落默认位，不阻塞界面
+            panelPosInitialized = false;
+        }
+    }
+
+    /** 保存面板位置（拖动结束/关屏时）。 */
+    private void saveUiState() {
+        try {
+            var obj = new com.google.gson.JsonObject();
+            obj.addProperty("px", panelX);
+            obj.addProperty("py", panelY);
+            obj.addProperty("ox", orderPanelX);
+            obj.addProperty("oy", orderPanelY);
+            java.nio.file.Files.write(UI_STATE_FILE.toPath(),
+                    new com.google.gson.GsonBuilder().setPrettyPrinting().create()
+                            .toJson(obj).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (Throwable ignored) {
+            // UI 状态保存失败不影响游戏
+        }
     }
 
     /** 面板把手命中：1=线程面板 2=巨型订单面板（标题条 y-3..y+11）。 */
@@ -417,11 +478,10 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         }
         var orders = menu.fullOrders;
         if (orders != null && !orders.isEmpty()) {
-            int ox = orderPanelLeft();
             int visible = Math.min(VISIBLE_ORDERS, orders.size());
             int height = 12 + ROW_HEIGHT * visible + 4;
-            if (mx >= ox - 3 && mx <= ox + ORDER_PANEL_WIDTH
-                    && my >= panelY - 3 && my <= panelY + 11) {
+            if (mx >= orderPanelX - 3 && mx <= orderPanelX + ORDER_PANEL_WIDTH
+                    && my >= orderPanelY - 3 && my <= orderPanelY + 11) {
                 return 2;
             }
         }
