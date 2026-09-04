@@ -82,7 +82,45 @@ E. **批量/lane**：虚拟结算按 extractBatch 既有 N× 走（任务值大 
 - **M1c 根产物注入网络 + 巨型订单**：D+E；Long.MAX 级合成类订单分批结算
 - **M2/M3**：材料抵扣细化、多方块成型、升级卡（见整体方案）
 
-## 8. 风险与待验证
+## 8. M1a 侦察结论（2026-09-04 · javap 反编译 AE2 15.4.10 mapped jar）
+
+### 8.1 关键 API 契约（已确认）
+
+- **`ICraftingInventory.insert(AEKey, long, Actionable)`**：crafting storage（ListCraftingInventory）
+  实现 = `list.add` + 通知 ChangeListener（→ postChange → 上游 waitingFor 匹配、任务树推进）。
+  **产物注入通道就是它**。
+- **`CraftingCpuLogic.inventory`** 字段 = cluster 的 ListCraftingInventory（crafting storage，
+  KeyCounter 真实存储中间产物）——mixins 可 @Accessor 拿。
+- **`TaskProgress.value` 只在 pushPattern 成功分支递减**（-1；我们的 pushBatch 补 N-1）。
+- push 成功 → 外层把 `expectedOutputs/expectedContainerItems` 插入 `job.waitingFor`（等产物记账）。
+- **`reinjectPatternInputs(inventory, inputs)` null 安全**（字节码 ifnull 跳过）——虚拟结算
+  可返回 null/空 inputs，push 失败路径不会 NPE。
+
+### 8.2 设计修正：push 阶段 settle（原「提取阶段拦截」废弃）
+
+在已接管的 **pushBatch redirect**（provider.pushPattern 调用点）里拦截，pattern 虚拟时：
+
+```
+settle（provider 是装配处理器 且 pattern 虚拟）:
+  1. inventory.insert(每个产物, 任务值对应量, MODULATE)   // 产物立即可见 + postChange 驱动上游
+  2. expectedOutputs.reset(); expectedContainerItems.reset()  // 防外层 waitingFor 记账污染
+  3. 任务值递减到 0（沿用 ae2addon$decrementTaskValue）
+  4. return true   // 外层 break provider 循环；无污染记账；扣电（0.01 阈值）无害
+```
+
+为什么返回 true 而不是 false：false 会让外层继续 hasNext 尝试**后续真实 provider**，
+用同一份 inputs 再 push → 材料重复扣。true 则外层 break。
+
+### 8.3 待实测行为（M1b 最小闭环验证，文字侦察无法回答）
+
+1. **基层材料来源**：CPU 执行时基层材料在 crafting storage 还是网络？extract 不到时
+   AE2 是否会自行从网络 pull（决定「销毁」发生在哪一层）
+2. **同 tick 注入命中**：settle insert 后同 tick 内上游节点 extract 能否立即命中
+   （postChange 同步性）
+3. **网络存量中间产物抵扣**：计划期 AE2 是否已用网络存量折算（决定要不要额外处理）
+4. **根节点识别**：任务树根（产物应注入网络而非 crafting storage）的判定方式
+
+## 9. 风险与待验证
 
 1. crafting storage 注入的正确 API（CraftingCpuHelper? inventory 类型 ICraftingInventory）
 2. 任务值清零 vs AE2 内部 waitingFor 记账（pushBatch 成功后 AE2 会减 1——虚拟模式
