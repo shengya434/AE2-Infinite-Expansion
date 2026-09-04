@@ -262,7 +262,8 @@ public class AssemblerCoreBE extends CraftingBlockEntity
     }
 
     // ── PatternContainer（样板管理终端兼容，2026-09-04 sensei：终端可访问样板槽）──
-    // 终端窗口 = 当前 GUI 页 45 格（服务端 page 状态驱动；翻页在方块 GUI 操作）。
+    // 终端全量暴露 9000 格：AE2 PAT 按每行 9 格拆行 + 滚动渲染（反编译确认
+    // SlotsRow(container, offset, min(9, ...)) 拆行逻辑）——大容器天然支持。
 
     @Override
     public appeng.api.networking.IGrid getGrid() {
@@ -284,28 +285,22 @@ public class AssemblerCoreBE extends CraftingBlockEntity
                 java.util.List.of());
     }
 
-    /** 终端适配：读写当前 GUI 页 45 格（直接操作 List，与 GUI 同源不吞样板）。 */
+    /** 终端适配：直接读写全部 9000 槽（与 GUI 同源 List，无页偏移、不吞样板）。 */
     private final appeng.api.inventories.InternalInventory terminalPatternInv =
             new appeng.api.inventories.InternalInventory() {
                 @Override
                 public int size() {
-                    return PAGE_SIZE;
+                    return TOTAL_SLOTS;
                 }
 
                 @Override
                 public ItemStack getStackInSlot(int slot) {
-                    if (slot < 0 || slot >= PAGE_SIZE) {
-                        return ItemStack.EMPTY;
-                    }
-                    return getSlot(page * PAGE_SIZE + slot);
+                    return getSlot(slot);
                 }
 
                 @Override
                 public void setItemDirect(int slot, ItemStack stack) {
-                    if (slot < 0 || slot >= PAGE_SIZE) {
-                        return;
-                    }
-                    setSlot(page * PAGE_SIZE + slot, stack);
+                    setSlot(slot, stack);
                     onPatternsChanged();
                 }
 
