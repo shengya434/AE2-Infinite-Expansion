@@ -25,8 +25,8 @@ import net.minecraftforge.network.NetworkHooks;
 public class AssemblerMenu extends AbstractContainerMenu {
 
     private final AssemblerCoreBE core;
-    /** 客户端页码显示（broadcastChanges 时同步）。 */
-    public int clientPage;
+    /** 当前页（服务端权威，IntDataSlot 同步——2026-09-04：翻页包异步会导致
+     *  客户端页码与服务端页竞态，放样板被写进旧页 → 吞样板） */
     /** 客户端侧标记（playerInventory 的 level 判断）。 */
     private final boolean clientSide;
     /** 当前页窗口容器（45 槽）：服务端广播前从 core 重载，客户端渲染/拖拽走它。
@@ -39,6 +39,19 @@ public class AssemblerMenu extends AbstractContainerMenu {
     private static final int SLOT_X0 = 8;
     private static final int SLOT_Y0 = 30;
     private static final int PLAYER_Y = 118;
+
+    private final net.minecraft.world.inventory.DataSlot pageData =
+            addDataSlot(new net.minecraft.world.inventory.DataSlot() {
+                @Override
+                public int get() {
+                    return core.getPage();
+                }
+
+                @Override
+                public void set(int value) {
+                    core.setPage(value);
+                }
+            });
 
     private AssemblerMenu(int id, Inventory playerInventory, AssemblerCoreBE core) {
         super(ModMenuTypes.ASSEMBLER.get(), id);
@@ -100,16 +113,20 @@ public class AssemblerMenu extends AbstractContainerMenu {
         return core;
     }
 
-    /** 客户端请求翻页（delta = ±1，循环）。基于客户端已确认页 clientPage 计算
-     *  （客户端 BE 副本的 page 不随服务端更新——2026-09-04 修复：曾用
-     *  core.getPage() 导致永远基于 0 计算 → 只能到 1/2/200 页）。 */
+    /** 客户端请求翻页（delta = ±1，循环）。只发包，目标页由服务端计算并写入
+     *  DataSlot（客户端不本地猜页 → 消除与服务端页的竞态吞样板，2026-09-04）。 */
     public void changePage(int delta) {
         if (clientSide) {
-            int next = Math.floorMod(clientPage + delta, AssemblerCoreBE.PAGES);
-            clientPage = next;
+            int current = Math.max(0, pageData.get()); // 客户端 DataSlot（服务端同步值）
+            int next = Math.floorMod(current + delta, AssemblerCoreBE.PAGES);
             com.ae2addon.AE2Addon.NETWORK.sendToServer(
                     new com.ae2addon.network.AssemblerPagePacket(core.getBlockPos(), next));
         }
+    }
+
+    /** 当前页（客户端显示用：服务端权威值）。 */
+    public int currentPage() {
+        return Math.max(0, pageData.get());
     }
 
     @Override
@@ -132,7 +149,6 @@ public class AssemblerMenu extends AbstractContainerMenu {
                 pageContainer.setItem(i, core.getSlot(base + i));
             }
         }
-        clientPage = core.getPage();
         super.broadcastChanges();
     }
 

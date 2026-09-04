@@ -52,7 +52,7 @@ public class AssemblerScreen extends AbstractContainerScreen<AssemblerMenu> {
         drawPageButton(graphics, cx - 60, topPos + 16, -1);
         // 页码
         Component pageText = Component.literal(
-                (menu.clientPage + 1) + " / " + AssemblerCoreBE.PAGES);
+                (menu.currentPage() + 1) + " / " + AssemblerCoreBE.PAGES);
         graphics.drawString(font, pageText, cx - font.width(pageText) / 2,
                 topPos + 19, 0xFFE0E0E0, false);
         // 下一页（▶ 在右）
