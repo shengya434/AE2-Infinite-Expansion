@@ -128,3 +128,16 @@ settle（provider 是装配处理器 且 pattern 虚拟）:
 3. 网络存量中间产物的抵扣行为（AE2 原生 vs 需 mixin）
 4. 产物注入时序（同 tick 上层 extract 能否立即命中——同 tick 缓存/快照问题）
 5. ScaledPattern 对虚拟注入的适配（N× 产物注入量）
+
+## 10. M1 实施结果（2026-09-04 v28 验证通过）
+
+- **M1a**：字节码侦察完成（详见 §8）——四个待实测行为点全部验证：
+  1. 基层材料：提交时 tryExtractInitialItems 从网络预提进 crafting storage（销毁=extract 扣减）✓
+  2. 同 tick 注入命中：pendingSettle flush 于任务循环 hasNext（记账后），insert 立即驱动上层 ✓
+  3. 网络存量抵扣：AE2 计划期已处理（下单语义），执行期无需额外处理 ✓
+  4. 根节点识别：反射 job.finalOutput（字段名候选+GenericStack 类型兜底）✓
+- **M1b**：settle 闭环（commit 26aca2b/756508d）——产物交割两段式：物理入网 + 账务 insert
+- **M1c**：N× 批量结算（commit c82c5e9）——extractBatch 虚拟模式放开 1× 限制，
+  ScaledPattern 一次提取全部任务材料，settle 按 N 注入，任务值一次归零
+- **现状形态**：config 全局开关（virtualSettleCraftingPatterns）+ 集成 CPU 全部合成类 pattern
+  虚拟化——调试/验证形态。正式形态（M3）：装配处理器宿主声明样板槽，按 pattern 归属判定
