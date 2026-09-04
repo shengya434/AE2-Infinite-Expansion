@@ -103,6 +103,7 @@ public class ModItems {
                         acceptTabItem(output, ModBlocks.INFINITE_CRAFTING_STORAGE.get());
                         acceptTabItem(output, ModBlocks.INFINITE_CO_PROCESSING.get());
                         acceptTabItem(output, ModBlocks.INTEGRATED_CPU.get());
+                        acceptTabItem(output, ModBlocks.ASSEMBLER_CORE.get());
                         acceptTabItem(output, ModBlocks.INFINITE_INTERFACE.get());
                         acceptTabItem(output, INFINITE_INTERFACE_PANEL_ITEM.get());
                         acceptTabItem(output, CONFIG_CARD.get());
