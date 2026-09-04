@@ -934,6 +934,34 @@ public abstract class CraftingCpuLogicMixin {
                             mF.setAccessible(true);
                             AE2Addon.LOGGER.info("[ae2addon][settle][probe] NetworkStorage.mountsInUse={}",
                                     mF.getBoolean(ns));
+                            // 探针：每个 DriveWatcher 内实际 cell 类型（创造元件=只读会拒插）
+                            var piF2 = ns.getClass().getDeclaredField("priorityInventory");
+                            piF2.setAccessible(true);
+                            Object pi2 = piF2.get(ns);
+                            if (pi2 instanceof java.util.Map<?, ?> map2) {
+                                for (Object e : map2.values()) {
+                                    if (!(e instanceof java.util.List<?> list2)) {
+                                        continue;
+                                    }
+                                    for (Object cell : list2) {
+                                        if (cell == null) {
+                                            continue;
+                                        }
+                                        String cls = cell.getClass().getName();
+                                        String inner = cls;
+                                        try {
+                                            var gm = cell.getClass().getMethod("getCell");
+                                            Object c = gm.invoke(cell);
+                                            inner = c == null ? "null"
+                                                    : c.getClass().getName();
+                                        } catch (Throwable ignored) {
+                                        }
+                                        AE2Addon.LOGGER.info(
+                                                "[ae2addon][settle][probe] cell 包装={} 内层={}",
+                                                cls, inner);
+                                    }
+                                }
+                            }
                             // 模拟试插确认拒绝源
                             long sim = networkStorage.insert(key, amount,
                                     appeng.api.config.Actionable.SIMULATE, cluster.getSrc());
