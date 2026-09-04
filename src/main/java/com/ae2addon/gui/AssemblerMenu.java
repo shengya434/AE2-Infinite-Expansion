@@ -68,7 +68,9 @@ public class AssemblerMenu extends AbstractContainerMenu {
                 addSlot(new Slot(pageContainer, i, SLOT_X0 + col * 18, SLOT_Y0 + row * 18) {
                     @Override
                     public boolean mayPlace(ItemStack stack) {
-                        return !stack.isEmpty();
+                        // 只接受合成类样板（crafting pattern）
+                        net.minecraft.world.level.Level lvl = core.getLevel();
+                        return AssemblerCoreBE.isCraftingPatternItem(stack, lvl);
                     }
 
                     @Override

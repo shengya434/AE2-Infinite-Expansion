@@ -31,11 +31,10 @@ public class AssemblerScreen extends AbstractContainerScreen<AssemblerMenu> {
 
     @Override
     protected void renderBg(GuiGraphics graphics, float partialTick, int mouseX, int mouseY) {
-        // 背景
-        graphics.blit(BG, leftPos, topPos, 0, 0, imageWidth, 84);
-        graphics.blit(BG, leftPos, topPos + 84, 0, 126, imageWidth, 96);
+        // 简洁暗色背景（2026-09-04 sensei：背景图删掉）
+        graphics.fill(leftPos, topPos, leftPos + imageWidth, topPos + imageHeight, 0xFF2A2A2A);
 
-        // 样板槽格子底色（9×5，起于 (8,30)）
+        // 样板槽格底色（9×5，起于 (8,30)）
         graphics.fill(leftPos + 7, topPos + 29,
                 leftPos + 7 + 9 * 18 + 2, topPos + 29 + 5 * 18 + 2, 0xFF8B8B8B);
         for (int row = 0; row < 5; row++) {
@@ -88,8 +87,8 @@ public class AssemblerScreen extends AbstractContainerScreen<AssemblerMenu> {
 
     @Override
     protected void renderLabels(GuiGraphics graphics, int mouseX, int mouseY) {
-        graphics.drawString(font, title, titleLabelX, 6, 0x404040, false);
+        graphics.drawString(font, title, titleLabelX, 6, 0xFFFFFF, false);
         graphics.drawString(font, playerInventoryTitle,
-                inventoryLabelX, this.imageHeight - 92, 0x404040, false);
+                inventoryLabelX, this.imageHeight - 92, 0xA0A0A0, false);
     }
 }

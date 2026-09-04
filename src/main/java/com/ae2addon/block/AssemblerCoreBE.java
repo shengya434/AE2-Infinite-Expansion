@@ -153,6 +153,23 @@ public class AssemblerCoreBE extends CraftingBlockEntity
         return index >= 0 && index < patterns.size() ? patterns.get(index) : ItemStack.EMPTY;
     }
 
+    /** 槽位是否只接受合成类样板（crafting pattern）：处理样板/普通物品一律拒绝
+     *  （装配处理器只虚拟结算合成类；2026-09-04 sensei 反馈「没阻止放入」）。 */
+    public static boolean isCraftingPatternItem(ItemStack stack, Level level) {
+        if (stack == null || stack.isEmpty() || level == null) {
+            return false;
+        }
+        try {
+            var details = PatternDetailsHelper.decodePattern(stack, level);
+            if (details == null) {
+                return false;
+            }
+            return details.getClass().getName().endsWith("AECraftingPattern");
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     /** 放样板（编码后的 pattern 物品）；index 越界/物品非法直接忽略。 */
     public void setSlot(int index, ItemStack stack) {
         if (index < 0 || index >= TOTAL_SLOTS) {
@@ -323,7 +340,7 @@ public class AssemblerCoreBE extends CraftingBlockEntity
 
                 @Override
                 public boolean isItemValid(int slot, ItemStack stack) {
-                    return !stack.isEmpty();
+                    return isCraftingPatternItem(stack, getLevel());
                 }
             };
 
