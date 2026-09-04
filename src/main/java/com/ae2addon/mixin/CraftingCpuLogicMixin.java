@@ -402,6 +402,11 @@ public abstract class CraftingCpuLogicMixin {
             require = 0)
     private boolean ae2addon$limitTaskIteration(Iterator<?> iterator) {
         com.ae2addon.crafting.CraftingCompat.timeSliceActive = true;
+        // 虚拟结算产物回收：settle 返回 true 后外层已完成 waitingFor 记账，此刻回收
+        // （insert 需 waitingFor 有记账才冲抵；根产物 finishJob 置 job=null → 下面终止迭代）
+        if (ae2addon$pendingSettle != null && !ae2addon$pendingSettle.isEmpty()) {
+            ae2addon$flushPendingSettle();
+        }
         // 虚拟结算根产物 finishJob 后 job 已置 null：终止任务迭代防 NPE
         if (ae2addon$settleStopIteration) {
             ae2addon$settleStopIteration = false;
@@ -770,6 +775,14 @@ public abstract class CraftingCpuLogicMixin {
     @Unique
     private boolean ae2addon$settleStopIteration;
 
+    /**
+     * 待回收产物（key→量）：settle 返回 true 后外层才把产物记入 waitingFor；
+     * insert 只在 waitingFor 有记账时冲抵（字节码 2026-09-04 确认），所以产物回收
+     * 必须推迟到记账完成后——在任务循环 hasNext 处执行（此时记账已发生）。
+     */
+    @Unique
+    private KeyCounter ae2addon$pendingSettle;
+
     /** 判定：虚拟结算开关 && 合成类样板 && 集成 CPU（M1 宿主；原版 CPU 不受影响）。 */
     @Unique
     private boolean ae2addon$virtualSettleActive(IPatternDetails patternDetails) {
@@ -781,13 +794,10 @@ public abstract class CraftingCpuLogicMixin {
 
     /**
      * 虚拟结算：不真实装配（跳过 provider.pushPattern），材料已由 extract 阶段扣出
-     * （= 销毁），产物走原版 insert 回收通道瞬时注入。
-     * <p>
-     * insert 自动分流（AE2 原版逻辑，2026-09-04 字节码确认）：
+     * （= 销毁）。产物登记到 pendingSettle，返回 true 让外层记账（waitingFor += 产物），
+     * 待任务循环 hasNext 处（记账后）调原版 insert 回收：
      * - 根产物（finalOutput 匹配）→ CraftingLink 送达请求者 + remainingAmount 归零 + finishJob
      * - 中间产物 → crafting storage（inventory），上游节点 extract 直接命中
-     * <p>
-     * 返回 true = 外层照常记账（waitingFor 残留无害，finishJob 时清空）并 break provider 循环。
      * 每次结算 1×（合成类样板现强制 1×；N× 快速结算在 M1c 接入）。
      */
     @Unique
@@ -797,25 +807,25 @@ public abstract class CraftingCpuLogicMixin {
             if (outputs == null || outputs.length == 0) {
                 return false;
             }
+            KeyCounter pending = ae2addon$pendingSettle;
+            if (pending == null) {
+                pending = new KeyCounter();
+                ae2addon$pendingSettle = pending;
+            }
             boolean settledAny = false;
-            var logic = cluster.craftingLogic;
             for (var out : outputs) {
                 if (out == null || out.what() == null || out.amount() <= 0) {
                     continue;
                 }
                 settledAny = true;
-                logic.insert(out.what(), out.amount(), appeng.api.config.Actionable.MODULATE);
+                pending.add(out.what(), out.amount());
             }
             if (!settledAny) {
                 return false;
             }
-            // 根产物 insert 触发 finishJob → job 置 null：终止本 tick 任务迭代，防外层 NPE
-            if (ae2addon$getJob() == null) {
-                ae2addon$settleStopIteration = true;
-            }
             if (CraftingCompat.debugLogs) {
                 AE2Addon.LOGGER.info(
-                        "[ae2addon][settle] 虚拟结算: pattern={} 产物{}种 → 已注入 CPU（材料已销毁）",
+                        "[ae2addon][settle] 虚拟结算: pattern={} 产物{}种 → 待回收（外层记账后 insert）",
                         patternDetails.getClass().getSimpleName(), outputs.length);
             }
             return true;
@@ -824,6 +834,35 @@ public abstract class CraftingCpuLogicMixin {
                 AE2Addon.LOGGER.warn("[ae2addon][settle] 虚拟结算异常: {}", t.toString());
             }
             return false;
+        }
+    }
+
+    /** 记账后回收 pendingSettle 产物（须在任务循环 hasNext 处调用：此时外层已记账）。 */
+    @Unique
+    private void ae2addon$flushPendingSettle() {
+        KeyCounter pending = ae2addon$pendingSettle;
+        if (pending == null || pending.isEmpty()) {
+            return;
+        }
+        ae2addon$pendingSettle = null;
+        try {
+            var logic = cluster.craftingLogic;
+            for (var entry : pending) {
+                if (entry == null || entry.getKey() == null || entry.getLongValue() <= 0) {
+                    continue;
+                }
+                // 原版回收通道：waitingFor 冲抵 + 根产物→link/finishJob / 中间产物→crafting storage
+                logic.insert(entry.getKey(), entry.getLongValue(),
+                        appeng.api.config.Actionable.MODULATE);
+            }
+            // 根产物 insert 触发 finishJob → job 置 null：终止本 tick 任务迭代，防外层 NPE
+            if (ae2addon$getJob() == null) {
+                ae2addon$settleStopIteration = true;
+            }
+        } catch (Throwable t) {
+            if (CraftingCompat.debugLogs) {
+                AE2Addon.LOGGER.warn("[ae2addon][settle] 产物回收异常: {}", t.toString());
+            }
         }
     }
 
