@@ -142,6 +142,13 @@ public class AssemblerMenu extends AbstractContainerMenu {
                     core.setSlot(base + i, pageContainer.getItem(i));
                 }
             }
+            if (dirty && com.ae2addon.crafting.CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[assembler][menu] broadcastChanges 写回: page={} dirty=true 槽0={} core槽0={}",
+                        core.getPage(),
+                        pageContainer.getItem(0).getHoverName().getString(),
+                        core.getSlot(base).getHoverName().getString());
+            }
             if (dirty) {
                 core.onPatternsChanged();
             }
@@ -150,6 +157,20 @@ public class AssemblerMenu extends AbstractContainerMenu {
             }
         }
         super.broadcastChanges();
+    }
+
+    @Override
+    public void clicked(int slotId, int dragType, net.minecraft.world.inventory.ClickType clickType,
+            Player player) {
+        if (!clientSide && com.ae2addon.crafting.CraftingCompat.debugLogs) {
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[assembler][menu] clicked slotId={} dragType={} type={} page={} carried={} 槽内={}",
+                    slotId, dragType, clickType, core.getPage(),
+                    getCarried().getHoverName().getString(),
+                    (slotId >= 0 && slotId < slots.size())
+                            ? slots.get(slotId).getItem().getHoverName().getString() : "-");
+        }
+        super.clicked(slotId, dragType, clickType, player);
     }
 
     @Override
