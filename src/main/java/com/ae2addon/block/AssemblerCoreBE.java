@@ -158,6 +158,18 @@ public class AssemblerCoreBE extends CraftingBlockEntity
         if (index < 0 || index >= TOTAL_SLOTS) {
             return;
         }
+        if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+            // 诊断：谁在写样板槽（2026-09-04 GUI 吞样板排查）
+            StackTraceElement[] st = Thread.currentThread().getStackTrace();
+            String caller = st.length > 2 ? st[2].toString() : "?";
+            String caller2 = st.length > 3 ? st[3].toString() : "?";
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[assembler][core] setSlot idx={} 物品={} 调用者={} <- {}",
+                    index,
+                    (stack == null || stack.isEmpty()) ? "空气"
+                            : stack.getHoverName().getString(),
+                    caller, caller2);
+        }
         if (stack == null || stack.isEmpty()) {
             if (index < patterns.size()) {
                 patterns.set(index, ItemStack.EMPTY);
