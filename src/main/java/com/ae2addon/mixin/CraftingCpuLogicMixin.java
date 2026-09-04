@@ -796,17 +796,18 @@ public abstract class CraftingCpuLogicMixin {
     private KeyCounter ae2addon$pendingSettle;
 
     /**
-     * 判定（v0.3 M3 正式化）：仅限合成类样板（AECraftingPattern），且簇内含装配
-     * 处理器核心并声明了该样板（样板槽白名单）才虚拟结算。全局开关已删除——
-     * 集成 CPU/原版 CPU 的合成一律真实执行（2026-09-04 sensei 决策）。
+     * 判定（v0.3 M3）：仅限合成类样板（AECraftingPattern）；且当前 CPU 簇的
+     * 集成 CPU（主簇或虚拟 lane）挂了装配处理器模块并声明了该样板（样板槽白名单）
+     * 才虚拟结算。无模块/未声明 → 一律真实合成。
      */
     @Unique
     private boolean ae2addon$virtualSettleActive(IPatternDetails patternDetails) {
         if (patternDetails == null || !ae2addon$isCraftingPattern(patternDetails)) {
             return false;
         }
-        var assemblerCore = com.ae2addon.block.AssemblerRegistry.coreIn(cluster);
-        return assemblerCore != null && assemblerCore.declares(patternDetails);
+        var owner = com.ae2addon.block.IntegratedCPURegistry.ownerOf(cluster);
+        var module = com.ae2addon.block.AssemblerRegistry.moduleFor(owner);
+        return module != null && module.declares(patternDetails);
     }
 
     /**

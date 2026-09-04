@@ -8,6 +8,7 @@ import appeng.api.stacks.GenericStack;
 import appeng.api.stacks.KeyCounter;
 import appeng.api.util.AECableType;
 import appeng.blockentity.crafting.CraftingBlockEntity;
+import appeng.me.cluster.implementations.CraftingCPUCluster;
 import appeng.api.crafting.PatternDetailsHelper;
 import com.ae2addon.init.ModBlockEntities;
 import net.minecraft.core.BlockPos;
@@ -27,19 +28,19 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 无限级装配处理器·核心（v0.3 M3，2026-09-04）。
+ * 无限级装配处理器·模块（v0.3 M3，2026-09-04）。
  * <p>
- * AE2 原版 crafting-unit 型核心：与普通 crafting unit/集成 CPU 拼成多方块簇
- * （3×3×3 框架+核心，簇成型由 AE2 原版 CraftingCPUCluster 机制自动完成）。
- * <p>
- * 职责：
- * - 作为合成 CPU 提供无限存储（显示值 cpuDisplayBytes），承接合成类订单
+ * sensei 决策：不做独立合成单元，作为<b>集成 CPU 的拓展模块</b>——
+ * crafting-unit 型方块贴入集成 CPU 簇（与 IntegratedCPUBE 同簇）即生效：
+ * - 存储贡献 0（不干扰集成 CPU 的无限存储语义；同簇多块也不会溢出）
  * - 样板槽 5×9×200（9000 格）：声明「可虚拟结算的合成样板」白名单
- * - 簇内 CPU 的 executeCrafting 遇白名单合成样板 → CraftingCpuLogicMixin 虚拟结算
- *   （材料销毁、产物瞬时注入），不再需要分子装配室
- * - 实现 ICraftingProvider 报告样板 → 纯装配处理器网络（无 MA）也能触发结算
+ * - 集成 CPU（主簇/虚拟 lane）执行合成时遇白名单合成样板 →
+ *   CraftingCpuLogicMixin 虚拟结算（材料销毁、产物瞬时注入）
+ * - 实现 PatternContainer：样板管理终端可直接访问样板槽
+ * - 单独放置（无集成 CPU 簇）→ 模块不激活，仅样板槽管理界面可用
  */
-public class AssemblerCoreBE extends CraftingBlockEntity implements ICraftingProvider {
+public class AssemblerCoreBE extends CraftingBlockEntity
+        implements ICraftingProvider, appeng.helpers.patternprovider.PatternContainer {
 
     /** 样板槽规格（sensei 定稿）：5×9 每页 × 200 页。 */
     public static final int SLOT_COLS = 5;
@@ -53,6 +54,9 @@ public class AssemblerCoreBE extends CraftingBlockEntity implements ICraftingPro
 
     /** 当前 GUI 页（0..PAGES-1）。 */
     private int page;
+
+    /** 所属集成 CPU（模块贴入集成 CPU 簇后由 updateStatus 记录；null=未激活）。 */
+    private IntegratedCPUBE ownerCPU;
 
     // ── 白名单/样板缓存（槽位变化时失效重建）──
 
@@ -70,6 +74,28 @@ public class AssemblerCoreBE extends CraftingBlockEntity implements ICraftingPro
     public void onReady() {
         super.onReady();
         AssemblerRegistry.register(this);
+        refreshOwner();
+    }
+
+    /** 簇状态变化（成型/拆毁/重组）时刷新所属集成 CPU。 */
+    @Override
+    public void updateStatus(CraftingCPUCluster c) {
+        super.updateStatus(c);
+        refreshOwner();
+    }
+
+    /** 记录所属集成 CPU（本模块簇的 owner；owner 覆盖其全部虚拟 lane）。 */
+    private void refreshOwner() {
+        IntegratedCPUBE owner = null;
+        var myCluster = getCluster();
+        if (myCluster != null && !myCluster.isDestroyed()) {
+            owner = IntegratedCPURegistry.ownerOf(myCluster);
+        }
+        this.ownerCPU = owner;
+    }
+
+    public IntegratedCPUBE getOwnerCPU() {
+        return ownerCPU;
     }
 
     @Override
@@ -97,12 +123,9 @@ public class AssemblerCoreBE extends CraftingBlockEntity implements ICraftingPro
 
     @Override
     public long getStorageBytes() {
-        // 不能返回 Long.MAX_VALUE：CraftingCPUCluster 累加各块 getStorageBytes，
-        // 与集成 CPU（Long.MAX）或另一个装配处理器同簇时相加溢出为负（2026-09-04
-        // sensei 实测「负数字节 CPU」）。MAX/8 ≈ 1.15e18 字节：与 7 个同值块或集成
-        // CPU 同簇都不溢出，容量远超任何实际订单（含 Long.MAX 级巨型订单按物品数
-        // 结算，不受字节容量限制）。CPU 显示用 ∞ 覆盖（cpuStorageText）。
-        return isFormed() ? Long.MAX_VALUE / 8 : 0;
+        // 模块不贡献存储：存储由集成 CPU 提供（返回 0 避免多块累加溢出，
+        // 2026-09-04 sensei 实测「负数字节 CPU」）
+        return 0;
     }
 
     @Override
@@ -237,6 +260,65 @@ public class AssemblerCoreBE extends CraftingBlockEntity implements ICraftingPro
 
     private record Cache(List<appeng.api.crafting.IPatternDetails> details, Set<AEKey> declared) {
     }
+
+    // ── PatternContainer（样板管理终端兼容，2026-09-04 sensei：终端可访问样板槽）──
+    // 终端窗口 = 当前 GUI 页 45 格（服务端 page 状态驱动；翻页在方块 GUI 操作）。
+
+    @Override
+    public appeng.api.networking.IGrid getGrid() {
+        return getMainNode().getGrid();
+    }
+
+    @Override
+    public appeng.api.inventories.InternalInventory getTerminalPatternInventory() {
+        return terminalPatternInv;
+    }
+
+    @Override
+    public appeng.api.implementations.blockentities.PatternContainerGroup getTerminalGroup() {
+        return new appeng.api.implementations.blockentities.PatternContainerGroup(
+                appeng.api.stacks.AEItemKey.of(
+                        com.ae2addon.init.ModBlocks.ASSEMBLER_CORE.get()),
+                net.minecraft.network.chat.Component.translatable(
+                        getBlockState().getBlock().getDescriptionId()),
+                java.util.List.of());
+    }
+
+    /** 终端适配：读写当前 GUI 页 45 格（直接操作 List，与 GUI 同源不吞样板）。 */
+    private final appeng.api.inventories.InternalInventory terminalPatternInv =
+            new appeng.api.inventories.InternalInventory() {
+                @Override
+                public int size() {
+                    return PAGE_SIZE;
+                }
+
+                @Override
+                public ItemStack getStackInSlot(int slot) {
+                    if (slot < 0 || slot >= PAGE_SIZE) {
+                        return ItemStack.EMPTY;
+                    }
+                    return getSlot(page * PAGE_SIZE + slot);
+                }
+
+                @Override
+                public void setItemDirect(int slot, ItemStack stack) {
+                    if (slot < 0 || slot >= PAGE_SIZE) {
+                        return;
+                    }
+                    setSlot(page * PAGE_SIZE + slot, stack);
+                    onPatternsChanged();
+                }
+
+                @Override
+                public int getSlotLimit(int slot) {
+                    return 1;
+                }
+
+                @Override
+                public boolean isItemValid(int slot, ItemStack stack) {
+                    return !stack.isEmpty();
+                }
+            };
 
     // ── NBT ──
 
