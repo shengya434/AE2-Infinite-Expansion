@@ -918,60 +918,13 @@ public abstract class CraftingCpuLogicMixin {
                 boolean isRoot = rootKey != null && rootKey.equals(key);
                 if (isRoot && networkStorage != null) {
                     // 物理入网：requester（接口/终端）交割时从网络提取产物
-                    long leftover = networkStorage.insert(key, amount,
+                    // ⚠️ AE2 insert 返回「已插入量」（非剩余量）——2026-09-04 20:40 修正误报
+                    long insertedAmt = networkStorage.insert(key, amount,
                             appeng.api.config.Actionable.MODULATE, cluster.getSrc());
-                    if (leftover > 0 && CraftingCompat.debugLogs) {
+                    if (insertedAmt < amount && CraftingCompat.debugLogs) {
                         AE2Addon.LOGGER.warn(
-                                "[ae2addon][settle] 根产物入网未全部成功: key={} 剩{}（网络满？）",
-                                key, leftover);
-                        // 探针：NetworkStorage.mountsInUse 状态（嵌套遍历时会拒插）
-                        try {
-                            var svc = grid.getStorageService();
-                            var storageF = svc.getClass().getDeclaredField("storage");
-                            storageF.setAccessible(true);
-                            Object ns = storageF.get(svc);
-                            var mF = ns.getClass().getDeclaredField("mountsInUse");
-                            mF.setAccessible(true);
-                            AE2Addon.LOGGER.info("[ae2addon][settle][probe] NetworkStorage.mountsInUse={}",
-                                    mF.getBoolean(ns));
-                            // 探针：每个 DriveWatcher 内实际 cell 类型（创造元件=只读会拒插）
-                            var piF2 = ns.getClass().getDeclaredField("priorityInventory");
-                            piF2.setAccessible(true);
-                            Object pi2 = piF2.get(ns);
-                            if (pi2 instanceof java.util.Map<?, ?> map2) {
-                                for (Object e : map2.values()) {
-                                    if (!(e instanceof java.util.List<?> list2)) {
-                                        continue;
-                                    }
-                                    for (Object cell : list2) {
-                                        if (cell == null) {
-                                            continue;
-                                        }
-                                        String cls = cell.getClass().getName();
-                                        String inner = cls;
-                                        try {
-                                            var gm = cell.getClass().getMethod("getCell");
-                                            Object c = gm.invoke(cell);
-                                            inner = c == null ? "null"
-                                                    : c.getClass().getName();
-                                        } catch (Throwable ignored) {
-                                        }
-                                        AE2Addon.LOGGER.info(
-                                                "[ae2addon][settle][probe] cell 包装={} 内层={}",
-                                                cls, inner);
-                                    }
-                                }
-                            }
-                            // 模拟试插确认拒绝源
-                            long sim = networkStorage.insert(key, amount,
-                                    appeng.api.config.Actionable.SIMULATE, cluster.getSrc());
-                            AE2Addon.LOGGER.info(
-                                    "[ae2addon][settle][probe] SIMULATE 试插 key={} 剩={}（0=可插/全拒=网络层拒绝）",
-                                    key, sim);
-                        } catch (Throwable t) {
-                            AE2Addon.LOGGER.warn("[ae2addon][settle][probe] mountsInUse 探针失败: {}",
-                                    t.toString());
-                        }
+                                "[ae2addon][settle] 根产物入网部分失败: key={} 已插{} 期望{}（网络满？）",
+                                key, insertedAmt, amount);
                     }
                 }
                 // 账务：waitingFor 冲抵 + 根产物→link 交割/finishJob；中间产物→crafting storage
