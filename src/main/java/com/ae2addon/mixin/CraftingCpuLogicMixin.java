@@ -877,20 +877,27 @@ public abstract class CraftingCpuLogicMixin {
                         var piF = ns.getClass().getDeclaredField("priorityInventory");
                         piF.setAccessible(true);
                         Object pi = piF.get(ns);
-                        java.util.Collection<?> entries = (java.util.Collection<?>) pi;
                         StringBuilder cells = new StringBuilder();
                         int total = 0;
-                        for (Object e : entries) {
-                            for (Object cell : (java.util.List<?>) e) {
-                                total++;
-                                if (cells.length() < 300) {
-                                    cells.append(cell.getClass().getSimpleName()).append(',');
+                        if (pi instanceof java.util.Map<?, ?> map) {
+                            for (Object e : map.values()) {
+                                if (!(e instanceof java.util.List<?> list)) {
+                                    continue;
+                                }
+                                for (Object cell : list) {
+                                    total++;
+                                    if (cells.length() < 300) {
+                                        cells.append(cell.getClass().getSimpleName()).append(',');
+                                    }
                                 }
                             }
+                        } else {
+                            cells.append(pi == null ? "null" : pi.getClass().getName());
                         }
                         AE2Addon.LOGGER.info(
                                 "[ae2addon][settle][probe] NetworkStorage mounts={} cells={}",
-                                entries.size(), cells.length() == 0 ? "(空!)" : cells.toString());
+                                pi instanceof java.util.Map<?, ?> map ? map.size() : -1,
+                                cells.length() == 0 ? "(空!)" : cells.toString());
                         if (total == 0) {
                             AE2Addon.LOGGER.warn(
                                     "[ae2addon][settle][probe] ★ 网络无可写存储 cell —— insert 必然全拒！");
