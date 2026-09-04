@@ -5,6 +5,7 @@ import com.ae2addon.block.InfiniteCraftingStorageBE;
 import com.ae2addon.block.InfiniteCoProcessingBE;
 import com.ae2addon.block.InfiniteInterfaceBE;
 import com.ae2addon.block.IntegratedCPUBE;
+import com.ae2addon.block.AssemblerCoreBE;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
@@ -50,5 +51,14 @@ public class ModBlockEntities {
                     () -> BlockEntityType.Builder.of(
                             InfiniteInterfaceBE::new,
                             ModBlocks.INFINITE_INTERFACE.get()
+                    ).build(null));
+
+    // ── 无限级装配处理器（v0.3 M3）──
+
+    public static final RegistryObject<BlockEntityType<AssemblerCoreBE>> ASSEMBLER_CORE =
+            BLOCK_ENTITIES.register("assembler_core",
+                    () -> BlockEntityType.Builder.of(
+                            AssemblerCoreBE::new,
+                            ModBlocks.ASSEMBLER_CORE.get()
                     ).build(null));
 }

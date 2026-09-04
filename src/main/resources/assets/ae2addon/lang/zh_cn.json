@@ -179,5 +179,7 @@
   "ae2addon.jade.group.fluids": "§b流体",
   "ae2addon.jade.group.chems": "§d化学",
   "ae2addon.jade.group.others": "§7其他",
-  "ae2addon.jade.more": "§7…等 %s 种"
+  "ae2addon.jade.more": "§7…等 %s 种",
+  "block.ae2addon.assembler_core": "无限级装配处理器·核心",
+  "gui.ae2addon.assembler.title": "装配处理器样板"
 }

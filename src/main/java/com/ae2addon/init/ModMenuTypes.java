@@ -3,6 +3,7 @@ package com.ae2addon.init;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.gui.InfiniteInterfaceMenu;
 import com.ae2addon.gui.IntegratedCPUMenu;
+import com.ae2addon.gui.AssemblerMenu;
 import com.ae2addon.gui.Mode2ConfigMenu;
 import com.ae2addon.gui.ModeSelectMenu;
 import net.minecraft.core.registries.Registries;
@@ -38,5 +39,10 @@ public class ModMenuTypes {
     public static final RegistryObject<MenuType<InfiniteInterfaceMenu>> INFINITE_INTERFACE =
             MENUS.register("infinite_interface",
                     () -> IForgeMenuType.create(InfiniteInterfaceMenu::fromNetwork));
+
+    // 装配处理器样板槽界面（v0.3 M3）
+    public static final RegistryObject<MenuType<AssemblerMenu>> ASSEMBLER =
+            MENUS.register("assembler",
+                    () -> IForgeMenuType.create(AssemblerMenu::fromNetwork));
 
 }

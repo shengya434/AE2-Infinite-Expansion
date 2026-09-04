@@ -179,5 +179,7 @@
   "ae2addon.jade.group.fluids": "§bFluids",
   "ae2addon.jade.group.chems": "§dChemicals",
   "ae2addon.jade.group.others": "§7Others",
-  "ae2addon.jade.more": "§7… and %s more"
+  "ae2addon.jade.more": "§7… and %s more",
+  "block.ae2addon.assembler_core": "Infinite Assembly Processor Core",
+  "gui.ae2addon.assembler.title": "Assembly Processor Patterns"
 }

@@ -67,6 +67,12 @@ public class ModItems {
             () -> new BlockItem(ModBlocks.INFINITE_INTERFACE.get(), new Item.Properties())
     );
 
+    /** 装配处理器核心方块物品（v0.3 M3） */
+    public static final RegistryObject<Item> ASSEMBLER_CORE_ITEM = ITEMS.register(
+            "assembler_core",
+            () -> new BlockItem(ModBlocks.ASSEMBLER_CORE.get(), new Item.Properties())
+    );
+
     /** ME接口（无限级）· 线缆面板（part，2026-09-02 sensei：装线缆上喂机器，不占格） */
     public static final RegistryObject<Item> INFINITE_INTERFACE_PANEL_ITEM = ITEMS.register(
             "infinite_interface_panel",
