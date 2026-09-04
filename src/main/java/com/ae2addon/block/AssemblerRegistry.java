@@ -37,6 +37,10 @@ public final class AssemblerRegistry {
             if (core.isRemoved() || !core.isFormed()) {
                 continue;
             }
+            if (core.getOwnerCPU() == null) {
+                // 惰性重试关联（网格就绪延迟/簇重组后 owner 未刷新的兜底，2026-09-04）
+                core.refreshOwnerNow();
+            }
             if (core.getOwnerCPU() == owner) {
                 return core;
             }

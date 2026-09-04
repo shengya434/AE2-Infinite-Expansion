@@ -84,14 +84,43 @@ public class AssemblerCoreBE extends CraftingBlockEntity
         refreshOwner();
     }
 
-    /** 记录所属集成 CPU（本模块簇的 owner；owner 覆盖其全部虚拟 lane）。 */
+    /** 记录所属集成 CPU（模块簇的 owner 优先；同网格兜底——2026-09-04 修复：
+     *  模块与集成 CPU 不必同 crafting unit 簇，接入同一网络即关联为拓展模块）。 */
     private void refreshOwner() {
         IntegratedCPUBE owner = null;
         var myCluster = getCluster();
         if (myCluster != null && !myCluster.isDestroyed()) {
             owner = IntegratedCPURegistry.ownerOf(myCluster);
         }
+        if (owner == null) {
+            // 同簇未命中 → 同网格：遍历集成 CPU，找同一 grid 的（一般就一个）
+            try {
+                var myGrid = getMainNode() == null ? null : getMainNode().getGrid();
+                if (myGrid != null) {
+                    for (IntegratedCPUBE cpu : IntegratedCPURegistry.all()) {
+                        if (cpu.isRemoved()) {
+                            continue;
+                        }
+                        var cpuGrid = cpu.getMainNode() == null ? null
+                                : cpu.getMainNode().getGrid();
+                        if (cpuGrid == myGrid) {
+                            owner = cpu;
+                            break;
+                        }
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // 网格未就绪：保持 null，下次查询再试
+            }
+        }
         this.ownerCPU = owner;
+    }
+
+    /** 外部（AssemblerRegistry.moduleFor）触发的惰性刷新：owner 未建立时重试。 */
+    public void refreshOwnerNow() {
+        if (ownerCPU == null && isFormed()) {
+            refreshOwner();
+        }
     }
 
     public IntegratedCPUBE getOwnerCPU() {
