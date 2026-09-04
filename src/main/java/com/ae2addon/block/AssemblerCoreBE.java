@@ -164,7 +164,16 @@ public class AssemblerCoreBE extends CraftingBlockEntity
 
     @Override
     public AECableType getCableConnectionType(Direction dir) {
-        return isFormed() ? super.getCableConnectionType(dir) : AECableType.NONE;
+        // 模块放置即接网：不依赖 crafting unit 成型（2026-09-04 sensei：贴其他
+        // CPU/线缆也要能接入网络——作为集成 CPU 网络内的拓展模块）
+        return super.getCableConnectionType(dir);
+    }
+
+    @Override
+    public java.util.Set<Direction> getGridConnectableSides(
+            appeng.api.orientation.BlockOrientation orientation) {
+        // 恒 6 面可连（原版按成型裁剪：未成型 noneOf → 无法接网）
+        return java.util.EnumSet.allOf(Direction.class);
     }
 
     // ── 样板槽访问（GUI 用）──

@@ -86,6 +86,14 @@ public class AssemblerScreen extends AbstractContainerScreen<AssemblerMenu> {
     }
 
     @Override
+    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        super.render(g, mouseX, mouseY, partialTick);
+        // 2026-09-04（抄 InfiniteInterfaceScreen 经验）：1.20.1 render() 链不调用
+        // renderTooltip（反编译 0 调用点），显式补调才有悬浮提示（重复画无害）
+        renderTooltip(g, mouseX, mouseY);
+    }
+
+    @Override
     protected void renderLabels(GuiGraphics graphics, int mouseX, int mouseY) {
         graphics.drawString(font, title, titleLabelX, 6, 0xFFFFFF, false);
         graphics.drawString(font, playerInventoryTitle,
