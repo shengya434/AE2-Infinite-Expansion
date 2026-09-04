@@ -32,6 +32,9 @@ public class AssemblerMenu extends AbstractContainerMenu {
     /** 当前页窗口容器（45 槽）：服务端广播前从 core 重载，客户端渲染/拖拽走它。
      *  直连 core 的 PatternSlot 在客户端会读 stale 页 + 广播回写错位（2026-09-04）。 */
     private final SimpleContainer pageContainer = new SimpleContainer(AssemblerCoreBE.PAGE_SIZE);
+    /** 首次同步标志：打开瞬间窗口为空，必须先加载再允许写回
+     *  （否则空窗口会把 core 里已有样板清掉——2026-09-04 吞样板真凶）。 */
+    private boolean windowInitialized;
 
     // 槽区几何
     private static final int COLS = 9;
@@ -132,26 +135,31 @@ public class AssemblerMenu extends AbstractContainerMenu {
     @Override
     public void broadcastChanges() {
         if (!clientSide) {
-            // 服务端权威同步：先把玩家可能改动的窗口内容写回 core（落盘），
-            // 再从 core 当前页重载窗口（翻页/落盘后内容一致），随后 super 广播。
+            // 服务端权威同步。顺序关键（2026-09-04 吞样板真凶）：
+            // 首次 broadcast 只加载（core → 窗口），绝不写回——新菜单窗口是空的，
+            // 写回会把 core 里已有样板清掉。首次加载后每 tick：先写回玩家改动
+            // （窗口 → core 落盘）再重载（core → 窗口），随后 super 广播。
             int base = core.getPage() * AssemblerCoreBE.PAGE_SIZE;
-            boolean dirty = false;
-            for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
-                if (!ItemStack.matches(core.getSlot(base + i), pageContainer.getItem(i))) {
-                    dirty = true;
-                    core.setSlot(base + i, pageContainer.getItem(i));
+            if (windowInitialized) {
+                boolean dirty = false;
+                for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
+                    if (!ItemStack.matches(core.getSlot(base + i), pageContainer.getItem(i))) {
+                        dirty = true;
+                        core.setSlot(base + i, pageContainer.getItem(i));
+                    }
+                }
+                if (dirty && com.ae2addon.crafting.CraftingCompat.debugLogs) {
+                    com.ae2addon.AE2Addon.LOGGER.info(
+                            "[assembler][menu] broadcastChanges 写回: page={} dirty=true 槽0={} core槽0={}",
+                            core.getPage(),
+                            pageContainer.getItem(0).getHoverName().getString(),
+                            core.getSlot(base).getHoverName().getString());
+                }
+                if (dirty) {
+                    core.onPatternsChanged();
                 }
             }
-            if (dirty && com.ae2addon.crafting.CraftingCompat.debugLogs) {
-                com.ae2addon.AE2Addon.LOGGER.info(
-                        "[assembler][menu] broadcastChanges 写回: page={} dirty=true 槽0={} core槽0={}",
-                        core.getPage(),
-                        pageContainer.getItem(0).getHoverName().getString(),
-                        core.getSlot(base).getHoverName().getString());
-            }
-            if (dirty) {
-                core.onPatternsChanged();
-            }
+            windowInitialized = true;
             for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
                 pageContainer.setItem(i, core.getSlot(base + i));
             }
@@ -175,8 +183,9 @@ public class AssemblerMenu extends AbstractContainerMenu {
 
     @Override
     public void removed(Player player) {
-        // 关闭前最后落盘一次（broadcastChanges 可能未覆盖最后改动）
-        if (!clientSide) {
+        // 关闭前落盘：窗口内容写回 core（玩家最后改动）。若从未 broadcast（秒开秒关）
+        // 窗口未加载——跳过写回，防空窗口清库（同 broadcastChanges 首帧逻辑）。
+        if (!clientSide && windowInitialized) {
             int base = core.getPage() * AssemblerCoreBE.PAGE_SIZE;
             boolean dirty = false;
             for (int i = 0; i < AssemblerCoreBE.PAGE_SIZE; i++) {
