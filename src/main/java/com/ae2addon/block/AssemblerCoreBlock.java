@@ -6,6 +6,7 @@ import appeng.block.AEBaseEntityBlock;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
@@ -57,5 +58,15 @@ public class AssemblerCoreBlock extends CraftingUnitBlock {
             return InteractionResult.SUCCESS;
         }
         return super.use(state, level, pos, player, hand, hit);
+    }
+
+    /**
+     * 直接 new BE：基类 newBlockEntity 依赖 blockEntityType 字段（AE2 只给自己的
+     * 方块注入），第三方方块不 override 会 NPE（2026-09-04 放置崩溃实锤；
+     * 同 InfiniteInterfaceBlock 做法）。
+     */
+    @Override
+    public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
+        return new AssemblerCoreBE(pos, state);
     }
 }
