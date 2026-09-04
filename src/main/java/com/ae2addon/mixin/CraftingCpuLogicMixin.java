@@ -4,6 +4,7 @@ import appeng.api.crafting.IPatternDetails;
 import appeng.api.networking.crafting.ICraftingProvider;
 import appeng.api.networking.energy.IEnergyService;
 import appeng.api.stacks.AEKey;
+import appeng.api.stacks.GenericStack;
 import appeng.api.stacks.KeyCounter;
 import appeng.crafting.execution.CraftingCpuHelper;
 import appeng.crafting.execution.CraftingCpuLogic;
@@ -837,7 +838,9 @@ public abstract class CraftingCpuLogicMixin {
         }
     }
 
-    /** 记账后回收 pendingSettle 产物（须在任务循环 hasNext 处调用：此时外层已记账）。 */
+    /** 记账后回收 pendingSettle 产物（须在任务循环 hasNext 处调用：此时外层已记账）。
+     *  根产物：先物理注入网络存储（真实 MA 路径产物进网后 requester 才提得到货），再走账务。
+     *  中间产物：仅账务 insert（进 crafting storage 供上层 extract）。 */
     @Unique
     private void ae2addon$flushPendingSettle() {
         KeyCounter pending = ae2addon$pendingSettle;
@@ -846,14 +849,29 @@ public abstract class CraftingCpuLogicMixin {
         }
         ae2addon$pendingSettle = null;
         try {
+            AEKey rootKey = ae2addon$getFinalOutputKey();
             var logic = cluster.craftingLogic;
+            var grid = cluster.getGrid();
+            var networkStorage = grid == null ? null : grid.getStorageService().getInventory();
             for (var entry : pending) {
                 if (entry == null || entry.getKey() == null || entry.getLongValue() <= 0) {
                     continue;
                 }
-                // 原版回收通道：waitingFor 冲抵 + 根产物→link/finishJob / 中间产物→crafting storage
-                logic.insert(entry.getKey(), entry.getLongValue(),
-                        appeng.api.config.Actionable.MODULATE);
+                AEKey key = entry.getKey();
+                long amount = entry.getLongValue();
+                boolean isRoot = rootKey != null && rootKey.equals(key);
+                if (isRoot && networkStorage != null) {
+                    // 物理入网：requester（接口/终端）交割时从网络提取产物
+                    long leftover = networkStorage.insert(key, amount,
+                            appeng.api.config.Actionable.MODULATE, cluster.getSrc());
+                    if (leftover > 0 && CraftingCompat.debugLogs) {
+                        AE2Addon.LOGGER.warn(
+                                "[ae2addon][settle] 根产物入网未全部成功: key={} 剩{}（网络满？）",
+                                key, leftover);
+                    }
+                }
+                // 账务：waitingFor 冲抵 + 根产物→link 交割/finishJob；中间产物→crafting storage
+                logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
             }
             // 根产物 insert 触发 finishJob → job 置 null：终止本 tick 任务迭代，防外层 NPE
             if (ae2addon$getJob() == null) {
@@ -863,6 +881,57 @@ public abstract class CraftingCpuLogicMixin {
             if (CraftingCompat.debugLogs) {
                 AE2Addon.LOGGER.warn("[ae2addon][settle] 产物回收异常: {}", t.toString());
             }
+        }
+    }
+
+    // finalOutput 反射字段缓存
+    @Unique
+    private static volatile java.lang.reflect.Field ae2addon$finalOutputField;
+    @Unique
+    private static volatile boolean ae2addon$finalOutputFieldFailed;
+
+    /** 任务树根产物的 key（无任务/失败返回 null）。 */
+    @Unique
+    private AEKey ae2addon$getFinalOutputKey() {
+        Object job = ae2addon$getJob();
+        if (job == null) {
+            return null;
+        }
+        try {
+            java.lang.reflect.Field field = ae2addon$finalOutputField;
+            if (field == null) {
+                if (ae2addon$finalOutputFieldFailed) {
+                    return null;
+                }
+                try {
+                    field = job.getClass().getDeclaredField("finalOutput");
+                } catch (NoSuchFieldException e) {
+                    field = null;
+                }
+                if (field == null) {
+                    // 类型兜底：唯一 GenericStack 类型字段
+                    for (java.lang.reflect.Field f : job.getClass().getDeclaredFields()) {
+                        if (GenericStack.class.isAssignableFrom(f.getType())) {
+                            field = f;
+                            break;
+                        }
+                    }
+                }
+                if (field == null) {
+                    ae2addon$finalOutputFieldFailed = true;
+                    return null;
+                }
+                field.setAccessible(true);
+                ae2addon$finalOutputField = field;
+            }
+            Object out = field.get(job);
+            if (!(out instanceof GenericStack gs) || gs.what() == null) {
+                return null;
+            }
+            return gs.what();
+        } catch (RuntimeException | ReflectiveOperationException e) {
+            ae2addon$finalOutputFieldFailed = true;
+            return null;
         }
     }
 
