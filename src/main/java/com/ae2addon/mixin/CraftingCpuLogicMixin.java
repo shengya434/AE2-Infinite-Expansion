@@ -890,10 +890,13 @@ public abstract class CraftingCpuLogicMixin {
                 }
                 // 账务：waitingFor 冲抵 + 根产物→link 交割/finishJob；中间产物→crafting storage
                 long accepted = logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
-                if (CraftingCompat.debugLogs && accepted != amount) {
-                    AE2Addon.LOGGER.info(
-                            "[ae2addon][settle][probe] logic.insert({}) 返回={} 期望={}（差=账务未全额处理）",
-                            key, accepted, amount);
+                if (CraftingCompat.debugLogs) {
+                    ae2addon$probeJobState(key, amount);
+                    if (accepted != amount) {
+                        AE2Addon.LOGGER.info(
+                                "[ae2addon][settle][probe] logic.insert({}) 返回={} 期望={}（差=账务未全额处理）",
+                                key, accepted, amount);
+                    }
                 }
             }
             // 根产物 insert 触发 finishJob → job 置 null：终止本 tick 任务迭代，防外层 NPE
@@ -955,6 +958,42 @@ public abstract class CraftingCpuLogicMixin {
         } catch (RuntimeException | ReflectiveOperationException e) {
             ae2addon$finalOutputFieldFailed = true;
             return null;
+        }
+    }
+
+    /** 探针：flush 时打印 job 状态/waitingFor 记账量/remainingAmount（M1 调试用）。 */
+    @Unique
+    private void ae2addon$probeJobState(AEKey key, long amount) {
+        try {
+            Object job = ae2addon$getJob();
+            if (job == null) {
+                AE2Addon.LOGGER.info("[ae2addon][settle][probe] job=null（已被 finishJob 清除）");
+                return;
+            }
+            long waiting = -1;
+            long remaining = -1;
+            try {
+                var wf = job.getClass().getField("waitingFor");
+                Object inv = wf.get(job);
+                var listF = inv.getClass().getField("list");
+                Object list = listF.get(inv);
+                var getM = list.getClass().getMethod("get", appeng.api.stacks.AEKey.class);
+                waiting = (Long) getM.invoke(list, key);
+            } catch (Throwable t) {
+                waiting = Long.MIN_VALUE;
+            }
+            try {
+                var rf = job.getClass().getDeclaredField("remainingAmount");
+                rf.setAccessible(true);
+                remaining = rf.getLong(job);
+            } catch (Throwable t) {
+                remaining = Long.MIN_VALUE;
+            }
+            AE2Addon.LOGGER.info(
+                    "[ae2addon][settle][probe] flush时 job@{} waitingFor[{}]={} remainingAmount={}",
+                    System.identityHashCode(job), key, waiting, remaining);
+        } catch (Throwable t) {
+            AE2Addon.LOGGER.warn("[ae2addon][settle][probe] probeJobState 异常: {}", t.toString());
         }
     }
 
