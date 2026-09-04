@@ -24,6 +24,14 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
 
     private int panelX;
     private int panelY;
+    /** 面板位置是否已初始化（drawFG 每帧重算会重置拖动——2026-09-04 sensei：
+     *  面板做成可拖动，位置只在首帧初始化）。 */
+    private boolean panelPosInitialized;
+    /** 拖动的面板：0=无 1=量子分裂线程面板（巨型订单面板联动跟随） */
+    private int draggingPanel;
+    /** 拖动抓取点（面板内相对偏移，避免跳变） */
+    private double dragGrabX;
+    private double dragGrabY;
     private int scrollOffset;
     private boolean draggingScrollbar = false;
     private int orderScrollOffset;
@@ -46,10 +54,13 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             int mouseX, int mouseY) {
         super.drawFG(graphics, offsetX, offsetY, mouseX, mouseY);
 
-        // ── 量子分裂线程面板（屏幕固定位置，不随界面）──
-        int screenWidth = Minecraft.getInstance().getWindow().getGuiScaledWidth();
-        panelX = screenWidth / 2 - PANEL_WIDTH / 2 - 300;
-        panelY = 170;
+        // ── 量子分裂线程面板（可拖动；位置首帧初始化，拖动后保持）──
+        if (!panelPosInitialized) {
+            int screenWidth = Minecraft.getInstance().getWindow().getGuiScaledWidth();
+            panelX = screenWidth / 2 - PANEL_WIDTH / 2 - 300;
+            panelY = 170;
+            panelPosInitialized = true;
+        }
         drawLanePanel(graphics);
         drawOrderPanel(graphics);
     }
@@ -60,7 +71,7 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         if (orders == null || orders.isEmpty()) {
             return;
         }
-        int orderPanelX = panelX - ORDER_PANEL_WIDTH - 10;
+        int orderPanelX = orderPanelLeft();
         int visible = Math.min(VISIBLE_ORDERS, orders.size());
         int height = 12 + ROW_HEIGHT * visible + 4;
 
@@ -202,6 +213,14 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             // drawFG 坐标系是相对界面的（AE2 translate），鼠标坐标需同步转换
             double lx = mouseX - leftPos;
             double ly = mouseY - topPos;
+            // 面板标题条（拖动手柄，y-3..y+11）：优先于行点击/滑条
+            int handle = hitPanelHandle(lx, ly);
+            if (handle != 0) {
+                draggingPanel = handle;
+                dragGrabX = lx - (handle == 1 ? panelX : orderPanelLeft());
+                dragGrabY = ly - panelY;
+                return true;
+            }
             boolean inPanel = isInPanel(lx, ly);
             // 滑条区域：按下即开始拖拽（优先于行点击，避免误切线程）
             if (inPanel && isOnScrollbar(lx, ly)) {
@@ -244,6 +263,13 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button,
             double dragX, double dragY) {
+        if (button == 0 && draggingPanel != 0) {
+            double lx = mouseX - leftPos;
+            double ly = mouseY - topPos;
+            panelX = (int) Math.round(lx - dragGrabX);
+            panelY = (int) Math.round(ly - dragGrabY);
+            return true;
+        }
         if (button == 0 && draggingScrollbar) {
             updateScrollFromDrag(mouseY - topPos);
             return true;
@@ -257,6 +283,10 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && draggingPanel != 0) {
+            draggingPanel = 0;
+            return true;
+        }
         if (button == 0 && draggingScrollbar) {
             draggingScrollbar = false;
             return true;
@@ -274,7 +304,7 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         if (orders == null || orders.isEmpty()) {
             return false;
         }
-        int orderPanelX = panelX - ORDER_PANEL_WIDTH - 10;
+        int orderPanelX = orderPanelLeft();
         int visible = Math.min(VISIBLE_ORDERS, orders.size());
         int height = 12 + ROW_HEIGHT * visible + 4;
         return mx >= orderPanelX - 3 && mx <= orderPanelX + ORDER_PANEL_WIDTH
@@ -287,7 +317,7 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         if (orders == null || orders.size() <= VISIBLE_ORDERS) {
             return false;
         }
-        int orderPanelX = panelX - ORDER_PANEL_WIDTH - 10;
+        int orderPanelX = orderPanelLeft();
         int height = 12 + ROW_HEIGHT * VISIBLE_ORDERS + 4;
         int trackTop = panelY + 16;
         int trackBottom = panelY + height - 4;
@@ -372,6 +402,30 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, delta);
+    }
+
+    /** 巨型订单面板左缘（联动跟随线程面板）。 */
+    private int orderPanelLeft() {
+        return panelX - ORDER_PANEL_WIDTH - 10;
+    }
+
+    /** 面板把手命中：1=线程面板 2=巨型订单面板（标题条 y-3..y+11）。 */
+    private int hitPanelHandle(double mx, double my) {
+        if (mx >= panelX - 3 && mx <= panelX + PANEL_WIDTH
+                && my >= panelY - 3 && my <= panelY + 11) {
+            return 1;
+        }
+        var orders = menu.fullOrders;
+        if (orders != null && !orders.isEmpty()) {
+            int ox = orderPanelLeft();
+            int visible = Math.min(VISIBLE_ORDERS, orders.size());
+            int height = 12 + ROW_HEIGHT * visible + 4;
+            if (mx >= ox - 3 && mx <= ox + ORDER_PANEL_WIDTH
+                    && my >= panelY - 3 && my <= panelY + 11) {
+                return 2;
+            }
+        }
+        return 0;
     }
 
     private boolean isInPanel(double mouseX, double mouseY) {
