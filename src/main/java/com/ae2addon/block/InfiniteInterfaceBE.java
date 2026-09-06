@@ -1239,8 +1239,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             feederDiagLogged = true;
             logFeederStatus("启动");
         } else if ((lvl.getGameTime() & 0x3F) == 0
-                && com.ae2addon.config.AE2AddonConfig.debugLogs()) {
-            logFeederStatus("心跳"); // 每 64 tick（约 3 秒）一条，仅 debugLogs 开
+                && com.ae2addon.config.AE2AddonConfig.debugLogs()
+                && totalAmount().signum() > 0) {
+            // 心跳仅蓄水池非空时打（2026-09-06 sensei：空池心跳刷屏干扰观察）
+            logFeederStatus("心跳"); // 每 64 tick（约 3 秒）一条，仅 debugLogs 开且池非空
         }
         if ((lvl.getGameTime() % restockIntervalValue()) == 0) {
             restockFromNetwork();
