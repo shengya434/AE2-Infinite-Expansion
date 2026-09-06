@@ -144,7 +144,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
                 b -> AE2Addon.NETWORK.sendToServer(
                         new com.ae2addon.network.FeederReturnPacket(
                                 getMenu().getFeeder().getBlockPos()))
-        ).bounds(leftPos + 138, topPos + 96, 36, 12).build());
+        ).bounds(leftPos + 164, topPos + 82, 36, 12).build());
         long[] values = {
                 getMenu().getFeeder().stockTargetValue(),
                 getMenu().getFeeder().restockIntervalValue(),
