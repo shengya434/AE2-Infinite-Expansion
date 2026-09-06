@@ -416,6 +416,16 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             long times = Math.max(1, (amount + outPer - 1) / outPer);
             var used = new KeyCounter();
             long safeTimes = Math.min(times, Integer.MAX_VALUE);
+            // 自指种子集合（产物=输入的增殖配方，如模板复制）：种子 used 只放 1
+            // 份起手——全量备 N 个自身种子备不齐；CPU 逐次结算靠产物倍增滚雪球。
+            java.util.Set<AEKey> selfKeys = new java.util.HashSet<>();
+            if (outs != null) {
+                for (var o : outs) {
+                    if (o != null && o.what() != null) {
+                        selfKeys.add(o.what());
+                    }
+                }
+            }
             for (var inputGroup : chosen.getInputs()) {
                 if (inputGroup == null || inputGroup.getPossibleInputs() == null
                         || inputGroup.getPossibleInputs().length == 0) {
@@ -425,7 +435,11 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                 if (gs == null || gs.what() == null) {
                     continue;
                 }
-                used.add(gs.what(), gs.amount() * safeTimes);
+                if (selfKeys.contains(gs.what())) {
+                    used.add(gs.what(), 1); // 自指种子：1 份起手
+                } else {
+                    used.add(gs.what(), gs.amount() * safeTimes);
+                }
             }
             var plan = new appeng.crafting.CraftingPlan(
                     new appeng.api.stacks.GenericStack(what, amount),

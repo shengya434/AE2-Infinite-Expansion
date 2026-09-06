@@ -556,13 +556,27 @@ public abstract class CraftingCpuLogicMixin {
             // （sensei 实测：AECraftingPattern 单 tick 206 次拒收、任务卡 1、CPU
             // 永久 busy）。处理样板（AEProcessingPattern）保留批量推送。
             if (ae2addon$virtualSettleActive(patternDetails)) {
-                // M1c（2026-09-04）：虚拟结算无真实装配瓶颈 → 一次提取全部任务材料，
-                // 整层瞬时结算（ScaledPattern multiplyExact 防溢出，溢出自动回退 1×）
-                n = Math.min(taskRemaining, ae2addon$batchMaxMultiplier());
-                if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
-                    com.ae2addon.AE2Addon.LOGGER.info(
-                            "[ae2addon][debug] 合成族样板虚拟结算全量: pattern={} n={} taskRemaining={}",
-                            patternDetails, n, taskRemaining);
+                if (ae2addon$isSelfReferentialPattern(patternDetails)) {
+                    // 增殖配方（模板复制 a+b=2a，产物与输入同种）：批量全量需要 N 个
+                    // 自身种子（网络永远备不齐）→ 强制逐次 N=1 并锁批量，种子靠产物
+                    // 倍增滚雪球（每轮 +净产出回网，下一轮提取更多）——2026-09-06
+                    ae2addon$setBatchMultiplier(patternDetails, 1);
+                    ae2addon$batchLocked.put(patternDetails, Boolean.TRUE);
+                    n = 1;
+                    if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+                        com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ae2addon][debug] 增殖配方强制逐次: pattern={} taskRemaining={}",
+                                patternDetails, taskRemaining);
+                    }
+                } else {
+                    // M1c（2026-09-04）：虚拟结算无真实装配瓶颈 → 一次提取全部任务材料，
+                    // 整层瞬时结算（ScaledPattern multiplyExact 防溢出，溢出自动回退 1×）
+                    n = Math.min(taskRemaining, ae2addon$batchMaxMultiplier());
+                    if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+                        com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ae2addon][debug] 合成族样板虚拟结算全量: pattern={} n={} taskRemaining={}",
+                                patternDetails, n, taskRemaining);
+                    }
                 }
             } else {
                 n = 1;
@@ -660,6 +674,39 @@ public abstract class CraftingCpuLogicMixin {
                         || name.endsWith("AEStonecuttingPattern")
                         || name.endsWith("AESmithingTablePattern")
                         || name.contains("CraftingPattern"));
+    }
+
+    /**
+     * 自指/增殖配方判定（2026-09-06）：产物与输入包含同种 key——
+     * 如模板复制 1模板+7钻+1下界岩→2模板。此类配方全量批量需要 N 个自身
+     * 种子备料（备不齐）→ 只能逐次结算靠产物倍增滚雪球。
+     */
+    @Unique
+    private static boolean ae2addon$isSelfReferentialPattern(IPatternDetails pattern) {
+        if (pattern == null) {
+            return false;
+        }
+        var outs = pattern.getOutputs();
+        if (outs == null || outs.length == 0) {
+            return false;
+        }
+        for (var inGroup : pattern.getInputs()) {
+            if (inGroup == null || inGroup.getPossibleInputs() == null) {
+                continue;
+            }
+            for (var gs : inGroup.getPossibleInputs()) {
+                if (gs == null || gs.what() == null) {
+                    continue;
+                }
+                for (var out : outs) {
+                    if (out != null && out.what() != null
+                            && out.what().equals(gs.what())) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -1107,6 +1154,11 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$diagBatchCount++;
         }
         if (Boolean.TRUE.equals(ae2addon$batchLocked.get(pattern))) {
+            return;
+        }
+        // 增殖配方（产物=输入同种）已锁逐次：不翻倍（extract 侧锁 batchLocked，双保险）
+        if (ae2addon$isSelfReferentialPattern(pattern)) {
+            ae2addon$batchNext.put(pattern, 1L);
             return;
         }
         long maxMult = ae2addon$batchMaxMultiplier();
