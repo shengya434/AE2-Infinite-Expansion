@@ -1891,6 +1891,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         if (wantedKeys().contains(key)) {
             return true;
         }
+        // 待入网缓存（从容器抽出的产物，网络满暂存）不防回流：否则缓存未送完期间
+        // 容器里新产的同种产物会被误当「喂入材料」不再抽（2026-09-06 sensei 实测
+        // 「同一容器缓存未输入网络时接口只主动抽取一次」）。
+        if (pendingNetworkKeys.contains(key)) {
+            return false;
+        }
         var have = reservoir.get(key);
         return have != null && have.signum() > 0;
     }
