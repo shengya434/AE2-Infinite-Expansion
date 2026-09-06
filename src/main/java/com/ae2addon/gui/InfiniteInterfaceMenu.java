@@ -316,37 +316,30 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             if (!moveItemStackTo(stack, upgradeEnd, hotbarEnd, true)) {
                 return ItemStack.EMPTY;
             }
-        } else if (slotIndex < toolboxEnd) {
-            // 网络工具卡槽：优先 → 接口升级槽（90..98）；其次 → 玩家背包
+        } else if (slotIndex < invEnd) {
+            // 玩家主格 99..125 → 自动归类（2026-09-06 sensei 优化）：
+            // 已编码样板 → 样板槽；升级卡 → 升级槽。标记槽不收真实物品。
+            boolean autoPlaced = autoClassify(stack, patternEnd, upgradeEnd);
+            if (!autoPlaced && !stack.isEmpty()) {
+                // 背包内移动兜底：主格 → 快捷栏
+                if (!moveItemStackTo(stack, invEnd, hotbarEnd, false)) {
+                    return ItemStack.EMPTY;
+                }
+            }
+        } else if (slotIndex < hotbarEnd) {
+            // 快捷栏 126..134 → 自动归类；兜底移到主格
+            boolean autoPlaced = autoClassify(stack, patternEnd, upgradeEnd);
+            if (!autoPlaced && !stack.isEmpty()) {
+                if (!moveItemStackTo(stack, upgradeEnd, invEnd, false)) {
+                    return ItemStack.EMPTY;
+                }
+            }
+        } else {
+            // 网络工具卡槽 135..143：优先 → 接口升级槽（90..98）；其次 → 玩家背包
             if (!moveItemStackTo(stack, upgradeEnd - 9, upgradeEnd, false)
                     && !moveItemStackTo(stack, upgradeEnd, invEnd, false)
                     && !moveItemStackTo(stack, invEnd, hotbarEnd, false)) {
                 return ItemStack.EMPTY;
-            }
-        } else {
-            // 玩家背包（主格/快捷栏）→ 自动归类（2026-09-06 sensei 优化）：
-            // 已编码样板 → 样板槽；升级卡 → 升级槽。
-            // 原实现只在快捷栏 shift 样板才进样板槽，主格样板 shift 只背包内挪动；
-            // 升级卡更是从不进升级槽。标记槽不收真实物品（虚拟标记，shift 移入会
-            // 卡死被吞——2026-08-28 BUG，改为不放）。
-            boolean autoPlaced = false;
-            if (PatternDetailsHelper.isEncodedPattern(stack)) {
-                if (moveItemStackTo(stack, 0, patternEnd, false)) {
-                    autoPlaced = true;
-                }
-            } else if (appeng.api.upgrades.Upgrades.isUpgradeCardItem(stack.getItem())) {
-                if (moveItemStackTo(stack, upgradeEnd - 9, upgradeEnd, false)) {
-                    autoPlaced = true;
-                }
-            }
-            if (!autoPlaced && !stack.isEmpty()) {
-                // 背包内移动（避免卡死）
-                if (slotIndex >= invEnd && !moveItemStackTo(stack, upgradeEnd, invEnd, false)) {
-                    return ItemStack.EMPTY;
-                }
-                if (slotIndex < invEnd && !moveItemStackTo(stack, invEnd, hotbarEnd, false)) {
-                    return ItemStack.EMPTY;
-                }
             }
         }
         if (stack.isEmpty()) {
@@ -359,6 +352,22 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         }
         slot.onTake(player, stack);
         return original;
+    }
+
+    /**
+     * shift+点击自动归类（2026-09-06 sensei 优化）：
+     * 已编码样板 → 样板槽（0..patternEnd）；升级卡 → 升级槽。
+     *
+     * @return 是否至少移入一部分
+     */
+    private boolean autoClassify(ItemStack stack, int patternEnd, int upgradeEnd) {
+        if (PatternDetailsHelper.isEncodedPattern(stack)) {
+            return moveItemStackTo(stack, 0, patternEnd, false);
+        }
+        if (appeng.api.upgrades.Upgrades.isUpgradeCardItem(stack.getItem())) {
+            return moveItemStackTo(stack, upgradeEnd - 9, upgradeEnd, false);
+        }
+        return false;
     }
 
     @Override
