@@ -372,12 +372,16 @@ public final class RequirementCalculator {
             truncated[0] = true; // 预算耗尽：需求少算，标记截断（调用方必须拒绝，不能当安全）
             return;
         }
-        needs.merge(key, need, BigInteger::add);
-
-        // 防环：当前路径已展开过该 key（如 EMC 互转 A→B→A）
-        if (!path.add(key)) {
+        // 防环（2026-09-06 补全处理，原实现静默 return 少算需求且不置 truncated）：
+        // 递归样板（输出参与自身输入链，如 A→B→A 互转）无法靠合成自举——
+        // 环回命中时把需求记入 leafNeeds（按外部叶子由网络库存提供）：
+        // 有存货正常合成、无存货自然报缺料，绝不让假需求/少算流入拆批或原版模拟。
+        if (path.contains(key)) {
+            leafNeeds.merge(key, need, BigInteger::add);
             return;
         }
+        needs.merge(key, need, BigInteger::add);
+        path.add(key);
 
         // EMC 假键是终端叶子（2026-08-22）：虚拟货币不能「造」出更多材料，
         // 记录需求即止。绝不查它的「配方」——AppliedE 给 EMCKey 也注册了
