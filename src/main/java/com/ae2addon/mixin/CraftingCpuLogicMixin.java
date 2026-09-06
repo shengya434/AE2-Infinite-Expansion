@@ -685,6 +685,16 @@ public abstract class CraftingCpuLogicMixin {
      */
     @Inject(method = "cancel", at = @At("HEAD"), require = 0)
     private void ae2addon$onCraftingCancelled(CallbackInfo callback) {
+        if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+            // 诊断（2026-09-06 蓄水池被清排查）：谁在取消任务
+            StackTraceElement[] st = Thread.currentThread().getStackTrace();
+            StringBuilder sb = new StringBuilder();
+            for (int i = 2; i < Math.min(st.length, 8); i++) {
+                sb.append(st[i].toString()).append(" <- ");
+            }
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][feeder][diag] CPU任务cancel触发: {}", sb);
+        }
         com.ae2addon.block.InfiniteInterfaceBE.returnPushedFor(cluster);
     }
 
