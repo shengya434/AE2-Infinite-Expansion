@@ -324,18 +324,29 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
                 return ItemStack.EMPTY;
             }
         } else {
-            // 玩家背包 → 样板槽（仅已编码样板）；标记槽不收真实物品（虚拟标记，
-            // shift 移入会卡死被吞——2026-08-28 BUG，改为不放）
-            if (PatternDetailsHelper.isEncodedPattern(stack)
-                    && !moveItemStackTo(stack, 0, patternEnd, false)) {
-                return ItemStack.EMPTY;
+            // 玩家背包（主格/快捷栏）→ 自动归类（2026-09-06 sensei 优化）：
+            // 已编码样板 → 样板槽；升级卡 → 升级槽。
+            // 原实现只在快捷栏 shift 样板才进样板槽，主格样板 shift 只背包内挪动；
+            // 升级卡更是从不进升级槽。标记槽不收真实物品（虚拟标记，shift 移入会
+            // 卡死被吞——2026-08-28 BUG，改为不放）。
+            boolean autoPlaced = false;
+            if (PatternDetailsHelper.isEncodedPattern(stack)) {
+                if (moveItemStackTo(stack, 0, patternEnd, false)) {
+                    autoPlaced = true;
+                }
+            } else if (appeng.api.upgrades.Upgrades.isUpgradeCardItem(stack.getItem())) {
+                if (moveItemStackTo(stack, upgradeEnd - 9, upgradeEnd, false)) {
+                    autoPlaced = true;
+                }
             }
-            // 背包内移动（避免卡死）
-            if (!stack.isEmpty() && slotIndex >= invEnd && !moveItemStackTo(stack, upgradeEnd, invEnd, false)) {
-                return ItemStack.EMPTY;
-            }
-            if (!stack.isEmpty() && slotIndex < invEnd && !moveItemStackTo(stack, invEnd, hotbarEnd, false)) {
-                return ItemStack.EMPTY;
+            if (!autoPlaced && !stack.isEmpty()) {
+                // 背包内移动（避免卡死）
+                if (slotIndex >= invEnd && !moveItemStackTo(stack, upgradeEnd, invEnd, false)) {
+                    return ItemStack.EMPTY;
+                }
+                if (slotIndex < invEnd && !moveItemStackTo(stack, invEnd, hotbarEnd, false)) {
+                    return ItemStack.EMPTY;
+                }
             }
         }
         if (stack.isEmpty()) {
