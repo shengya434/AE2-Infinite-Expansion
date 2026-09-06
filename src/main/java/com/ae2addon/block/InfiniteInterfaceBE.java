@@ -1708,72 +1708,67 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 if (handler != null && handler.getSlots() > 0) {
                     boolean found = false;
                     for (int slot = 0; slot < handler.getSlots(); slot++) {
-                        var extracted = handler.extractItem(slot, EXTRACT_STACK, true);
-                        if (extracted.isEmpty()) {
+                        // 防回流 probe：直接看槽内容（不触发 simulate——巨型容器的
+                        // simulate 会虚报可抽量，2026-09-06 sensei 实测：容器实际 1 个
+                        // 却按 loopCap 虚报 → 先入网后真抽导致差额凭空复制）
+                        var probe = handler.getStackInSlot(slot);
+                        if (probe.isEmpty()) {
                             continue;
                         }
-                        var key = appeng.api.stacks.AEItemKey.of(extracted);
-                        if (key == null) {
-                            continue;
-                        }
-                        if (isMarkedMaterial(key)) {
+                        var probeKey = appeng.api.stacks.AEItemKey.of(probe);
+                        if (probeKey == null || isMarkedMaterial(probeKey)) {
                             continue; // 材料不抽（防回流）
                         }
-                        // ⚠️ 部分机器的 IItemHandler 把单次 extractItem 钳制在物品最大堆叠
-                        // （Mekanism 箱子/箱柜 = min(槽内数量, maxStackSize)，原版物品=64），
-                        // 配置的每次抽取量一次拿不完 → 循环试探凑满（2026-08-29 sensei 实测 1024 只出 64）。
-                        // 循环累计上限 EXTRACT_LOOP_CAP 可配置（0=关循环，每次仅单次钳制量；2026-09-03 sensei）。
-                        int remaining = EXTRACT_STACK;
-                        long available = 0;
-                        int loopCap = EXTRACT_LOOP_CAP;
-                        if (loopCap > 0) {
-                            int guard = 0;
-                            while (remaining > 0 && available < loopCap && guard++ < 65536) {
-                                int want = (int) Math.min((long) remaining, (long) loopCap - available);
-                                if (want <= 0) {
-                                    break;
-                                }
-                                var part = handler.extractItem(slot, want, true);
-                                if (part.isEmpty()) {
-                                    break;
-                                }
-                                var partKey = appeng.api.stacks.AEItemKey.of(part);
-                                if (partKey == null || !partKey.equals(key)) {
-                                    break; // 槽内容变化（防御）
-                                }
-                                int n = Math.min(part.getCount(), want);
-                                if (n <= 0) {
-                                    break;
-                                }
-                                available += n;
-                                remaining -= n;
+                        // 真实抽取（EXECUTE）：每轮拿到的都是容器真实给出的量，
+                        // 循环累计（部分机器把单次 extractItem 钳制在 maxStackSize）。
+                        // 拿到多少算多少，按实得入网 → 巨型容器虚报也无法复制。
+                        long remaining = Math.min(probe.getCount(), (long) EXTRACT_STACK);
+                        long gotTotal = 0;
+                        boolean looping = EXTRACT_LOOP_CAP > 0; // 0 = 关循环，仅单次钳制量
+                        int guard = 0;
+                        do {
+                            int want = (int) Math.min(remaining,
+                                    looping ? (long) EXTRACT_LOOP_CAP - gotTotal : remaining);
+                            if (want <= 0) {
+                                break;
                             }
-                        } else {
-                            available = extracted.getCount(); // 关闭循环：仅单次钳制量
-                        }
-                        if (available <= 0) {
+                            var part = handler.extractItem(slot, want, false);
+                            if (part.isEmpty()) {
+                                break; // 槽被抽空/拒给
+                            }
+                            var partKey = appeng.api.stacks.AEItemKey.of(part);
+                            if (partKey == null || !partKey.equals(probeKey)) {
+                                // 槽内容变化（防御）：抽出的异物塞回，避免截留/错乱
+                                try {
+                                    ItemStack rest = handler.insertItem(slot, part, false);
+                                    if (!rest.isEmpty()) {
+                                        cacheForNetwork(partKey, rest.getCount()); // 塞不回则缓存（不丢）
+                                    }
+                                } catch (RuntimeException ignored) {
+                                }
+                                break;
+                            }
+                            int n = part.getCount();
+                            gotTotal += n;
+                            remaining -= n;
+                        } while (looping && remaining > 0 && gotTotal < EXTRACT_LOOP_CAP
+                                && guard++ < 65536);
+                        if (gotTotal <= 0) {
                             continue;
                         }
+                        // 按真实抽到的量入网；插不进的走待入网缓存（网络满不卡机器）
                         long inserted = storage.insert(
-                                key, available, Actionable.MODULATE, actionSource);
-                        long cached = available - inserted;
+                                probeKey, gotTotal, Actionable.MODULATE, actionSource);
+                        long cached = gotTotal - inserted;
                         if (inserted > 0 || cached > 0) {
-                            // 从机器取出：网络收下的入网，收不下的进待入网缓存（网络满不卡机器，2026-09-02）
-                            int toExtract = (int) Math.min(available, Integer.MAX_VALUE);
-                            while (toExtract > 0) {
-                                var got = handler.extractItem(slot, toExtract, false);
-                                if (got.isEmpty()) {
-                                    break;
-                                }
-                                toExtract -= Math.min(got.getCount(), toExtract);
-                            }
                             if (cached > 0) {
-                                cacheForNetwork(key, cached);
+                                cacheForNetwork(probeKey, cached);
                             }
                             found = true;
                             com.ae2addon.AE2Addon.LOGGER.info(
                                     "[ae2addon][feeder] 主动抽取: {} x{} → 网络{}（槽{}）",
-                                    key, inserted, cached > 0 ? " + 缓存" + cached : "", slot);
+                                    probeKey, inserted,
+                                    cached > 0 ? " + 缓存" + cached : "", slot);
                         }
                     }
                     if (!found && (level.getGameTime() & 0xFF) == 0) {
@@ -1805,24 +1800,22 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                         if (key == null || isMarkedMaterial(key)) {
                             continue;
                         }
-                        long amount = Math.min(inTank.getAmount(), EXTRACT_FLUID);
-                        if (amount <= 0) {
+                        // 先真实 drain 再入网（2026-09-06：simulate 虚报会导致差额复制，
+                        // 与物品段同理——按实得量入网，插不进的走待入网缓存）
+                        int want = (int) Math.min(inTank.getAmount(), (long) EXTRACT_FLUID);
+                        if (want <= 0) {
                             continue;
                         }
                         var drained = fluidHandler.drain(new net.minecraftforge.fluids.FluidStack(
-                                inTank.getFluid(), (int) amount),
-                                net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.SIMULATE);
+                                inTank.getFluid(), want),
+                                net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.EXECUTE);
                         if (drained.isEmpty()) {
                             continue;
                         }
-                        long inserted = storage.insert(
-                                key, drained.getAmount(), Actionable.MODULATE, actionSource);
-                        long cached = drained.getAmount() - inserted;
+                        long got = drained.getAmount();
+                        long inserted = storage.insert(key, got, Actionable.MODULATE, actionSource);
+                        long cached = got - inserted;
                         if (inserted > 0 || cached > 0) {
-                            // 从机器抽走：网络收下的入网，收不下的进待入网缓存（2026-09-02）
-                            fluidHandler.drain(new net.minecraftforge.fluids.FluidStack(
-                                    inTank.getFluid(), (int) (inserted + cached)),
-                                    net.minecraftforge.fluids.capability.IFluidHandler.FluidAction.EXECUTE);
                             if (cached > 0) {
                                 cacheForNetwork(key, cached);
                             }
@@ -1866,23 +1859,23 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if (key == null || isMarkedMaterial(key)) {
                 continue;
             }
-            long amount = Math.min(inTank.getAmount(), EXTRACT_GAS);
-            if (amount <= 0) {
+            long want = Math.min(inTank.getAmount(), EXTRACT_GAS);
+            if (want <= 0) {
                 continue;
             }
-            var sim = ch.extractChemical(tank, amount, mekanism.api.Action.SIMULATE);
-            if (sim == null || sim.isEmpty()) {
+            // 先真实 EXECUTE 抽取再入网（2026-09-06：simulate 虚报 → 差额复制，
+            // 与物品/流体段同理——按实得量入网，插不进的走待入网缓存）
+            var real = ch.extractChemical(tank, want, mekanism.api.Action.EXECUTE);
+            if (real == null || real.isEmpty()) {
                 continue;
             }
-            long got = Math.min(sim.getAmount(), amount);
+            long got = Math.min(real.getAmount(), want);
             if (got <= 0) {
                 continue;
             }
             long inserted = storage.insert(key, got, Actionable.MODULATE, actionSource);
             long cached = got - inserted;
             if (inserted > 0 || cached > 0) {
-                // 从机器抽走：网络收下的入网，收不下的进待入网缓存（2026-09-02）
-                ch.extractChemical(tank, got, mekanism.api.Action.EXECUTE);
                 if (cached > 0) {
                     cacheForNetwork(key, cached);
                 }
