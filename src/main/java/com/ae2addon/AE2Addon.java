@@ -155,6 +155,11 @@ public class AE2Addon {
                 com.ae2addon.network.AssemblerPagePacket::decode,
                 com.ae2addon.network.AssemblerPagePacket::handle
         );
+        NETWORK.registerMessage(10, com.ae2addon.network.FeederReturnPacket.class,
+                com.ae2addon.network.FeederReturnPacket::encode,
+                com.ae2addon.network.FeederReturnPacket::decode,
+                com.ae2addon.network.FeederReturnPacket::handle
+        );
 
         MinecraftForge.EVENT_BUS.register(this);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);

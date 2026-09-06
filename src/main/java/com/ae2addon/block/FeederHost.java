@@ -85,6 +85,14 @@ public interface FeederHost {
     /** GUI 开关切换（"extract"/"feed"/"markerFeed"/"dir"）。 */
     void toggleActive(String which);
 
+    /**
+     * 手动「退回网络」（2026-09-06 sensei）：把蓄水池里全部材料（未喂出的推送料
+     * + 待入网缓存产物）插回网络存储。插不进的（网络满/拒收）留在蓄水池。
+     *
+     * @return 是否有材料成功退回
+     */
+    boolean returnAllToNetwork();
+
     void cycleExtractSide();
 
     /** GUI 参数保存（key: stockTarget/restockInterval/feedBudget）。 */

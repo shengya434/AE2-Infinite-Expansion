@@ -793,6 +793,48 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return false;
     }
 
+    /** 手动「退回网络」（2026-09-06 sensei）：蓄水池全部材料插回网络。 */
+    @Override
+    public boolean returnAllToNetwork() {
+        if (level == null || level.isClientSide) {
+            return false;
+        }
+        IGrid grid = getMainNode().getGrid();
+        MEStorage storage = grid == null ? null : grid.getStorageService().getInventory();
+        if (storage == null) {
+            return false; // 未连网退不回（料留在蓄水池，不丢）
+        }
+        BigInteger returned = BigInteger.ZERO;
+        int types = 0;
+        int stuck = 0;
+        for (AEKey key : new java.util.ArrayList<>(reservoir.keySet())) {
+            long amt = reservoirAmount(key);
+            if (amt <= 0) {
+                continue;
+            }
+            long inserted = storage.insert(key, amt, Actionable.MODULATE, actionSource);
+            if (inserted > 0) {
+                subtractReservoir(key, inserted);
+                returned = returned.add(BigInteger.valueOf(inserted));
+                if (reservoirAmount(key) <= 0) {
+                    types++;
+                }
+            } else {
+                stuck++; // 网络拒收（满/不可存）→ 留在蓄水池待下次
+            }
+        }
+        pushedByCluster.clear(); // 手动全退：簇推送记账作废，防 CPU cancel 二次回退
+        if (returned.signum() > 0) {
+            setChanged();
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][feeder] 手动退回网络 {} 个（{}种清空，{}种拒收留池）→ 蓄水池剩余{}/合计{}",
+                    fmt(returned), types, stuck, reservoirSummary()[0],
+                    fmt(totalAmount()));
+            return true;
+        }
+        return false;
+    }
+
     // ── 升级（IUpgradeableObject） ──
 
     @Override
