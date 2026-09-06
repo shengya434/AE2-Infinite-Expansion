@@ -860,6 +860,14 @@ public abstract class CraftingCpuLogicMixin {
     private KeyCounter ae2addon$pendingSettle;
 
     /**
+     * 当前待回收产物是否来自自指配方（增殖，模板复制类）：是则 root 产物
+     * 回流 crafting storage 供下一轮 extract 滚雪球，而非物理入网——
+     * 自指任务的 root 同时也是后续轮次的输入种子（2026-09-06）。
+     */
+    @Unique
+    private boolean ae2addon$pendingSettleSelfRef;
+
+    /**
      * 判定（v0.3 M3）：仅限合成族样板（合成/切石/锻造，非处理类）；且当前 CPU 簇的
      * 集成 CPU（主簇或虚拟 lane）挂了装配处理器模块并声明了该样板（样板槽白名单）
      * 才虚拟结算。无模块/未声明 → 一律真实合成。
@@ -941,6 +949,9 @@ public abstract class CraftingCpuLogicMixin {
             if (!settledAny) {
                 return false;
             }
+            // 自指/增殖配方（产物=输入同种）：root 产物需回流 crafting storage
+            // 供下一轮 extract（滚雪球），flush 据此分流（2026-09-06）
+            ae2addon$pendingSettleSelfRef = ae2addon$isSelfReferentialPattern(patternDetails);
             if (n > 1) {
                 // 任务值补减 n−1（AE2 外层还会 −1，共 −n → 归零移除）；decrementTaskValue
                 // 自带 current<=amount 保护（归零交给 AE2），不重复清批量上下文——
@@ -971,6 +982,8 @@ public abstract class CraftingCpuLogicMixin {
             return;
         }
         ae2addon$pendingSettle = null;
+        boolean selfRef = ae2addon$pendingSettleSelfRef;
+        ae2addon$pendingSettleSelfRef = false;
         try {
             AEKey rootKey = ae2addon$getFinalOutputKey();
             var logic = cluster.craftingLogic;
@@ -989,20 +1002,37 @@ public abstract class CraftingCpuLogicMixin {
                 // 刚入网的 root 提走——终端请求塞玩家背包、巨型量无处放 → 产物消失网络归零；
                 // sensei 语义：产物注入网络，requester 只是发起方）
                 logic.insert(key, amount, appeng.api.config.Actionable.MODULATE);
-                // ② root 物理入网（账务后：link 已完成，产物留在网络）
+                // ② 产物实体去向：
+                //    - 自指任务（模板复制类）：root 同时也是后续轮次的输入种子 →
+                //      回流 crafting storage（cluster inventory）滚雪球，不入网；
+                //      任务完成时原版把 inventory 富余自动退网络（2026-09-06）
+                //    - 普通任务：root 物理入网（账务后：link 已完成，产物留在网络）
                 if (isRoot && networkStorage != null) {
-                    // ⚠️ AE2 insert 返回「已插入量」（非剩余量）——2026-09-04 20:40 修正误报
-                    long insertedAmt = networkStorage.insert(key, amount,
-                            appeng.api.config.Actionable.MODULATE, cluster.getSrc());
-                    if (CraftingCompat.debugLogs) {
-                        AE2Addon.LOGGER.info(
-                                "[ae2addon][settle] 物理入网(账务后): key={} 期望{} 实插{} root=true",
-                                key, amount, insertedAmt);
-                    }
-                    if (insertedAmt < amount && CraftingCompat.debugLogs) {
-                        AE2Addon.LOGGER.warn(
-                                "[ae2addon][settle] 根产物入网部分失败: key={} 已插{} 期望{}（网络满？）",
-                                key, insertedAmt, amount);
+                    if (selfRef) {
+                        var inv = logic.getInventory();
+                        if (inv != null) {
+                            inv.insert(key, amount,
+                                    appeng.api.config.Actionable.MODULATE);
+                            if (CraftingCompat.debugLogs) {
+                                AE2Addon.LOGGER.info(
+                                        "[ae2addon][settle] 自指产物回流crafting storage: key={} 量={}（不入网，滚雪球）",
+                                        key, amount);
+                            }
+                        }
+                    } else {
+                        // ⚠️ AE2 insert 返回「已插入量」（非剩余量）——2026-09-04 20:40 修正误报
+                        long insertedAmt = networkStorage.insert(key, amount,
+                                appeng.api.config.Actionable.MODULATE, cluster.getSrc());
+                        if (CraftingCompat.debugLogs) {
+                            AE2Addon.LOGGER.info(
+                                    "[ae2addon][settle] 物理入网(账务后): key={} 期望{} 实插{} root=true",
+                                    key, amount, insertedAmt);
+                        }
+                        if (insertedAmt < amount && CraftingCompat.debugLogs) {
+                            AE2Addon.LOGGER.warn(
+                                    "[ae2addon][settle] 根产物入网部分失败: key={} 已插{} 期望{}（网络满？）",
+                                    key, insertedAmt, amount);
+                        }
                     }
                 } else if (CraftingCompat.debugLogs && networkStorage != null) {
                     AE2Addon.LOGGER.info(
