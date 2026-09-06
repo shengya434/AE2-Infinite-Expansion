@@ -436,6 +436,25 @@ public class InfiniteInterfacePart extends AEBasePart
 
     @Override
     public boolean pushPattern(IPatternDetails patternDetails, KeyCounter[] inputs) {
+        if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+            // 诊断（2026-09-06 蓄水池装不住排查）：push 收到什么
+            long total = 0;
+            int kinds = 0;
+            if (inputs != null) {
+                for (KeyCounter kc : inputs) {
+                    for (var e : kc) {
+                        total += e.getLongValue();
+                        kinds++;
+                    }
+                }
+            }
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][feeder][diag] part pushPattern: pattern={} inputs={}({}种/{}) 池={}种 pusher={}",
+                    patternDetails == null ? "null" : patternDetails.getClass().getSimpleName(),
+                    inputs == null ? "null" : inputs.length,
+                    kinds, total, reservoir.size(),
+                    com.ae2addon.crafting.CraftingCompat.currentPushingCluster == null ? "null" : "set");
+        }
         Object pusher = com.ae2addon.crafting.CraftingCompat.currentPushingCluster;
         Map<AEKey, BigInteger> perCluster = null;
         if (pusher != null) {
