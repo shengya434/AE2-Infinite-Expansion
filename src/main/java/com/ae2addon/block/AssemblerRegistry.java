@@ -53,6 +53,25 @@ public final class AssemblerRegistry {
         return null;
     }
 
+    /**
+     * 按网格查找装配处理器模块（2026-09-06：模拟期即时结算判定用——
+     * 不需要集成 CPU owner，直接从网格找服务本网的模块）。
+     */
+    public static AssemblerCoreBE moduleForGrid(appeng.api.networking.IGrid grid) {
+        if (grid == null) {
+            return null;
+        }
+        for (AssemblerCoreBE core : ACTIVE) {
+            if (core.isRemoved() || !core.isFormed()) {
+                continue;
+            }
+            if (gridOf(core) == grid) {
+                return core;
+            }
+        }
+        return null;
+    }
+
     private static appeng.api.networking.IGrid gridOf(appeng.blockentity.grid.AENetworkBlockEntity be) {
         try {
             var node = be.getMainNode();

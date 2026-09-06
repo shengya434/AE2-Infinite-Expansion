@@ -288,6 +288,13 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
         }
         // 小额订单免估算：直接走原版（不展开配方树，避免服务端线程卡顿）
         if (amount <= ae2addon$cheapOrderAmount()) {
+            // 装配模块即时结算目标（2026-09-06）：合成族 + 模块白名单的小额请求，
+            // 在模拟期直接返回成功计划——AE2-VM 把模板复制(a+b=2a)等「产物=输入」
+            // 增殖配方当递归判缺料（missing 自己），任务死在模拟期，push 前结算
+            // 永远轮不到。此处绕开 VM 模拟，让请求正常提交到 CPU 走虚拟结算。
+            if (ae2addon$tryModuleSettlePlan(what, amount, callback)) {
+                return;
+            }
             return;
         }
         long t0 = System.nanoTime();
@@ -365,6 +372,95 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                     "[ae2addon] 模拟拦截：需求超限，改为真 CraftingPlan what={} amount={} perBatch={} truncated={}",
                     what, amount, perBatch, analysis.truncated);
         }
+    }
+
+    /**
+     * 装配模块模拟期即时结算（2026-09-06）：目标产物被本网格装配模块白名单声明且属
+     * 合成族时，直接返回成功计划（绕开 AE2-VM——VM 把模板复制 a+b=2a 这类
+     * 「产物=输入」增殖配方当递归判缺料，任务死在模拟期，push 前结算轮不到）。
+     * 计划按真实配方展开（used=单次输入×执行次数、patternTimes 全量），提交后由
+     * 集成 CPU 的 push 前虚拟结算正常执行；预览/模拟调用不扣料不产料，无副作用。
+     *
+     * @return true = 已接管（caller 需 return）
+     */
+    @Unique
+    private boolean ae2addon$tryModuleSettlePlan(AEKey what, long amount,
+            CallbackInfoReturnable<Future<ICraftingPlan>> callback) {
+        try {
+            if (grid == null || what == null || amount <= 0) {
+                return false;
+            }
+            var module = com.ae2addon.block.AssemblerRegistry.moduleForGrid(grid);
+            if (module == null) {
+                return false;
+            }
+            // 找 what 的合成族样板且被模块声明
+            java.util.Collection<appeng.api.crafting.IPatternDetails> patterns =
+                    grid.getCraftingService().getCraftingFor(what);
+            if (patterns == null || patterns.isEmpty()) {
+                return false;
+            }
+            appeng.api.crafting.IPatternDetails chosen = null;
+            for (var p : patterns) {
+                if (ae2addon$isCraftingPattern(p) && module.declares(p)) {
+                    chosen = p;
+                    break;
+                }
+            }
+            if (chosen == null) {
+                return false;
+            }
+            var outs = chosen.getOutputs();
+            long outPer = outs != null && outs.length > 0 && outs[0] != null
+                    ? Math.max(1, outs[0].amount()) : 1;
+            long times = Math.max(1, (amount + outPer - 1) / outPer);
+            var used = new KeyCounter();
+            long safeTimes = Math.min(times, Integer.MAX_VALUE);
+            for (var inputGroup : chosen.getInputs()) {
+                if (inputGroup == null || inputGroup.getPossibleInputs() == null
+                        || inputGroup.getPossibleInputs().length == 0) {
+                    continue;
+                }
+                var gs = inputGroup.getPossibleInputs()[0];
+                if (gs == null || gs.what() == null) {
+                    continue;
+                }
+                used.add(gs.what(), gs.amount() * safeTimes);
+            }
+            var plan = new appeng.crafting.CraftingPlan(
+                    new appeng.api.stacks.GenericStack(what, amount),
+                    Long.MAX_VALUE,
+                    false,            // simulation
+                    false,            // multiplePaths
+                    used,
+                    new KeyCounter(), // emittedItems
+                    new KeyCounter(), // missingItems（自指种子由 used 提取，网络有即可）
+                    java.util.Map.of(chosen, safeTimes));
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] 模块即时结算: what={} amount={} 配方={} times={} 输入={}种（绕开 VM 模拟）",
+                    what, amount, chosen.getClass().getSimpleName(), safeTimes, used.size());
+            callback.cancel();
+            callback.setReturnValue(CompletableFuture.completedFuture(plan));
+            return true;
+        } catch (RuntimeException e) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] 模块即时结算异常，放行原路径: {}", e.toString());
+            return false;
+        }
+    }
+
+    /** 合成族判定（与 CraftingCpuLogicMixin 同逻辑，mixin 间不互相引用）。 */
+    @Unique
+    private static boolean ae2addon$isCraftingPattern(appeng.api.crafting.IPatternDetails pattern) {
+        if (pattern == null) {
+            return false;
+        }
+        String name = pattern.getClass().getName();
+        return !name.endsWith("AEProcessingPattern")
+                && (name.endsWith("AECraftingPattern")
+                        || name.endsWith("AEStonecuttingPattern")
+                        || name.endsWith("AESmithingTablePattern")
+                        || name.contains("CraftingPattern"));
     }
 
     /** 受理拆批订单：入队异步执行，返回成功（无 link，调用方按受理处理）。 */
