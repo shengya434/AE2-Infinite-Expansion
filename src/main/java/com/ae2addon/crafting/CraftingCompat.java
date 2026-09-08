@@ -29,6 +29,44 @@ public final class CraftingCompat {
     public static volatile long sharedExpCap =
             com.ae2addon.config.AE2AddonConfig.sharedExpCap();
 
+    /** 全网格每 tick 成功 push 共享预算（0 = 不限制；2026-09-08 学 ae2lt 双预算思想）。 */
+    public static volatile int dispatchBudgetPerTick =
+            com.ae2addon.config.AE2AddonConfig.dispatchBudgetPerTick();
+
+    /** 预算记账：当前 tick 与已用成功 push 数（惰性 tick 切换重置；服务端单线程安全）。 */
+    private static long dispatchBudgetTick = Long.MIN_VALUE;
+    private static int dispatchUsed;
+
+    /** push 成功时调用；返回 false = 本 tick 共享预算已耗尽（拒绝本次 push）。 */
+    public static boolean tryConsumeDispatch() {
+        int budget = dispatchBudgetPerTick;
+        if (budget <= 0) {
+            return true; // 不限制（旧行为）
+        }
+        long tick = appeng.hooks.ticking.TickHandler.instance().getCurrentTick();
+        if (tick != dispatchBudgetTick) {
+            dispatchBudgetTick = tick;
+            dispatchUsed = 0;
+        }
+        if (dispatchUsed >= budget) {
+            return false;
+        }
+        dispatchUsed++;
+        return true;
+    }
+
+    /** push 失败/未实际发生：退回本 tick 已用配额（预算按成功调用计费）。 */
+    public static void refundDispatch() {
+        if (dispatchUsed > 0) {
+            dispatchUsed--;
+        }
+    }
+
+    /** 诊断：本 tick 已用预算（0=未启用）。 */
+    public static int dispatchUsedThisTick() {
+        return dispatchBudgetPerTick <= 0 ? 0 : dispatchUsed;
+    }
+
     /** 小额订单免估算阈值（下单量 ≤ 此值不展开配方树，防普通订单卡顿）。 */
     public static volatile long cheapOrderAmount =
             com.ae2addon.config.AE2AddonConfig.cheapOrderAmount();
@@ -38,6 +76,7 @@ public final class CraftingCompat {
         debugLogs = com.ae2addon.config.AE2AddonConfig.debugLogs();
         batchMaxMultiplier = com.ae2addon.config.AE2AddonConfig.batchMaxMultiplier();
         sharedExpCap = com.ae2addon.config.AE2AddonConfig.sharedExpCap();
+        dispatchBudgetPerTick = com.ae2addon.config.AE2AddonConfig.dispatchBudgetPerTick();
         cheapOrderAmount = com.ae2addon.config.AE2AddonConfig.cheapOrderAmount();
     }
 

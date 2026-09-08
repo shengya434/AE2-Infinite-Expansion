@@ -47,6 +47,7 @@ public class AE2AddonConfigScreen extends Screen {
         entries.add(new Entry("maxBatchCount — 单订单最大批数", AE2AddonConfig.MAX_BATCH_COUNT, 2, 10_000_000));
         entries.add(new Entry("batchMaxMultiplier — 批量翻倍上限", AE2AddonConfig.BATCH_MAX_MULTIPLIER, 1, Long.MAX_VALUE));
         entries.add(new Entry("sharedExpCap — 经验共享继承上限（0=关）", AE2AddonConfig.SHARED_EXP_CAP, 0, Long.MAX_VALUE));
+        entries.add(new Entry("dispatchBudgetPerTick — 全网格每tick成功push预算（0=不限）", AE2AddonConfig.DISPATCH_BUDGET_PER_TICK, 0, 10_000_000));
         entries.add(new Entry("cheapOrderAmount — 小额免估算阈值", AE2AddonConfig.CHEAP_ORDER_AMOUNT, 1, Long.MAX_VALUE));
         entries.add(new Entry("cellDisplayBytes — 无限元件显示字节", AE2AddonConfig.CELL_DISPLAY_BYTES, 1, Long.MAX_VALUE));
         entries.add(new Entry("infiniteItemAmount — 无限物品真实数量", AE2AddonConfig.INFINITE_ITEM_AMOUNT, 1, Long.MAX_VALUE));

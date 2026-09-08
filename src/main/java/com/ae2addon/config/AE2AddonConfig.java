@@ -42,6 +42,15 @@ public final class AE2AddonConfig {
                     "Max batch multiplier for exponential push growth")
             .defineInRange("batchMaxMultiplier", Long.MAX_VALUE, 1L, Long.MAX_VALUE);
 
+    /** 全网格每 tick 成功 push 次数共享预算（0=不限制；防巨型订单独占服务端 tick）。 */
+    public static final ForgeConfigSpec.IntValue DISPATCH_BUDGET_PER_TICK = BUILDER
+            .comment("全网格每 tick 成功 push 次数共享预算（0=不限制=旧行为；",
+                    "与时间片纳秒预算正交，按成功 push 调用计数，批量大 N 一次推送不受影响；",
+                    "防多个巨型订单同 tick 抢占把服务端拖垮）",
+                    "Grid-wide successful-push budget per tick (0=unlimited; ",
+                    "orthogonal to time-slice ns budget; counts push calls not items)")
+            .defineInRange("dispatchBudgetPerTick", 20_000, 0, 10_000_000);
+
     /** 批量经验共享继承上限（新 lane 起步 N，防单次巨量 push）。 */
     public static final ForgeConfigSpec.LongValue SHARED_EXP_CAP = BUILDER
             .comment("批量经验共享继承上限（新 lane 从该 N 起步，0=不共享经验）",
@@ -240,6 +249,11 @@ public final class AE2AddonConfig {
 
     public static long batchMaxMultiplier() {
         return Math.max(1L, BATCH_MAX_MULTIPLIER.get());
+    }
+
+    /** 全网格每 tick 成功 push 次数共享预算（0 = 不限制）。 */
+    public static int dispatchBudgetPerTick() {
+        return Math.max(0, DISPATCH_BUDGET_PER_TICK.get());
     }
 
     /** 共享经验继承上限（0 = 关闭共享，新 lane 从 1× 起步）。 */

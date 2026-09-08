@@ -767,6 +767,24 @@ public abstract class CraftingCpuLogicMixin {
         if (ae2addon$virtualSettleActive(patternDetails)) {
             return ae2addon$virtualSettle(patternDetails);
         }
+        // ── 共享成功派发预算（2026-09-08 学 ae2lt 双预算思想）：预算耗尽时拒绝本次
+        // push（返回 false 模拟 provider 拒绝，AE2 正常退避），防止多个巨型订单同
+        // tick 抢占把服务端拖垮。仅限集成 CPU（budgetActive）真实 push 计费；
+        // 原版 CPU 与虚拟结算不占预算。
+        boolean budgetReserved = false;
+        if (ae2addon$budgetActive
+                && com.ae2addon.crafting.CraftingCompat.dispatchBudgetPerTick > 0) {
+            if (!com.ae2addon.crafting.CraftingCompat.tryConsumeDispatch()) {
+                if (CraftingCompat.debugLogs) {
+                    com.ae2addon.AE2Addon.LOGGER.info(
+                            "[ae2addon][debug] 共享派发预算耗尽，拒绝 push (provider={}, 已用={})",
+                            provider == null ? "null" : provider.getClass().getSimpleName(),
+                            com.ae2addon.crafting.CraftingCompat.dispatchUsedThisTick());
+                }
+                return false;
+            }
+            budgetReserved = true; // push 失败会退回配额
+        }
         if (!ae2addon$batchActive
                 || ae2addon$batchBasePattern == null
                 || !ae2addon$batchBasePattern.equals(patternDetails)
@@ -795,6 +813,9 @@ public abstract class CraftingCpuLogicMixin {
                 ae2addon$onBatchAccepted(patternDetails, 1L);
             } else if (!accepted && patternDetails != null) {
                 ae2addon$recordStuck(patternDetails);
+            }
+            if (!accepted && budgetReserved) {
+                com.ae2addon.crafting.CraftingCompat.refundDispatch(); // push失败退配额
             }
             return accepted;
         }
@@ -841,6 +862,9 @@ public abstract class CraftingCpuLogicMixin {
             // provider 接受时不该减半，收敛仍交给 pending 逻辑）。
             ae2addon$diagBatchRejected++;
             ae2addon$recordStuck(patternDetails);
+            if (budgetReserved) {
+                com.ae2addon.crafting.CraftingCompat.refundDispatch(); // push失败退配额
+            }
         }
         return accepted;
     }
