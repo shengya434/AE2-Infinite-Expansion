@@ -161,9 +161,9 @@ public final class AE2AddonConfig {
             .comment("ME接口(无限级)感应卡单轮供电 FE 上限（1~2147483647；",
                     "默认 100000000=1亿。Forge 能量槽是 int，单轮灌入上限即机器缺口",
                     "（≤21.4亿），设再大也等效。速度卡：0张=此值，1张=此值×16(≤21.4亿)，",
-                    "2张=每轮直接灌满机器。多 tick 总吞吐由轮数×单轮叠加）",
+                    "2张=无上限(Long.MAX哨兵)每轮灌满缺口。多 tick 总吞吐由轮数×单轮叠加）",
                     "Infinite Interface induction-card FE cap per pass (1~int.MAX;",
-                    "Forge energy is int, single-pass fill is capped by machine gap)")
+                    "0 speed cards = this; 1 = ×16; 2 = unlimited Long.MAX sentinel)")
             .defineInRange("feederPowerFeCap", 100_000_000L, 1L, Integer.MAX_VALUE);
 
     /** 感应卡每 tick 供电轮数（每轮上限 FE_CAP；1=原行为，N=N×FE_CAP FE/t 上限）。 */
@@ -332,16 +332,16 @@ public final class AE2AddonConfig {
 
     /**
      * 感应卡有效供电上限（FE/轮）：按速度卡数量倍率。
-     * 0 张 = config 原值；1 张 = ×16（钳到 int.MAX）；≥2 张 = 每轮灌满机器缺口。
-     * Forge 能量槽为 int：缺口 ≤ int.MAX，故任何 ≥ int.MAX 的 cap 等效（每轮灌满）。
+     * 0 张 = config 原值；1 张 = ×16（钳 int.MAX 防溢出）；≥2 张 = 无上限
+     * （Long.MAX_VALUE 哨兵：单轮灌满机器缺口，缺口本身 ≤ int.MAX 故安全）。
      */
     public static long feederPowerEffectiveFeCap(int speedCards) {
         if (speedCards >= 2) {
-            return Integer.MAX_VALUE; // 每轮灌满缺口（缺口本身 ≤ int.MAX）
+            return Long.MAX_VALUE; // 无上限哨兵（灌满缺口即止）
         }
         long cap = feederPowerFeCap();
         if (speedCards == 1) {
-            // long 域乘法防溢出，再钳到 int.MAX（超出即每轮灌满，等效无上限）
+            // long 域乘法防溢出，再钳到 int.MAX（单轮超过缺口无意义）
             return Math.min((long) Integer.MAX_VALUE, cap * 16L);
         }
         return cap;

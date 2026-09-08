@@ -68,13 +68,13 @@ public final class AppFluxPowerCompat {
     /** 给机器充能（多轮，默认每轮无上限）；兼容旧调用。 */
     public static long feedEnergy(BlockEntity target, Direction side,
             appeng.api.networking.IGrid grid, IActionSource source, int passes) {
-        return feedEnergy(target, side, grid, source, passes, Integer.MAX_VALUE);
+        return feedEnergy(target, side, grid, source, passes, Long.MAX_VALUE);
     }
 
     /** 给机器充能（单轮）；保留原签名兼容旧调用。 */
     public static long feedEnergy(BlockEntity target, Direction side,
             appeng.api.networking.IGrid grid, IActionSource source) {
-        return feedEnergy(target, side, grid, source, 1, Integer.MAX_VALUE);
+        return feedEnergy(target, side, grid, source, 1, Long.MAX_VALUE);
     }
 
     /**

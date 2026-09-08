@@ -947,7 +947,7 @@ public class InfiniteInterfacePart extends AEBasePart
                 int accel = speedCards();
                 String mode = accel >= 2 ? "无上限" : accel == 1 ? "×16" : "config";
                 com.ae2addon.AE2Addon.LOGGER.info(
-                        "[ae2addon][feeder] 供电(part) {} FE/tick（感应卡，{}轮，{}加速卡={}）",
+                        "[ae2addon][feeder] 供电(part) {} FE/tick（感应卡，{}轮，{}速度卡={}）",
                         fe, passes, accel, mode);
             }
         } catch (RuntimeException ignored) {
