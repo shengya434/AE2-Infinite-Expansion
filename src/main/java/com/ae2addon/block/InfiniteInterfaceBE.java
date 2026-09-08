@@ -1067,6 +1067,12 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                 appeng.core.definitions.AEItems.CAPACITY_CARD.asItem());
     }
 
+    /** 速度卡/加速卡数量（感应卡供电倍率：1张×16，≥2张无上限；2026-09-08 sensei）。 */
+    public int speedCards() {
+        return upgrades.getInstalledUpgrades(
+                appeng.core.definitions.AEItems.SPEED_CARD.asItem());
+    }
+
     /** 速度卡数量（0-2）：每张喂出预算 ×2。 */
     /** 当前活动的样板槽数（9 + 容量卡×9，分页显示）。 */
     public int activePatternSlots() {
@@ -1975,13 +1981,18 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             if (target == null) {
                 return;
             }
+            long cap = com.ae2addon.config.AE2AddonConfig.feederPowerEffectiveFeCap(
+                    speedCards());
+            int passes = com.ae2addon.config.AE2AddonConfig.feederPowerPasses();
             long fe = com.ae2addon.compat.AppFluxPowerCompat.feedEnergy(
                     target, front.getOpposite(), getMainNode().getGrid(), actionSource,
-                    com.ae2addon.config.AE2AddonConfig.feederPowerPasses());
+                    passes, cap);
             if (fe > 0 && (level.getGameTime() & 0x3F) == 0) {
+                int accel = speedCards();
+                String mode = accel >= 2 ? "无上限" : accel == 1 ? "×16" : "config";
                 com.ae2addon.AE2Addon.LOGGER.info(
-                        "[ae2addon][feeder] 供电 {} FE/tick（感应卡，{}轮）", fe,
-                        com.ae2addon.config.AE2AddonConfig.feederPowerPasses());
+                        "[ae2addon][feeder] 供电 {} FE/tick（感应卡，{}轮，{}加速卡={}）",
+                        fe, passes, accel, mode);
             }
         } catch (RuntimeException ignored) {
         }

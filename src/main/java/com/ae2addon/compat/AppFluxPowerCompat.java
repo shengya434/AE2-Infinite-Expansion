@@ -45,16 +45,16 @@ public final class AppFluxPowerCompat {
                 new ResourceLocation("appflux", "induction_card"));
     }
 
-    /** 给机器充能（多轮）：网络 FE → 机器能量槽；返回本次实际传输 FE。 */
+    /** 给机器充能（多轮，可配单轮上限）：网络 FE → 机器能量槽；返回本次实际传输 FE。 */
     public static long feedEnergy(BlockEntity target, Direction side,
-            appeng.api.networking.IGrid grid, IActionSource source, int passes) {
+            appeng.api.networking.IGrid grid, IActionSource source, int passes, long perPassCap) {
         if (!isLoaded() || target == null || grid == null || passes <= 0) {
             return 0;
         }
         long total = 0;
         try {
             for (int i = 0; i < passes; i++) {
-                long fe = feedEnergyOnce(target, side, grid, source);
+                long fe = feedEnergyOnce(target, side, grid, source, perPassCap);
                 total += fe;
                 if (fe <= 0) {
                     break; // 机器满了/网络空/不可收，继续轮无意义
@@ -65,15 +65,25 @@ public final class AppFluxPowerCompat {
         return total;
     }
 
+    /** 给机器充能（多轮，默认每轮无上限）；兼容旧调用。 */
+    public static long feedEnergy(BlockEntity target, Direction side,
+            appeng.api.networking.IGrid grid, IActionSource source, int passes) {
+        return feedEnergy(target, side, grid, source, passes, Long.MAX_VALUE);
+    }
+
     /** 给机器充能（单轮）；保留原签名兼容旧调用。 */
     public static long feedEnergy(BlockEntity target, Direction side,
             appeng.api.networking.IGrid grid, IActionSource source) {
-        return feedEnergy(target, side, grid, source, 1);
+        return feedEnergy(target, side, grid, source, 1, Long.MAX_VALUE);
     }
 
+    /**
+     * 单轮充能：上限 perPassCap（long；无上限传 Long.MAX）。
+     * 机器能量槽是 int 容量，缺口本身 ≤ int max；cap 超过缺口时等价灌满缺口。
+     */
     private static long feedEnergyOnce(BlockEntity target, Direction side,
-            appeng.api.networking.IGrid grid, IActionSource source) {
-        if (!isLoaded() || target == null || grid == null) {
+            appeng.api.networking.IGrid grid, IActionSource source, long perPassCap) {
+        if (!isLoaded() || target == null || grid == null || perPassCap <= 0) {
             return 0;
         }
         try {
@@ -99,15 +109,18 @@ public final class AppFluxPowerCompat {
                 }
                 return 0;
             }
+            int gap = machine.getMaxEnergyStored() - machine.getEnergyStored();
             if (System.getProperty("ae2addon.debugPower") != null) {
                 com.ae2addon.AE2Addon.LOGGER.info(
-                        "[ae2addon][feeder] 供电诊断: networkEnergy={} canExtract={} stored={}/{} 单轮上限={}FE",
+                        "[ae2addon][feeder] 供电诊断: networkEnergy={} canExtract={} stored={}/{} cap={}FE/轮",
                         networkEnergy, networkEnergy.canExtract(),
-                        machine.getEnergyStored(), machine.getMaxEnergyStored(),
-                        com.ae2addon.config.AE2AddonConfig.feederPowerFeCap());
+                        machine.getEnergyStored(), machine.getMaxEnergyStored(), perPassCap);
             }
-            int need = Math.min((int) com.ae2addon.config.AE2AddonConfig.feederPowerFeCap(),
-                    machine.getMaxEnergyStored() - machine.getEnergyStored());
+            if (gap <= 0) {
+                return 0;
+            }
+            // 本轮上限（long）与机器缺口（int）取小；cap≥缺口时灌满缺口
+            int need = (int) Math.min((long) gap, perPassCap);
             if (need <= 0) {
                 return 0;
             }

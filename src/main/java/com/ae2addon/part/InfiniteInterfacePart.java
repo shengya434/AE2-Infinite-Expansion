@@ -937,13 +937,18 @@ public class InfiniteInterfacePart extends AEBasePart
             if (target == null) {
                 return;
             }
+            long cap = com.ae2addon.config.AE2AddonConfig.feederPowerEffectiveFeCap(
+                    speedCards());
+            int passes = com.ae2addon.config.AE2AddonConfig.feederPowerPasses();
             long fe = com.ae2addon.compat.AppFluxPowerCompat.feedEnergy(
                     target, front.getOpposite(), getMainNode().getGrid(), actionSource,
-                    com.ae2addon.config.AE2AddonConfig.feederPowerPasses());
+                    passes, cap);
             if (fe > 0 && (lvl.getGameTime() & 0x3F) == 0) {
+                int accel = speedCards();
+                String mode = accel >= 2 ? "无上限" : accel == 1 ? "×16" : "config";
                 com.ae2addon.AE2Addon.LOGGER.info(
-                        "[ae2addon][feeder] 供电(part) {} FE/tick（感应卡，{}轮）", fe,
-                        com.ae2addon.config.AE2AddonConfig.feederPowerPasses());
+                        "[ae2addon][feeder] 供电(part) {} FE/tick（感应卡，{}轮，{}加速卡={}）",
+                        fe, passes, accel, mode);
             }
         } catch (RuntimeException ignored) {
         }
