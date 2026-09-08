@@ -68,17 +68,17 @@ public final class AppFluxPowerCompat {
     /** 给机器充能（多轮，默认每轮无上限）；兼容旧调用。 */
     public static long feedEnergy(BlockEntity target, Direction side,
             appeng.api.networking.IGrid grid, IActionSource source, int passes) {
-        return feedEnergy(target, side, grid, source, passes, Long.MAX_VALUE);
+        return feedEnergy(target, side, grid, source, passes, Integer.MAX_VALUE);
     }
 
     /** 给机器充能（单轮）；保留原签名兼容旧调用。 */
     public static long feedEnergy(BlockEntity target, Direction side,
             appeng.api.networking.IGrid grid, IActionSource source) {
-        return feedEnergy(target, side, grid, source, 1, Long.MAX_VALUE);
+        return feedEnergy(target, side, grid, source, 1, Integer.MAX_VALUE);
     }
 
     /**
-     * 单轮充能：上限 perPassCap（long；无上限传 Long.MAX）。
+     * 单轮充能：上限 perPassCap（long；≥ int.MAX 等效无上限）。
      * 机器能量槽是 int 容量，缺口本身 ≤ int max；cap 超过缺口时等价灌满缺口。
      */
     private static long feedEnergyOnce(BlockEntity target, Direction side,

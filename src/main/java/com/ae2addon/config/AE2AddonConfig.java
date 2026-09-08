@@ -156,14 +156,15 @@ public final class AE2AddonConfig {
 
     // ── ME接口（无限级）感应卡供电 ──
 
-    /** 感应卡单轮供电 FE 上限（1~Long.MAX；默认 1 亿；插1张加速卡×16，插2张无上限）。 */
+    /** 感应卡单轮供电 FE 上限（1~int.MAX；默认 1 亿；插1张速度卡×16，插2张每轮灌满）。 */
     public static final ForgeConfigSpec.LongValue FEEDER_POWER_FE_CAP = BUILDER
-            .comment("ME接口(无限级)感应卡单轮供电 FE 上限（1~9223372036854775807；",
-                    "默认 100000000=1亿。加速卡倍率：0张=此值，1张=此值×16，",
-                    "2张=无上限直接灌满机器。每tick总上限=此值×轮数）",
-                    "Infinite Interface induction-card FE cap per pass",
-                    "(0 accel cards = this; 1 = ×16; 2+ = unlimited; total/tick = this × passes)")
-            .defineInRange("feederPowerFeCap", 100_000_000L, 1L, Long.MAX_VALUE);
+            .comment("ME接口(无限级)感应卡单轮供电 FE 上限（1~2147483647；",
+                    "默认 100000000=1亿。Forge 能量槽是 int，单轮灌入上限即机器缺口",
+                    "（≤21.4亿），设再大也等效。速度卡：0张=此值，1张=此值×16(≤21.4亿)，",
+                    "2张=每轮直接灌满机器。多 tick 总吞吐由轮数×单轮叠加）",
+                    "Infinite Interface induction-card FE cap per pass (1~int.MAX;",
+                    "Forge energy is int, single-pass fill is capped by machine gap)")
+            .defineInRange("feederPowerFeCap", 100_000_000L, 1L, Integer.MAX_VALUE);
 
     /** 感应卡每 tick 供电轮数（每轮上限 FE_CAP；1=原行为，N=N×FE_CAP FE/t 上限）。 */
     public static final ForgeConfigSpec.IntValue FEEDER_POWER_PASSES = BUILDER
@@ -330,17 +331,18 @@ public final class AE2AddonConfig {
     }
 
     /**
-     * 感应卡有效供电上限（FE/轮）：按加速卡数量倍率。
-     * 0 张 = config 原值；1 张 = ×16；≥2 张 = 无上限（Long.MAX，灌满机器缺口即止）。
+     * 感应卡有效供电上限（FE/轮）：按速度卡数量倍率。
+     * 0 张 = config 原值；1 张 = ×16（钳到 int.MAX）；≥2 张 = 每轮灌满机器缺口。
+     * Forge 能量槽为 int：缺口 ≤ int.MAX，故任何 ≥ int.MAX 的 cap 等效（每轮灌满）。
      */
-    public static long feederPowerEffectiveFeCap(int accelCards) {
-        if (accelCards >= 2) {
-            return Long.MAX_VALUE;
+    public static long feederPowerEffectiveFeCap(int speedCards) {
+        if (speedCards >= 2) {
+            return Integer.MAX_VALUE; // 每轮灌满缺口（缺口本身 ≤ int.MAX）
         }
         long cap = feederPowerFeCap();
-        if (accelCards == 1) {
-            // 防溢出：超过 Long.MAX/16 直接给 MAX
-            return cap > Long.MAX_VALUE / 16 ? Long.MAX_VALUE : cap * 16;
+        if (speedCards == 1) {
+            // long 域乘法防溢出，再钳到 int.MAX（超出即每轮灌满，等效无上限）
+            return Math.min((long) Integer.MAX_VALUE, cap * 16L);
         }
         return cap;
     }
