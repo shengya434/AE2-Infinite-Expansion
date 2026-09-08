@@ -154,6 +154,17 @@ public final class AE2AddonConfig {
                     "feederExtractLoopLimit")
             .defineInRange("feederExtractLoopLimit", 1_000_000, 0, 2_000_000_000);
 
+    // ── ME接口（无限级）感应卡供电 ──
+
+    /** 感应卡每 tick 供电轮数（每轮上限 100M FE；1=原行为，N=N×100M FE/t 上限）。 */
+    public static final ForgeConfigSpec.IntValue FEEDER_POWER_PASSES = BUILDER
+            .comment("ME接口(无限级)感应卡每tick供电轮数（每轮上限100M FE，",
+                    "N轮=上限N×100M FE/t；默认1=单轮。机器收得慢时调大无效，",
+                    "瓶颈在机器接收速率时请先看机器侧）",
+                    "Infinite Interface induction-card power passes per tick",
+                    "(each pass capped ~100M FE; N passes = N×100M FE/t ceiling)")
+            .defineInRange("feederPowerPassesPerTick", 1, 1, 1024);
+
     // ── 调试 ──
 
     /** 热路径调试日志（submitJob/批次进度/批量推送等高频日志）。 */
@@ -302,5 +313,10 @@ public final class AE2AddonConfig {
 
     public static int feederRestockInterval() {
         return Math.max(1, FEEDER_RESTOCK_INTERVAL.get());
+    }
+
+    /** 感应卡每 tick 供电轮数（每轮上限 100M FE）。 */
+    public static int feederPowerPasses() {
+        return Math.max(1, FEEDER_POWER_PASSES.get());
     }
 }

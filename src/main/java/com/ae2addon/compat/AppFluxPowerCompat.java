@@ -24,8 +24,8 @@ public final class AppFluxPowerCompat {
 
     private static boolean checked;
     private static boolean loaded;
-    /** 每 tick 供电上限（FE；防单 tick 卡顿，可再调）。 */
-    private static final long MAX_FE_PER_TICK = 100_000_000L;
+    /** 单轮供电上限（FE；防单 tick 卡顿，可再调）。 */
+    private static final long MAX_FE_PER_PASS = 100_000_000L;
 
     private AppFluxPowerCompat() {
     }
@@ -47,8 +47,33 @@ public final class AppFluxPowerCompat {
                 new ResourceLocation("appflux", "induction_card"));
     }
 
-    /** 给机器充能：网络 FE → 机器能量槽；返回本次实际传输 FE。 */
+    /** 给机器充能（多轮）：网络 FE → 机器能量槽；返回本次实际传输 FE。 */
     public static long feedEnergy(BlockEntity target, Direction side,
+            appeng.api.networking.IGrid grid, IActionSource source, int passes) {
+        if (!isLoaded() || target == null || grid == null || passes <= 0) {
+            return 0;
+        }
+        long total = 0;
+        try {
+            for (int i = 0; i < passes; i++) {
+                long fe = feedEnergyOnce(target, side, grid, source);
+                total += fe;
+                if (fe <= 0) {
+                    break; // 机器满了/网络空/不可收，继续轮无意义
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return total;
+    }
+
+    /** 给机器充能（单轮）；保留原签名兼容旧调用。 */
+    public static long feedEnergy(BlockEntity target, Direction side,
+            appeng.api.networking.IGrid grid, IActionSource source) {
+        return feedEnergy(target, side, grid, source, 1);
+    }
+
+    private static long feedEnergyOnce(BlockEntity target, Direction side,
             appeng.api.networking.IGrid grid, IActionSource source) {
         if (!isLoaded() || target == null || grid == null) {
             return 0;
@@ -78,11 +103,11 @@ public final class AppFluxPowerCompat {
             }
             if (System.getProperty("ae2addon.debugPower") != null) {
                 com.ae2addon.AE2Addon.LOGGER.info(
-                        "[ae2addon][feeder] 供电诊断: networkEnergy={} canExtract={} stored={}/{} 上限={}FE/t",
+                        "[ae2addon][feeder] 供电诊断: networkEnergy={} canExtract={} stored={}/{} 单轮上限={}FE",
                         networkEnergy, networkEnergy.canExtract(),
-                        machine.getEnergyStored(), machine.getMaxEnergyStored(), MAX_FE_PER_TICK);
+                        machine.getEnergyStored(), machine.getMaxEnergyStored(), MAX_FE_PER_PASS);
             }
-            int need = Math.min((int) MAX_FE_PER_TICK,
+            int need = Math.min((int) MAX_FE_PER_PASS,
                     machine.getMaxEnergyStored() - machine.getEnergyStored());
             if (need <= 0) {
                 return 0;

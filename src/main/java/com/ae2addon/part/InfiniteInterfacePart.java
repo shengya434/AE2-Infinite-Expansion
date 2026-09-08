@@ -938,10 +938,12 @@ public class InfiniteInterfacePart extends AEBasePart
                 return;
             }
             long fe = com.ae2addon.compat.AppFluxPowerCompat.feedEnergy(
-                    target, front.getOpposite(), getMainNode().getGrid(), actionSource);
+                    target, front.getOpposite(), getMainNode().getGrid(), actionSource,
+                    com.ae2addon.config.AE2AddonConfig.feederPowerPasses());
             if (fe > 0 && (lvl.getGameTime() & 0x3F) == 0) {
                 com.ae2addon.AE2Addon.LOGGER.info(
-                        "[ae2addon][feeder] 供电(part) {} FE/tick（感应卡）", fe);
+                        "[ae2addon][feeder] 供电(part) {} FE/tick（感应卡，{}轮）", fe,
+                        com.ae2addon.config.AE2AddonConfig.feederPowerPasses());
             }
         } catch (RuntimeException ignored) {
         }
