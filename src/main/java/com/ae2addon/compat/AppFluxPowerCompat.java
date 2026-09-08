@@ -24,8 +24,6 @@ public final class AppFluxPowerCompat {
 
     private static boolean checked;
     private static boolean loaded;
-    /** 单轮供电上限（FE；防单 tick 卡顿，可再调）。 */
-    private static final long MAX_FE_PER_PASS = 100_000_000L;
 
     private AppFluxPowerCompat() {
     }
@@ -105,9 +103,10 @@ public final class AppFluxPowerCompat {
                 com.ae2addon.AE2Addon.LOGGER.info(
                         "[ae2addon][feeder] 供电诊断: networkEnergy={} canExtract={} stored={}/{} 单轮上限={}FE",
                         networkEnergy, networkEnergy.canExtract(),
-                        machine.getEnergyStored(), machine.getMaxEnergyStored(), MAX_FE_PER_PASS);
+                        machine.getEnergyStored(), machine.getMaxEnergyStored(),
+                        com.ae2addon.config.AE2AddonConfig.feederPowerFeCap());
             }
-            int need = Math.min((int) MAX_FE_PER_PASS,
+            int need = Math.min((int) com.ae2addon.config.AE2AddonConfig.feederPowerFeCap(),
                     machine.getMaxEnergyStored() - machine.getEnergyStored());
             if (need <= 0) {
                 return 0;

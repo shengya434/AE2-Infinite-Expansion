@@ -156,13 +156,21 @@ public final class AE2AddonConfig {
 
     // ── ME接口（无限级）感应卡供电 ──
 
-    /** 感应卡每 tick 供电轮数（每轮上限 100M FE；1=原行为，N=N×100M FE/t 上限）。 */
+    /** 感应卡单轮供电 FE 上限（1~21亿；默认 1 亿；每 tick 总上限=此值×轮数）。 */
+    public static final ForgeConfigSpec.LongValue FEEDER_POWER_FE_CAP = BUILDER
+            .comment("ME接口(无限级)感应卡单轮供电 FE 上限（1~2147483647；",
+                    "默认 100000000=1亿；每tick总上限 = 此值 × feederPowerPassesPerTick）",
+                    "Infinite Interface induction-card FE cap per pass",
+                    "(total per tick = this × feederPowerPassesPerTick)")
+            .defineInRange("feederPowerFeCap", 100_000_000L, 1L, 2_147_483_647L);
+
+    /** 感应卡每 tick 供电轮数（每轮上限 FE_CAP；1=原行为，N=N×FE_CAP FE/t 上限）。 */
     public static final ForgeConfigSpec.IntValue FEEDER_POWER_PASSES = BUILDER
-            .comment("ME接口(无限级)感应卡每tick供电轮数（每轮上限100M FE，",
-                    "N轮=上限N×100M FE/t；默认1=单轮。机器收得慢时调大无效，",
+            .comment("ME接口(无限级)感应卡每tick供电轮数（每轮上限见 feederPowerFeCap，",
+                    "N轮=上限N×FE/t；默认1=单轮。机器收得慢时调大无效，",
                     "瓶颈在机器接收速率时请先看机器侧）",
                     "Infinite Interface induction-card power passes per tick",
-                    "(each pass capped ~100M FE; N passes = N×100M FE/t ceiling)")
+                    "(each pass capped at feederPowerFeCap; N passes = N× cap ceiling)")
             .defineInRange("feederPowerPassesPerTick", 1, 1, 1024);
 
     // ── 调试 ──
@@ -315,7 +323,12 @@ public final class AE2AddonConfig {
         return Math.max(1, FEEDER_RESTOCK_INTERVAL.get());
     }
 
-    /** 感应卡每 tick 供电轮数（每轮上限 100M FE）。 */
+    /** 感应卡单轮供电 FE 上限（默认 1 亿；每 tick 总上限=此值×轮数）。 */
+    public static long feederPowerFeCap() {
+        return Math.max(1L, FEEDER_POWER_FE_CAP.get());
+    }
+
+    /** 感应卡每 tick 供电轮数（每轮上限 feederPowerFeCap）。 */
     public static int feederPowerPasses() {
         return Math.max(1, FEEDER_POWER_PASSES.get());
     }
