@@ -748,9 +748,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return true;
     }
 
-    /** 取消回退：把指定 CPU 簇推送、尚未喂出的材料插回网络。 */
+    /** 取消回退：把指定 CPU 簇推送、尚未喂出的材料插回网络（不丢料加固）。 */
     private void returnPushedForCluster(Object cluster) {
-        Map<AEKey, BigInteger> pushed = pushedByCluster.remove(cluster);
+        Map<AEKey, BigInteger> pushed = pushedByCluster.get(cluster);
         if (pushed == null || pushed.isEmpty()) {
             return;
         }
@@ -758,25 +758,37 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         appeng.api.storage.MEStorage storage = grid == null
                 ? null : grid.getStorageService().getInventory();
         BigInteger returned = BigInteger.ZERO;
-        for (var entry : pushed.entrySet()) {
+        java.util.Iterator<Map.Entry<AEKey, BigInteger>> it = pushed.entrySet().iterator();
+        while (it.hasNext()) {
+            var entry = it.next();
             AEKey key = entry.getKey();
             long have = reservoirAmount(key);
             long back = entry.getValue()
                     .min(BigInteger.valueOf(have))
                     .min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
             if (back <= 0) {
+                it.remove(); // 池里已无该料（已喂出/已退）：清记账防滞留重试空转
                 continue;
             }
-            if (storage != null) {
-                long inserted = storage.insert(key, back, Actionable.MODULATE, actionSource);
-                if (inserted > 0) {
-                    subtractReservoir(key, inserted);
-                    returned = returned.add(BigInteger.valueOf(inserted));
-                }
-            } else {
-                subtractReservoir(key, back);
-                returned = returned.add(BigInteger.valueOf(back));
+            if (storage == null) {
+                // 断网：不退不扣，记账保留 → 周期重试（不丢料，2026-09-08 加固）
+                break;
             }
+            long inserted = storage.insert(key, back, Actionable.MODULATE, actionSource);
+            if (inserted > 0) {
+                subtractReservoir(key, inserted);
+                returned = returned.add(BigInteger.valueOf(inserted));
+                long remain = entry.getValue().subtract(BigInteger.valueOf(inserted)).longValue();
+                if (remain <= 0) {
+                    it.remove(); // 该 key 全部退完
+                } else {
+                    entry.setValue(BigInteger.valueOf(remain)); // 部分退：记账保留余量
+                }
+            }
+            // inserted == 0：网络拒收（满/瞬态），记账保留 → 周期重试
+        }
+        if (pushed.isEmpty()) {
+            pushedByCluster.remove(cluster); // 全部退完才删簇账
         }
         if (returned.signum() > 0) {
             setChanged();
@@ -784,6 +796,20 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
                     "[ae2addon][feeder] CPU任务取消，材料回退网络 {} 个（{}种），剩余蓄水池={}种/合计{}",
                     fmt(returned), pushed.size(), reservoirSummary()[0],
                     fmt(totalAmount()));
+        }
+    }
+
+    /** 滞留回退重试：断网/拒收时没退完的簇记账，网格恢复后自动补退（每 20 tick）。 */
+    private void retryPendingReturns() {
+        if (pushedByCluster.isEmpty()) {
+            return;
+        }
+        IGrid grid = getMainNode().getGrid();
+        if (grid == null) {
+            return; // 仍断网，等下次
+        }
+        for (Object cluster : new java.util.ArrayList<>(pushedByCluster.keySet())) {
+            returnPushedForCluster(cluster); // 保留的记账会重试，退完自动删
         }
     }
 
@@ -1300,6 +1326,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         if ((lvl.getGameTime() % 10) == 0) {
             pushPendingToNetwork(); // 待入网缓存自动补送（网络有空间即送出，2026-09-02）
+        }
+        if ((lvl.getGameTime() % 20) == 0) {
+            retryPendingReturns(); // 取消回退滞留重试（断网/拒收恢复后自动补退，2026-09-08）
         }
         feedMachinePower(); // 感应卡供电独立于喂出（蓄水池空也供电）
         feedMachine();
