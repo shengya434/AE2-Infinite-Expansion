@@ -426,6 +426,12 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                     }
                 }
             }
+            java.util.Map<appeng.api.crafting.IPatternDetails, Long> patternTimes =
+                    new java.util.HashMap<>();
+            patternTimes.put(chosen, safeTimes);
+            // 2026-09-09 递归材料展开：非自指输入若网络库存不足，展开其合成配方链
+            // （材料自己的配方样板，可能多级），只有真叶子才进 used。
+            java.util.Set<AEKey> materialGuard = new java.util.HashSet<>(selfKeys);
             for (var inputGroup : chosen.getInputs()) {
                 if (inputGroup == null || inputGroup.getPossibleInputs() == null
                         || inputGroup.getPossibleInputs().length == 0) {
@@ -437,13 +443,27 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                 }
                 if (selfKeys.contains(gs.what())) {
                     used.add(gs.what(), 1); // 自指种子：1 份起手
-                } else {
-                    // 2026-09-09 修复：漏乘 multiplier——增殖配方把钻石 7 颗编码成
-                    // mult=7×amount=1（重复槽），只乘 amount 会少备 7 倍料
-                    // （500 钻撑 71 轮耗尽 → 提取失败卡死，sensei 实测 + 诊断实锤）。
-                    long mult = Math.max(1, inputGroup.getMultiplier());
-                    used.add(gs.what(), gs.amount() * mult * safeTimes);
+                    continue;
                 }
+                long mult = Math.max(1, inputGroup.getMultiplier());
+                long needPer = gs.amount() * mult;
+                if (needPer <= 0) {
+                    continue;
+                }
+                // 库存抵扣：网络可提取的先用库存，缺口才展开配方链
+                long needTotal;
+                try {
+                    needTotal = Math.multiplyExact(needPer, safeTimes);
+                } catch (ArithmeticException overflow) {
+                    // 超出 long 记账上限：放行原路径（模拟拦截/拆批会处理）
+                    used.add(gs.what(), Long.MAX_VALUE / 2);
+                    continue;
+                }
+                if (needTotal <= 0) {
+                    continue;
+                }
+                ae2addon$expandMaterial(grid, module, gs.what(), needTotal,
+                        used, patternTimes, materialGuard, 0);
             }
             var plan = new appeng.crafting.CraftingPlan(
                     new appeng.api.stacks.GenericStack(what, amount),
@@ -453,7 +473,7 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                     used,
                     new KeyCounter(), // emittedItems
                     new KeyCounter(), // missingItems（自指种子由 used 提取，网络有即可）
-                    java.util.Map.of(chosen, safeTimes));
+                    patternTimes);
             com.ae2addon.AE2Addon.LOGGER.warn(
                     "[ae2addon] 模块即时结算: what={} amount={} 配方={} times={} 输入={}种（绕开 VM 模拟）",
                     what, amount, chosen.getClass().getSimpleName(), safeTimes, used.size());
@@ -465,6 +485,168 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                     "[ae2addon] 模块即时结算异常，放行原路径: {}", e.toString());
             return false;
         }
+    }
+
+    // ── 增殖材料递归展开（2026-09-09）──
+
+    /**
+     * 递归展开材料的配方链：非自指输入若网络库存不足，则把缺口转交该材料的
+     * 合成配方（子任务），直到叶子（无配方/库存充足）。支持多级：增殖要钻石、
+     * 钻石没货但钻石有配方（材料链 A→B→C…层层合成）。
+     *
+     * @param used 需要从网络库存提取的叶子材料（真库存/无配方才进 used）
+     * @param patternTimes 合成配方执行次数（增殖样板 + 材料子配方共享）
+     * @param guard 防环：已展开过的材料 key 集合（自身种子已处理）
+     * @param depth 递归深度上限（防配方环 A→B→A 死循环）
+     */
+    @Unique
+    private void ae2addon$expandMaterial(appeng.api.networking.IGrid grid,
+            com.ae2addon.block.AssemblerCoreBE module, AEKey material, long need,
+            KeyCounter used,
+            java.util.Map<appeng.api.crafting.IPatternDetails, Long> patternTimes,
+            java.util.Set<AEKey> guard, int depth) {
+        try {
+            if (need <= 0 || material == null) {
+                return;
+            }
+            if (depth > 12) {
+                // 展开深度超限（疑似配方环）：剩余缺口退回叶子，由库存/缺料自然处理
+                used.add(material, need);
+                return;
+            }
+            if (!guard.add(material)) {
+                // 已在展开链上：配方环（A→B→A）。缺口无法自举，当叶子处理。
+                used.add(material, need);
+                return;
+            }
+            try {
+                // 1) 库存抵扣：网络能直接提取的先用库存（含无限元件哨兵）
+                long inStock = 0;
+                try {
+                    var storage = grid.getStorageService().getInventory();
+                    // SIMULATE 探活可提取量（不真实扣库）；返回 min(need, 实际可得)
+                    inStock = storage.extract(material, need,
+                            appeng.api.config.Actionable.SIMULATE,
+                            appeng.api.networking.security.IActionSource.empty());
+                } catch (RuntimeException inventoryError) {
+                    inStock = 0;
+                }
+                if (inStock >= need) {
+                    used.add(material, need); // 库存够：整需求进 used（CPU 从网络提取）
+                    return;
+                }
+                if (inStock > 0) {
+                    used.add(material, inStock);
+                    need -= inStock;
+                }
+                // 2) 剩余缺口：找材料的合成配方（合成族 + 模块白名单）
+                java.util.Collection<appeng.api.crafting.IPatternDetails> recipes =
+                        grid.getCraftingService().getCraftingFor(material);
+                if (recipes == null || recipes.isEmpty()) {
+                    used.add(material, need); // 无配方叶子：缺口回 used（库存不够自然缺料）
+                    return;
+                }
+                appeng.api.crafting.IPatternDetails sub = null;
+                for (var p : recipes) {
+                    if (ae2addon$isCraftingPattern(p) && module.declares(p)
+                            && !ae2addon$isSelfReferentialPatternLocal(p)) {
+                        sub = p;
+                        break;
+                    }
+                }
+                if (sub == null) {
+                    // 无可用配方：叶子（虚拟结算只认模块白名单合成族；真实机器配方
+                    // 不在白名单的走原版模拟路径，这里不展开避免误判）
+                    used.add(material, need);
+                    return;
+                }
+                // 3) 子配方执行次数 = ceil(need / 单次产出 material 量)
+                long subOut = 0;
+                for (var o : sub.getOutputs()) {
+                    if (o != null && o.what() != null && o.what().equals(material)) {
+                        subOut = Math.max(subOut, o.amount());
+                    }
+                }
+                if (subOut <= 0) {
+                    used.add(material, need);
+                    return;
+                }
+                long subTimes = Math.max(1, (need + subOut - 1) / subOut);
+                patternTimes.merge(sub, subTimes, Long::sum);
+                // 4) 递归子配方的输入
+                for (var inputGroup : sub.getInputs()) {
+                    if (inputGroup == null || inputGroup.getPossibleInputs() == null
+                            || inputGroup.getPossibleInputs().length == 0) {
+                        continue;
+                    }
+                    var subGs = inputGroup.getPossibleInputs()[0];
+                    if (subGs == null || subGs.what() == null) {
+                        continue;
+                    }
+                    // 子配方输入若与子配方产物同种（子增殖/环），跳过（种子交给上层自指逻辑）
+                    boolean subSelf = false;
+                    for (var so : sub.getOutputs()) {
+                        if (so != null && so.what() != null
+                                && so.what().equals(subGs.what())) {
+                            subSelf = true;
+                            break;
+                        }
+                    }
+                    if (subSelf) {
+                        used.add(subGs.what(), 1); // 子增殖种子：1 份起手
+                        continue;
+                    }
+                    long subMult = Math.max(1, inputGroup.getMultiplier());
+                    long subNeed;
+                    try {
+                        subNeed = Math.multiplyExact(
+                                Math.multiplyExact(subGs.amount(), subMult), subTimes);
+                    } catch (ArithmeticException overflow) {
+                        used.add(subGs.what(), Long.MAX_VALUE / 2);
+                        continue;
+                    }
+                    if (subNeed > 0) {
+                        ae2addon$expandMaterial(grid, module, subGs.what(), subNeed,
+                                used, patternTimes, guard, depth + 1);
+                    }
+                }
+            } finally {
+                guard.remove(material);
+            }
+        } catch (RuntimeException e) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] 材料递归展开异常（material={}）: {}", material, e.toString());
+        }
+    }
+
+    /** 自指配方本地判定（产物=输入同种；与 CraftingCpuLogicMixin 同语义，mixin 间不互引用）。 */
+    @Unique
+    private static boolean ae2addon$isSelfReferentialPatternLocal(
+            appeng.api.crafting.IPatternDetails pattern) {
+        if (pattern == null) {
+            return false;
+        }
+        var outs = pattern.getOutputs();
+        if (outs == null || outs.length == 0) {
+            return false;
+        }
+        for (var inGroup : pattern.getInputs()) {
+            if (inGroup == null || inGroup.getPossibleInputs() == null) {
+                continue;
+            }
+            for (var gs : inGroup.getPossibleInputs()) {
+                if (gs == null || gs.what() == null) {
+                    continue;
+                }
+                for (var out : outs) {
+                    if (out != null && out.what() != null
+                            && out.what().equals(gs.what())) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     /** 合成族判定（与 CraftingCpuLogicMixin 同逻辑，mixin 间不互相引用）。 */
