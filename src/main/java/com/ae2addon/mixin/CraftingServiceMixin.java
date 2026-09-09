@@ -438,7 +438,11 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                 if (selfKeys.contains(gs.what())) {
                     used.add(gs.what(), 1); // 自指种子：1 份起手
                 } else {
-                    used.add(gs.what(), gs.amount() * safeTimes);
+                    // 2026-09-09 修复：漏乘 multiplier——增殖配方把钻石 7 颗编码成
+                    // mult=7×amount=1（重复槽），只乘 amount 会少备 7 倍料
+                    // （500 钻撑 71 轮耗尽 → 提取失败卡死，sensei 实测 + 诊断实锤）。
+                    long mult = Math.max(1, inputGroup.getMultiplier());
+                    used.add(gs.what(), gs.amount() * mult * safeTimes);
                 }
             }
             var plan = new appeng.crafting.CraftingPlan(

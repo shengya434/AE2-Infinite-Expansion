@@ -606,6 +606,10 @@ public abstract class CraftingCpuLogicMixin {
                         "[ae2addon][debug] 1x提取(节流): 产出={} 结果={} inv={}",
                         io, result1x == null ? "null(失败)" : "成功",
                         inventory == null ? "null" : inventory.getClass().getSimpleName());
+                // 2026-09-09 增殖诊断：提取失败时打印 crafting storage 全量 + 输入组明细
+                if (result1x == null && io.contains("锻造模板") || result1x == null && (ae2addon$diagExtractLogCount & 0x1FF) == 0) {
+                    ae2addon$dumpInventoryDiag(patternDetails, inventory);
+                }
             }
             return result1x;
         }
@@ -1127,6 +1131,57 @@ public abstract class CraftingCpuLogicMixin {
         } catch (RuntimeException | ReflectiveOperationException e) {
             ae2addon$finalOutputFieldFailed = true;
             return null;
+        }
+    }
+
+    /**
+     * 2026-09-09 增殖诊断：打印 crafting storage 全量 + pattern 输入组明细。
+     * 定位「71 次结算成功后 1x 提取永久失败」的缺料/失配根因。
+     */
+    @Unique
+    private void ae2addon$dumpInventoryDiag(IPatternDetails patternDetails,
+            appeng.crafting.inv.ICraftingInventory inventory) {
+        try {
+            StringBuilder sb = new StringBuilder();
+            sb.append("[增殖诊断] extract失败 pattern=").append(
+                    patternDetails == null ? "null" : patternDetails.getClass().getSimpleName());
+            sb.append(" 输入组=");
+            if (patternDetails != null) {
+                var inputs = patternDetails.getInputs();
+                if (inputs != null) {
+                    sb.append(inputs.length).append("组: ");
+                    for (int i = 0; i < inputs.length; i++) {
+                        var grp = inputs[i];
+                        if (grp == null) {
+                            continue;
+                        }
+                        sb.append("[").append(i).append("]mult=").append(grp.getMultiplier()).append(" {");
+                        var poss = grp.getPossibleInputs();
+                        if (poss != null) {
+                            for (var gs : poss) {
+                                if (gs != null && gs.what() != null) {
+                                    sb.append(gs.what()).append("x").append(gs.amount()).append(" ");
+                                }
+                            }
+                        }
+                        sb.append("} ");
+                    }
+                } else {
+                    sb.append("null");
+                }
+            }
+            sb.append(" storage=");
+            if (inventory instanceof appeng.crafting.inv.ListCraftingInventory lci) {
+                sb.append(lci.list.size()).append("种: ");
+                for (var e : lci.list) {
+                    sb.append(e.getKey()).append("x").append(e.getLongValue()).append(" ");
+                }
+            } else {
+                sb.append(inventory == null ? "null" : inventory.getClass().getSimpleName());
+            }
+            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon] {}", sb);
+        } catch (Throwable t) {
+            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon] 增殖诊断失败: {}", t.toString());
         }
     }
 
