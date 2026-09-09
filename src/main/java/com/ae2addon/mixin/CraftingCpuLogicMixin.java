@@ -557,16 +557,18 @@ public abstract class CraftingCpuLogicMixin {
             // 永久 busy）。处理样板（AEProcessingPattern）保留批量推送。
             if (ae2addon$virtualSettleActive(patternDetails)) {
                 if (ae2addon$isSelfReferentialPattern(patternDetails)) {
-                    // 增殖配方（模板复制 a+b=2a，产物与输入同种）：批量全量需要 N 个
-                    // 自身种子（网络永远备不齐）→ 强制逐次 N=1 并锁批量，种子靠产物
-                    // 倍增滚雪球（每轮 +净产出回网，下一轮提取更多）——2026-09-06
-                    ae2addon$setBatchMultiplier(patternDetails, 1);
-                    ae2addon$batchLocked.put(patternDetails, Boolean.TRUE);
-                    n = 1;
+                    // 增殖配方（模板复制 a+b=2a，产物与输入同种）——2026-09-09 提速：
+                    // 不再强制逐次。批量 N = 当前 crafting storage 可用种子量（库存感知）：
+                    // 每轮提取全部可用种子 → 结算产 2N 回流 → 库存翻倍 → 指数滚雪球
+                    // （1→2→4→8…），500 次任务只需 ~log2(500)≈9 轮而非 500 轮。
+                    // 种子库存探测用 SIMULATE（不真扣）；提取失败自动减半回退。
+                    long seedCap = ae2addon$probeSelfSeedCap(patternDetails, inventory);
+                    n = Math.min(taskRemaining, Math.max(1, seedCap));
+                    n = Math.min(n, ae2addon$batchMaxMultiplier());
                     if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
                         com.ae2addon.AE2Addon.LOGGER.info(
-                                "[ae2addon][debug] 增殖配方强制逐次: pattern={} taskRemaining={}",
-                                patternDetails, taskRemaining);
+                                "[ae2addon][debug] 增殖库存感知批量: pattern={} taskRemaining={} seedCap={} n={}",
+                                patternDetails, taskRemaining, seedCap, n);
                     }
                 } else {
                     // M1c（2026-09-04）：虚拟结算无真实装配瓶颈 → 一次提取全部任务材料，
@@ -712,6 +714,69 @@ public abstract class CraftingCpuLogicMixin {
             }
         }
         return false;
+    }
+
+    /**
+     * 增殖批量种子上限探测（2026-09-09 提速）：返回「当前 crafting storage 中
+     * 可提取的自指种子量 ÷ 每份执行消耗量」。增殖每轮提取全部可用种子 → 结算
+     * 产 2N 回流 → 库存翻倍，批量 N 跟随即可指数滚雪球。探测 SIMULATE 不真扣。
+     */
+    @Unique
+    private long ae2addon$probeSelfSeedCap(IPatternDetails patternDetails,
+            appeng.crafting.inv.ICraftingInventory inventory) {
+        try {
+            if (patternDetails == null || inventory == null) {
+                return 1;
+            }
+            var outs = patternDetails.getOutputs();
+            if (outs == null || outs.length == 0) {
+                return 1;
+            }
+            for (var out : outs) {
+                if (out == null || out.what() == null) {
+                    continue;
+                }
+                AEKey key = out.what();
+                // 每份执行消耗该种子的量（amount × mult 累加，防御多组重复）
+                long perUse = 0;
+                boolean inInput = false;
+                var inputs = patternDetails.getInputs();
+                if (inputs != null) {
+                    for (var inGroup : inputs) {
+                        if (inGroup == null || inGroup.getPossibleInputs() == null) {
+                            continue;
+                        }
+                        long groupUse = 0;
+                        boolean groupHas = false;
+                        for (var gs : inGroup.getPossibleInputs()) {
+                            if (gs != null && gs.what() != null
+                                    && gs.what().equals(key)) {
+                                groupHas = true;
+                                groupUse = Math.max(groupUse, gs.amount());
+                            }
+                        }
+                        if (groupHas) {
+                            inInput = true;
+                            perUse += groupUse
+                                    * Math.max(1, inGroup.getMultiplier());
+                        }
+                    }
+                }
+                if (!inInput || perUse <= 0) {
+                    continue;
+                }
+                // SIMULATE 探测可提取量（不真扣）
+                long avail = inventory.extract(key, Long.MAX_VALUE,
+                        appeng.api.config.Actionable.SIMULATE);
+                if (avail <= 0) {
+                    return 0;
+                }
+                return Math.max(0, avail / perUse);
+            }
+            return 1;
+        } catch (Throwable t) {
+            return 1;
+        }
     }
 
     /**
@@ -1219,6 +1284,12 @@ public abstract class CraftingCpuLogicMixin {
         if (value != null) {
             return value;
         }
+        // 增殖配方（产物=输入同种）不继承共享经验：增殖批量 N 由本任务库存种子
+        // 驱动（从 1 开始滚，逐轮翻倍），其他任务的大 N 起步会导致首轮提取失败
+        // 震荡（2026-09-09）。
+        if (ae2addon$isSelfReferentialPattern(pattern)) {
+            return 1L;
+        }
         // 无本地经验：继承共享经验（其他 lane 同产物已成功翻倍到的 N）
         if (ae2addon$sharedExpCap() <= 0) {
             return 1L; // config 关闭共享（sharedExpCap=0）
@@ -1266,11 +1337,9 @@ public abstract class CraftingCpuLogicMixin {
         if (Boolean.TRUE.equals(ae2addon$batchLocked.get(pattern))) {
             return;
         }
-        // 增殖配方（产物=输入同种）已锁逐次：不翻倍（extract 侧锁 batchLocked，双保险）
-        if (ae2addon$isSelfReferentialPattern(pattern)) {
-            ae2addon$batchNext.put(pattern, 1L);
-            return;
-        }
+        // 2026-09-09 提速：增殖配方（产物=输入同种）不再强制逐次——批量 N 成功后
+        // 正常翻倍（1→2→4…），配合种子回流翻倍实现指数滚雪球。共享经验对增殖
+        // 也适用：新 lane 继承 N 后种子不足会自然回退收敛（提取失败减半）。
         long maxMult = ae2addon$batchMaxMultiplier();
         long doubled = multiplier > maxMult / 2
                 ? maxMult
