@@ -606,8 +606,9 @@ public abstract class CraftingCpuLogicMixin {
                         "[ae2addon][debug] 1x提取(节流): 产出={} 结果={} inv={}",
                         io, result1x == null ? "null(失败)" : "成功",
                         inventory == null ? "null" : inventory.getClass().getSimpleName());
-                // 2026-09-09 增殖诊断：提取失败时打印 crafting storage 全量 + 输入组明细
-                if (result1x == null && io.contains("锻造模板") || result1x == null && (ae2addon$diagExtractLogCount & 0x1FF) == 0) {
+                // 2026-09-09 增殖诊断：提取失败节流打印 crafting storage 全量 + 输入组明细
+                // （全量兜底每 512 次提取失败打一次，防刷屏）
+                if (result1x == null && (ae2addon$diagExtractLogCount & 0x1FF) == 0) {
                     ae2addon$dumpInventoryDiag(patternDetails, inventory);
                 }
             }
