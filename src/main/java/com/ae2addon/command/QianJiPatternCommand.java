@@ -35,7 +35,73 @@ public class QianJiPatternCommand {
                 .then(Commands.literal("make")
                         .then(Commands.argument("recipe", StringArgumentType.greedyString())
                                 .executes(QianJiPatternCommand::make)))
+                .then(Commands.literal("probe")
+                        .then(Commands.argument("recipe", StringArgumentType.greedyString())
+                                .executes(QianJiPatternCommand::probe)))
         );
+    }
+
+    private static void say(CommandSourceStack source, String text) {
+        source.sendSuccess(() -> Component.literal(text), false);
+    }
+
+    /**
+     * 逐层诊断一条配方的提取情况（GT 反射到底读到什么、我们抽出了什么）——
+     * 2026-09-15 加：sensei 反馈「30 条配方没一条能用」，需要一眼看出断在哪一层。
+     */
+    private static int probe(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        String id = StringArgumentType.getString(ctx, "recipe");
+        CommandSourceStack source = ctx.getSource();
+        var level = source.getLevel();
+
+        ResourceLocation rl = ResourceLocation.tryParse(id);
+        if (rl == null) {
+            source.sendFailure(Component.literal("§c无效 id: " + id));
+            return 0;
+        }
+        var found = level.getRecipeManager().byKey(rl);
+        if (found.isEmpty()) {
+            source.sendFailure(Component.literal("§c配方不存在: " + id));
+            return 0;
+        }
+        var recipe = found.get();
+
+        say(source, "§e═══ 配方诊断: " + id);
+        say(source, "§7类名: §f" + recipe.getClass().getName());
+        say(source, "§7是 GT 配方: §f" + com.ae2addon.compat.GregTechCompat.isGtRecipe(recipe));
+
+        ItemStack standard = recipe.getResultItem(level.registryAccess());
+        say(source, "§7标准 getResultItem: §f" + (standard.isEmpty() ? "（空）"
+                : standard.getHoverName().getString() + " ×" + standard.getCount()));
+        say(source, "§7标准 getIngredients 条数: §f" + recipe.getIngredients().size());
+
+        var gtInputs = com.ae2addon.compat.GregTechCompat.itemInputIngredients(recipe);
+        say(source, "§7GT 输入 Ingredient 数: §f" + gtInputs.size());
+
+        var gtOutputs = com.ae2addon.compat.GregTechCompat.itemOutputs(recipe);
+        say(source, "§7GT 物品产出数: §f" + gtOutputs.size());
+        for (var c : gtOutputs) {
+            say(source, "§8  · " + c.stack().getHoverName().getString() + " ×" + c.stack().getCount()
+                    + " §8几率=" + (c.chance() >= 0f ? Math.round(c.chance() * 100) + "%" : "未知"));
+        }
+
+        var byproducts = com.ae2addon.util.RecipeByproducts.extract(recipe, level);
+        say(source, "§7RecipeByproducts 抽出概率产出: §f" + byproducts.size());
+        for (var c : byproducts) {
+            say(source, "§8  · " + c.stack().getHoverName().getString()
+                    + " §8几率=" + (c.chance() > 0f ? Math.round(c.chance() * 100) + "%" : "未知"));
+        }
+
+        QianJiPatternData data = QianJiRecipeModel.fromRecipe(recipe, level);
+        if (data == null) {
+            say(source, "§c→ 我们提取结果: 失败（无输入且无产出）");
+        } else {
+            say(source, "§a→ 我们提取结果: 输入槽 " + data.inputs().size()
+                    + " / 主产物 " + data.primary().size()
+                    + " / 概率产出 " + data.chanced().size());
+            for (String line : data.describe()) say(source, "§8  " + line);
+        }
+        return 1;
     }
 
     private static int list(CommandContext<CommandSourceStack> ctx, String filter) {
@@ -83,7 +149,13 @@ public class QianJiPatternCommand {
         }
         QianJiPatternData data = QianJiRecipeModel.fromRecipe(found.get(), level);
         if (data == null) {
-            source.sendFailure(Component.literal("§c该配方没提取出可用数据"));
+            source.sendFailure(Component.literal("§c该配方没提取出可用数据（输入/产出都空）"
+                    + " §7—— 跑 /qianji probe " + id + " 看断在哪一层"));
+            return 0;
+        }
+        if (data.primary().isEmpty()) {
+            source.sendFailure(Component.literal("§c该配方没提取出主产物（几率产出全为概率？）"
+                    + " §7—— 跑 /qianji probe " + id + " 看 GT 产出表"));
             return 0;
         }
 
