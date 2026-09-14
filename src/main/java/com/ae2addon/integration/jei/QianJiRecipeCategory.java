@@ -66,6 +66,8 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
 
     private final IDrawable icon;
     private final IDrawable arrow;
+    /** 槽位底板（空槽也要看得见 → 我们自己画） */
+    private final IDrawable slotDrawable;
 
     /** 一条配方：来源 id + 我们提取出的数据 */
     public record Entry(String recipeId, QianJiPatternData data) {}
@@ -73,6 +75,7 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
     public QianJiRecipeCategory(IGuiHelper guiHelper) {
         this.icon = guiHelper.createDrawableItemStack(new ItemStack(ModItems.QIAN_JI_PATTERN.get()));
         this.arrow = guiHelper.getRecipeArrow();
+        this.slotDrawable = guiHelper.getSlotDrawable();
     }
 
     public static Entry of(Recipe<?> recipe, QianJiPatternData data) {
@@ -141,46 +144,56 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         return new List[]{items, fluids};
     }
 
+    /** 版面尺寸：固定基线 + 按需扩槽后的格数（setRecipe 与 draw 共用） */
+    private record Layout(int itemInCells, int fluidInCells, int itemOutCells, int fluidOutCells) {}
+
+    private static Layout layoutOf(QianJiPatternData data) {
+        var inSplit = splitInputs(data);
+        var outSplit = splitOutputs(data);
+        int itemIn = Math.max(ITEMS_PER_ROW, Math.min(inSplit[0].size(), MAX_ITEM_SLOTS));
+        int fluidIn = Math.max(FLUIDS_PER_ROW, Math.min(inSplit[1].size(), MAX_FLUID_SLOTS));
+        int itemOut = Math.max(ITEMS_PER_ROW, Math.min(outSplit[0].size(), MAX_ITEM_SLOTS));
+        int fluidOut = Math.max(FLUIDS_PER_ROW, Math.min(outSplit[1].size(), MAX_FLUID_SLOTS));
+        return new Layout(itemIn, fluidIn, itemOut, fluidOut);
+    }
+
     @Override
     public void setRecipe(IRecipeLayoutBuilder builder, Entry entry, IFocusGroup focuses) {
         QianJiPatternData data = entry.data();
+        var layout = layoutOf(data);
 
         var inSplit = splitInputs(data);
         var itemIn = inSplit[0];
         var fluidIn = inSplit[1];
 
-        // 物品输入：固定 9 格起，不够扩行
-        int itemInCount = Math.max(ITEMS_PER_ROW, Math.min(itemIn.size(), MAX_ITEM_SLOTS));
-        for (int i = 0; i < itemInCount; i++) {
-            var point = grid(itemInCount, ITEMS_PER_ROW, EDGE, Y_ITEM_IN).get(i);
-            var slotBuilder = builder.addInputSlot(point[0], point[1]);
-            if (i < itemIn.size()) addOptions(slotBuilder, itemIn.get(i));
+        // 物品输入（固定 9 格起，不够扩行；空槽只画底板，不声明 ingredient）
+        var itemInPoints = grid(layout.itemInCells(), ITEMS_PER_ROW, EDGE, Y_ITEM_IN);
+        for (int i = 0; i < Math.min(itemIn.size(), itemInPoints.size()); i++) {
+            var point = itemInPoints.get(i);
+            addOptions(builder.addInputSlot(point[0], point[1]), itemIn.get(i));
         }
 
-        // 流体（非物品）输入：固定 2 格起，不够扩行
-        int fluidInCount = Math.max(FLUIDS_PER_ROW, Math.min(fluidIn.size(), MAX_FLUID_SLOTS));
-        for (int i = 0; i < fluidInCount; i++) {
-            var point = grid(fluidInCount, FLUIDS_PER_ROW, EDGE, Y_FLUID_IN).get(i);
-            var slotBuilder = builder.addInputSlot(point[0], point[1]);
-            if (i < fluidIn.size()) addOptions(slotBuilder, fluidIn.get(i));
+        // 流体（非物品）输入
+        var fluidInPoints = grid(layout.fluidInCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_IN);
+        for (int i = 0; i < Math.min(fluidIn.size(), fluidInPoints.size()); i++) {
+            var point = fluidInPoints.get(i);
+            addOptions(builder.addInputSlot(point[0], point[1]), fluidIn.get(i));
         }
 
         var outSplit = splitOutputs(data);
         var itemOut = outSplit[0];
         var fluidOut = outSplit[1];
 
-        int itemOutCount = Math.max(ITEMS_PER_ROW, Math.min(itemOut.size(), MAX_ITEM_SLOTS));
-        for (int i = 0; i < itemOutCount; i++) {
-            var point = grid(itemOutCount, ITEMS_PER_ROW, EDGE, Y_ITEM_OUT).get(i);
-            var slotBuilder = builder.addOutputSlot(point[0], point[1]);
-            if (i < itemOut.size()) addStack(slotBuilder, itemOut.get(i));
+        var itemOutPoints = grid(layout.itemOutCells(), ITEMS_PER_ROW, EDGE, Y_ITEM_OUT);
+        for (int i = 0; i < Math.min(itemOut.size(), itemOutPoints.size()); i++) {
+            var point = itemOutPoints.get(i);
+            addStack(builder.addOutputSlot(point[0], point[1]), itemOut.get(i));
         }
 
-        int fluidOutCount = Math.max(FLUIDS_PER_ROW, Math.min(fluidOut.size(), MAX_FLUID_SLOTS));
-        for (int i = 0; i < fluidOutCount; i++) {
-            var point = grid(fluidOutCount, FLUIDS_PER_ROW, EDGE, Y_FLUID_OUT).get(i);
-            var slotBuilder = builder.addOutputSlot(point[0], point[1]);
-            if (i < fluidOut.size()) addStack(slotBuilder, fluidOut.get(i));
+        var fluidOutPoints = grid(layout.fluidOutCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_OUT);
+        for (int i = 0; i < Math.min(fluidOut.size(), fluidOutPoints.size()); i++) {
+            var point = fluidOutPoints.get(i);
+            addStack(builder.addOutputSlot(point[0], point[1]), fluidOut.get(i));
         }
     }
 
@@ -204,20 +217,33 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
     public void draw(Entry entry, IRecipeSlotsView slotsView, GuiGraphics graphics, double mouseX, double mouseY) {
         var font = Minecraft.getInstance().font;
         QianJiPatternData data = entry.data();
+        var layout = layoutOf(data);
 
-        // 标题行：输入 / 输出分区标签
+        // ── 槽位底板：固定网格 + 扩槽，空槽也要看得见 ──
+        for (var point : grid(layout.itemInCells(), ITEMS_PER_ROW, EDGE, Y_ITEM_IN)) {
+            slotDrawable.draw(graphics, point[0] - 1, point[1] - 1);
+        }
+        for (var point : grid(layout.fluidInCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_IN)) {
+            slotDrawable.draw(graphics, point[0] - 1, point[1] - 1);
+        }
+        for (var point : grid(layout.itemOutCells(), ITEMS_PER_ROW, EDGE, Y_ITEM_OUT)) {
+            slotDrawable.draw(graphics, point[0] - 1, point[1] - 1);
+        }
+        for (var point : grid(layout.fluidOutCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_OUT)) {
+            slotDrawable.draw(graphics, point[0] - 1, point[1] - 1);
+        }
+
+        // 分区标题（下行箭头标出输入→产出）
         graphics.drawString(font, "§7输入 §8(物品 9 · 流体 2，不足自动扩)", EDGE, 8, 0xFFFFFF, false);
-        graphics.drawString(font, "§7产出 §8(▲ 绿=主产物 §d紫=概率产出)", EDGE, 104, 0xFFFFFF, false);
+        graphics.drawString(font, "§7产出 §8(◀ 输入 → 输出；绿=主产物 §d紫=概率产出)", EDGE, 104, 0xFFFFFF, false);
+        arrow.draw(graphics, EDGE + 4, 106);
 
-        // 概率产出：在对应槽位下方标 %（位置与 setRecipe 同算法）
+        // 概率产出：在对应槽位下方标 %
         var outSplit = splitOutputs(data);
         var itemOut = outSplit[0];
         var fluidOut = outSplit[1];
-        var chances = new ArrayList<Float>();
-        for (var chanced : data.chanced()) chances.add(chanced.chance());
 
-        int itemOutCount = Math.max(ITEMS_PER_ROW, Math.min(itemOut.size(), MAX_ITEM_SLOTS));
-        var itemOutPoints = grid(itemOutCount, ITEMS_PER_ROW, EDGE, Y_ITEM_OUT);
+        var itemOutPoints = grid(layout.itemOutCells(), ITEMS_PER_ROW, EDGE, Y_ITEM_OUT);
         for (int i = 0; i < Math.min(itemOut.size(), itemOutPoints.size()); i++) {
             float chance = chanceOf(data, itemOut.get(i));
             if (chance < 0f) continue;
@@ -225,9 +251,7 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             var point = itemOutPoints.get(i);
             graphics.drawString(font, "§d" + pct, point[0], point[1] + 17, 0xFFFFFF, false);
         }
-
-        int fluidOutCount = Math.max(FLUIDS_PER_ROW, Math.min(fluidOut.size(), MAX_FLUID_SLOTS));
-        var fluidOutPoints = grid(fluidOutCount, FLUIDS_PER_ROW, EDGE, Y_FLUID_OUT);
+        var fluidOutPoints = grid(layout.fluidOutCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_OUT);
         for (int i = 0; i < Math.min(fluidOut.size(), fluidOutPoints.size()); i++) {
             float chance = chanceOf(data, fluidOut.get(i));
             if (chance < 0f) continue;
