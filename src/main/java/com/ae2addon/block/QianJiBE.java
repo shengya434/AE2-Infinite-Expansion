@@ -573,8 +573,9 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      *   <li>样板声明的输出：配方标为概率产（GT chanced / Create rollable / 序列装配结果池）→ 掷骰；否则必出</li>
      *   <li>配方里有、样板没声明的概率产出 → 同样掷骰，掷中就作为机器的真实副产注入</li>
      * </ul>
-     * 几率模型：{@code min(100%, 配方自带几率 × 催化剂倍率(无1/基础2/高级5/终极10))}
-     * —— 催化剂 tooltip 的「副产物概率 ×N」就是这个意思；配方没标几率的确定性次级产出照给。
+     * 几率模型：{@code min(100%, 配方自带几率 + 催化剂加成(0/2/5/10 个百分点))}
+     * —— 基线永远是**配方自己写的几率**；催化剂只给小幅加成，不会把 15% 顶成必然。
+     * 配方没标几率的确定性次级产出照给（不受影响）。
      */
     private boolean instantCraft(IPatternDetails pattern) {
         var grid = getMainNode().getGrid();
@@ -594,7 +595,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         var chanced = (byproductEnabled && recipe != null)
                 ? RecipeByproducts.extract(recipe, level)
                 : List.<RecipeByproducts.Chanced> of();
-        double multiplier = catalystMultiplier();
+        double bonus = catalystByproductBonus();
 
         // ── ① 先算这次「真正产出了什么」（含掷骰）──
         var produced = new ArrayList<GenericStack>();
@@ -609,7 +610,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                 chance = recipeChanceFor(key.getItem(), chanced);
             }
             if (chance >= 0f) {
-                float effective = (float) Math.min(1.0, chance * multiplier);
+                float effective = (float) Math.min(1.0, chance + bonus);
                 if (level.random.nextFloat() >= effective) {
                     ChatLog.info(level, worldPosition, "概率产出未触发: " + out.what().getDisplayName()
                             + " ×" + out.amount() + "（概率 " + Math.round(effective * 100) + "%）");
@@ -623,7 +624,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             if (bp.stack().isEmpty()) continue;
             if (declaredItems.contains(bp.stack().getItem())) continue; // 已在 ① 处理
             float chance = bp.chance() > 0f ? bp.chance() : 1.0f;
-            float effective = (float) Math.min(1.0, chance * multiplier);
+            float effective = (float) Math.min(1.0, chance + bonus);
             if (level.random.nextFloat() >= effective) continue;
             var key = AEItemKey.of(bp.stack());
             produced.add(new GenericStack(key, bp.stack().getCount()));
@@ -658,13 +659,21 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return true;
     }
 
-    /** 催化剂对「副产物几率」的倍率（无 1 / 基础 2 / 高级 5 / 终极 10） */
-    private double catalystMultiplier() {
+    /**
+     * 催化剂对「副产物几率」的加成（**加法百分点**）。
+     * <p>
+     * ⚠ 2026-09-15 修正：原来是「配方几率 × 催化剂倍率（×2/×5/×10）」，
+     * 结果 GT 一个 15% 的副产在高级/终极催化剂下直接变 75%/100%
+     * （sensei 实测：15% 副产 5 中 5）。改成加法百分点：15% → 17%/20%/25%，
+     * 永不把真实几率顶成必然。
+     * 要调就改这四个数（或全置 0 = 催化剂不影响副产几率）。
+     */
+    private double catalystByproductBonus() {
         return switch (getCatalystLevel()) {
-            case 1 -> 2.0;
-            case 2 -> 5.0;
-            case 3 -> 10.0;
-            default -> 1.0;
+            case 1 -> 0.02;
+            case 2 -> 0.05;
+            case 3 -> 0.10;
+            default -> 0.0;
         };
     }
 

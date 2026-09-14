@@ -14,9 +14,11 @@ import java.util.List;
  * 催化剂物品（基础/高级/终极）
  * <p>
  * 放入千机·阿比舒 的催化剂槽中：
- * - 基础（Tier 1）: 副产物概率 ×2，耗电 ×4
- * - 高级（Tier 2）: 副产物概率 ×5，耗电 ×20
- * - 终极（Tier 3）: 副产物概率 ×10（必然 100%），耗电 ×400
+ * - 基础（Tier 1）: 副产物概率 +2%，耗电 ×4
+ * - 高级（Tier 2）: 副产物概率 +5%，耗电 ×20
+ * - 终极（Tier 3）: 副产物概率 +10%，耗电 ×400
+ * <p>
+ * 加成是**加法百分点**（叠在配方自带几率上）：配方 15% → 17%/20%/25%，不会变必然。
  * <p>
  * 不消耗，可随时更换。
  */
@@ -37,14 +39,17 @@ public class CatalystItem extends Item {
     }
 
     /**
-     * 获取副产物概率倍率
+     * 副产物概率加成（加法百分点：基础 +2% / 高级 +5% / 终极 +10%）。
+     * <p>
+     * ⚠ 2026-09-15 从「倍率（×2/×5/×10）」改成加法：倍率会把配方自带的 15% 副产
+     * 在高级/终极催化剂下顶成 75%/100%（sensei 实测 15% 副产 5 中 5）。
      */
-    public double getByproductMultiplier() {
+    public double getByproductBonus() {
         return switch (tier) {
-            case 1 -> 2.0;
-            case 2 -> 5.0;
-            case 3 -> 10.0; // 必然 100%
-            default -> 1.0;
+            case 1 -> 0.02;
+            case 2 -> 0.05;
+            case 3 -> 0.10;
+            default -> 0.0;
         };
     }
 
@@ -67,7 +72,12 @@ public class CatalystItem extends Item {
             case 3 -> "§d终极";
             default -> "§7未知";
         };
-        double multiplier = getByproductMultiplier();
+        String bonus = switch (tier) {
+            case 1 -> "+2%";
+            case 2 -> "+5%";
+            case 3 -> "+10%";
+            default -> "+0%";
+        };
         String powerMult = switch (tier) {
             case 1 -> "×4";
             case 2 -> "×20";
@@ -76,8 +86,8 @@ public class CatalystItem extends Item {
         };
 
         tooltip.add(Component.literal("§7等级: " + name));
-        tooltip.add(Component.literal("§7副产物概率: §e×" + (int) multiplier +
-                (tier == 3 ? " §d(必然)" : "")));
+        tooltip.add(Component.literal("§7副产物概率: §e" + bonus
+                + " §8（在配方自带几率上叠加）"));
         tooltip.add(Component.literal("§7耗电倍率: §c" + powerMult));
         tooltip.add(Component.literal(""));
         tooltip.add(Component.literal("§8放入千机·阿比舒的催化剂槽使用"));
