@@ -483,6 +483,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return c.getTier();
     }
 
+    /** 耗电倍率（基础×4 / 高级×20 / 终极×400；与副产物倍率是两回事） */
     public double getPowerMultiplier() {
         return switch (getCatalystLevel()) {
             case 1 -> 4.0;
@@ -536,9 +537,10 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             ChatLog.warn(level, worldPosition, "千机未成型，拒绝任务(" + source + ")");
             return false;
         }
-        // 最终防线：配方校验
-        if (!isValidRecipePattern(pattern)) {
-            ChatLog.err(level, worldPosition, "任务被拒(" + source + "): 样板的输入输出无匹配的真实配方");
+        // 最终防线：配方校验（拒绝时说清原因）
+        var rejectReason = validatePattern(pattern);
+        if (rejectReason != null) {
+            ChatLog.err(level, worldPosition, "任务被拒(" + source + "): " + rejectReason);
             return false;
         }
         ChatLog.info(level, worldPosition, "收到合成任务(" + source + "): " + describeOutputs(pattern));
@@ -563,7 +565,16 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     }
 
     /**
-     * 瞬间合成：输入已由 CPU/PatternProvider 处理，这里只把输出注入 ME 网络。
+     * 瞬间合成（2026-09-15 语义升级：**不再照拄样板的产出声明**）。
+     * <p>
+     * 做法：把样板当「配方查询钥匙」——用真实配方（含各 mod 兼容层）自己推产出，
+     * 并逐条对**概率产出**掷骰：
+     * <ul>
+     *   <li>样板声明的输出：配方标为概率产（GT chanced / Create rollable / 序列装配结果池）→ 掷骰；否则必出</li>
+     *   <li>配方里有、样板没声明的概率产出 → 同样掷骰，掷中就作为机器的真实副产注入</li>
+     * </ul>
+     * 几率模型：{@code min(100%, 配方自带几率 × 催化剂倍率(无1/基础2/高级5/终极10))}
+     * —— 催化剂 tooltip 的「副产物概率 ×N」就是这个意思；配方没标几率的确定性次级产出照给。
      */
     private boolean instantCraft(IPatternDetails pattern) {
         var grid = getMainNode().getGrid();
@@ -571,24 +582,63 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             ChatLog.err(level, worldPosition, "instantCraft: 未接入网格");
             return false;
         }
-
         var storage = grid.getService(IStorageService.class);
         if (storage == null) {
             ChatLog.err(level, worldPosition, "instantCraft: 无 IStorageService");
             return false;
         }
         var netInv = storage.getInventory();
-
-        AE2Addon.LOGGER.info("instantCraft: netInv={}", netInv.getClass().getName());
-
         var src = IActionSource.ofMachine(this);
-        var outputs = pattern.getOutputs();
 
-        // 先模拟检查输出空间
-        for (var out : outputs) {
+        var recipe = findRecipeFor(pattern);
+        var chanced = (byproductEnabled && recipe != null)
+                ? RecipeByproducts.extract(recipe, level)
+                : List.<RecipeByproducts.Chanced> of();
+        double multiplier = catalystMultiplier();
+
+        // ── ① 先算这次「真正产出了什么」（含掷骰）──
+        var produced = new ArrayList<GenericStack>();
+        var declaredItems = new HashSet<Item>();
+
+        for (var out : pattern.getOutputs()) {
             if (out == null || out.amount() <= 0) continue;
+            AEItemKey key = out.what() instanceof AEItemKey k ? k : null;
+            float chance = -1f;
+            if (key != null) {
+                declaredItems.add(key.getItem());
+                chance = recipeChanceFor(key.getItem(), chanced);
+            }
+            if (chance >= 0f) {
+                float effective = (float) Math.min(1.0, chance * multiplier);
+                if (level.random.nextFloat() >= effective) {
+                    ChatLog.info(level, worldPosition, "概率产出未触发: " + out.what().getDisplayName()
+                            + " ×" + out.amount() + "（概率 " + Math.round(effective * 100) + "%）");
+                    continue;
+                }
+            }
+            produced.add(new GenericStack(out.what(), out.amount()));
+        }
+
+        for (var bp : chanced) {
+            if (bp.stack().isEmpty()) continue;
+            if (declaredItems.contains(bp.stack().getItem())) continue; // 已在 ① 处理
+            float chance = bp.chance() > 0f ? bp.chance() : 1.0f;
+            float effective = (float) Math.min(1.0, chance * multiplier);
+            if (level.random.nextFloat() >= effective) continue;
+            var key = AEItemKey.of(bp.stack());
+            produced.add(new GenericStack(key, bp.stack().getCount()));
+            ChatLog.ok(level, worldPosition, "副产物: " + key.getDisplayName().getString()
+                    + " ×" + bp.stack().getCount() + "（概率 " + Math.round(effective * 100) + "%）");
+        }
+
+        if (produced.isEmpty()) {
+            ChatLog.info(level, worldPosition, "本次没有任何产出（概率全未触发）");
+            return true;
+        }
+
+        // ── ② 空间检查（模拟）──
+        for (var out : produced) {
             long room = netInv.insert(out.what(), out.amount(), Actionable.SIMULATE, src);
-            AE2Addon.LOGGER.info("instantCraft SIMULATE: key={} amount={} room={}", out.what(), out.amount(), room);
             if (room < out.amount()) {
                 ChatLog.err(level, worldPosition, "输出空间不足: " + out.what().getDisplayName()
                         + " 需要 " + out.amount() + " 可放 " + room);
@@ -596,58 +646,40 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             }
         }
 
-        // 真正注入输出（记录实际注入量，排查"缺少目标"问题）
-        for (var out : outputs) {
-            if (out == null || out.amount() <= 0) continue;
+        // ── ③ 真正注入 ──
+        for (var out : produced) {
             long inserted = netInv.insert(out.what(), out.amount(), Actionable.MODULATE, src);
-            AE2Addon.LOGGER.info("instantCraft MODULATE: key={} amount={} inserted={}", out.what(), out.amount(), inserted);
             if (inserted < out.amount()) {
                 ChatLog.err(level, worldPosition, "输出注入不完整: " + out.what().getDisplayName()
                         + " 预期 " + out.amount() + " 实际 " + inserted);
                 return false;
             }
         }
-
-        // 副产物：查真实配方的次级产出，按概率额外给（不阻塞主产物完成）
-        applyByproducts(pattern, netInv, src);
-
         return true;
     }
 
-    /**
-     * 副产物：拿本次样板去匹配一条真实配方 → 取其次级产出 → 按概率额外注入网络。
-     * <p>
-     * 几率模型：{@code min(100%, 配方几率(未声明=100%) × 基础几率10% × 催化剂倍率)}；
-     * 催化剂倍率 = 无 1 / 基础 2 / 高级 5 / 终极 10 → 终极即「必然」（与催化剂 tooltip 一致）。
-     * 副产物失败（网络装不下等）不影响主产物，只记日志。
-     */
-    private void applyByproducts(IPatternDetails pattern, appeng.api.storage.MEStorage netInv, IActionSource src) {
-        if (!byproductEnabled || level == null) return;
-        var recipe = findRecipeFor(pattern);
-        if (recipe == null) return;
-        var byproducts = RecipeByproducts.extract(recipe, level);
-        if (byproducts.isEmpty()) return;
-
-        double multiplier = switch (getCatalystLevel()) {
+    /** 催化剂对「副产物几率」的倍率（无 1 / 基础 2 / 高级 5 / 终极 10） */
+    private double catalystMultiplier() {
+        return switch (getCatalystLevel()) {
             case 1 -> 2.0;
             case 2 -> 5.0;
             case 3 -> 10.0;
             default -> 1.0;
         };
-        for (var bp : byproducts) {
-            float recipeChance = bp.chance() > 0f ? bp.chance() : 1.0f;
-            float chance = (float) Math.min(1.0, BASE_BYPRODUCT_CHANCE * recipeChance * multiplier);
-            if (level.random.nextFloat() >= chance) continue;
-            var key = AEItemKey.of(bp.stack());
-            long inserted = netInv.insert(key, bp.stack().getCount(), Actionable.MODULATE, src);
-            if (inserted > 0) {
-                ChatLog.ok(level, worldPosition, "副产物: " + key.getDisplayName().getString()
-                        + " ×" + inserted + "（概率 " + Math.round(chance * 100) + "%）");
-            } else {
-                AE2Addon.LOGGER.info("QianJi byproduct dropped (no room): {} x{}",
-                        key.getDisplayName().getString(), bp.stack().getCount());
+    }
+
+    /**
+     * 该物品在「配方的概率产出」里的几率。
+     *
+     * @return &lt;0 表示配方没把它列为概率产出（= 必出）
+     */
+    private static float recipeChanceFor(Item item, List<RecipeByproducts.Chanced> chanced) {
+        for (var c : chanced) {
+            if (!c.stack().isEmpty() && c.stack().getItem() == item) {
+                return c.chance() > 0f ? c.chance() : 1.0f;
             }
         }
+        return -1f;
     }
 
     /** 样板 → 真实配方：与校验同规则（样板输入覆盖配方全部输入） */
@@ -850,6 +882,6 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         }
     }
 
-    /** 基础副产物几率（无催化剂、配方也没声明几率时）—— 催化剂 ×N 在此基数上乘 */
-    private static final float BASE_BYPRODUCT_CHANCE = 0.1f;
+    /** 基础副产物几率常量已废弃（2026-09-15）：几率直接用配方自带值 × 催化剂倍率 */
+    // （保留备注，避免后人又把「基础 10%」的乘法模型加回来）
 }
