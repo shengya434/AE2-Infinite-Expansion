@@ -17,4 +17,12 @@ public interface Formable {
      * 切换成型状态。实现方负责刷新网络可见性/耗电/缓存等副作用。
      */
     void setFormed(boolean formed);
+
+    /**
+     * 创造模式「已成型」变体放置时调用：默认等价于 {@link #setFormed(boolean)}，
+     * 实现方可在此补足「完整成型」所需的附加状态（如集成型CPU 的并行处理器标志）。
+     */
+    default void applyCreativeFormed() {
+        setFormed(true);
+    }
 }

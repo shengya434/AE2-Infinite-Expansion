@@ -188,6 +188,7 @@
   "item.ae2addon.catalyst_advanced": "高级催化剂",
   "item.ae2addon.catalyst_ultimate": "终极催化剂",
   "item.ae2addon.qianji_formed": "千机·阿比舒（无限级）· 已成型",
+  "item.ae2addon.integrated_cpu_formed": "集成型CPU（无限级）· 已成型",
   "item.ae2addon.infinite_drive_formed": "驱动器（无限级）· 已成型",
   "tooltip.ae2addon.formed_variant": "放置即为已成型状态 —— 无需搭建多方块结构"
 }

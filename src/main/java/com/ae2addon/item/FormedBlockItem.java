@@ -13,6 +13,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
@@ -49,10 +50,28 @@ public class FormedBlockItem extends BlockItem {
         boolean handled = super.updateCustomBlockEntityTag(pos, level, player, stack, state);
         BlockEntity be = level.getBlockEntity(pos);
         if (be instanceof Formable formable && !formable.isFormed()) {
-            formable.setFormed(true);
+            formable.applyCreativeFormed();
             handled = true;
         }
+        syncFormedBlockState(level, pos, state);
         return handled;
+    }
+
+    /**
+     * 方块状态同步：部分方块（如集成型CPU，继承 AE2 的
+     * {@code AbstractCraftingUnitBlock}）的「已成型」是 **blockstate 属性**驱动的
+     * （{@code formed=true} → 成型贴图）。只置 BE 标志会「逻辑成型、贴图还是未成型」——
+     * 这里把名为 {@code formed} 的布尔属性一并置位（无此属性时自然跳过）。
+     */
+    private static void syncFormedBlockState(Level level, BlockPos pos, BlockState state) {
+        for (var property : state.getProperties()) {
+            if (property instanceof BooleanProperty formedProperty
+                    && property.getName().equals("formed")
+                    && !state.getValue(formedProperty)) {
+                level.setBlock(pos, state.setValue(formedProperty, true), 3);
+                return;
+            }
+        }
     }
 
     @Override

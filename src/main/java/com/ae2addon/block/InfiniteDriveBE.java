@@ -54,7 +54,7 @@ import java.util.EnumSet;
  * </ul>
  */
 public class InfiniteDriveBE extends AENetworkInvBlockEntity
-        implements IStorageProvider, IChestOrDrive, IPriorityHost, MenuProvider {
+        implements IStorageProvider, IChestOrDrive, IPriorityHost, MenuProvider, Formable {
 
     /** 元件槽数量（512 格） */
     public static final int CELL_SLOTS = 512;

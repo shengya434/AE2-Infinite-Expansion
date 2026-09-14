@@ -32,7 +32,7 @@ import java.util.List;
  * - Integer.MAX_VALUE → tickCraftingLogic 里 getCoProcessors()+1 溢出为负 → ops<=0 → CPU 永不执行（故用 MAX_VALUE−1）
  * - 高线程数 → 单 tick 循环爆炸 → 时间片限流（2026-08-10，参考 OmniSequence-Transfinite）
  */
-public class IntegratedCPUBE extends CraftingBlockEntity {
+public class IntegratedCPUBE extends CraftingBlockEntity implements Formable {
 
     private boolean formed = false;
     private boolean hasCoProcessing = false;
@@ -88,6 +88,17 @@ public class IntegratedCPUBE extends CraftingBlockEntity {
             ensureOneIdleCpu();
         }
         setChanged();
+    }
+
+    /**
+     * 创造模式「已成型」变体：直接给完整形态 ——
+     * 结构成型时会由内部元件检测置位的并行处理器标志（{@link #setHasCoProcessing}）
+     * 也一并置位，否则置了 formed 但 {@code getAcceleratorThreads()} 仍返回 0（没线程）。
+     */
+    @Override
+    public void applyCreativeFormed() {
+        setHasCoProcessing(true);
+        setFormed(true);
     }
 
     /**

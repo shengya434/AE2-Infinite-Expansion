@@ -105,6 +105,13 @@ public class ModItems {
                     new Item.Properties(), "infinite_drive_formed")
     );
 
+    /** 集成型CPU（无限级）· 已成型变体（子会话当时漏做了 CPU，2026-09-14 补） */
+    public static final RegistryObject<Item> INTEGRATED_CPU_FORMED_ITEM = ITEMS.register(
+            "integrated_cpu_formed",
+            () -> new FormedBlockItem(ModBlocks.INTEGRATED_CPU.get(),
+                    new Item.Properties(), "integrated_cpu_formed")
+    );
+
     /** 催化剂三档（千机副产物概率 / 耗电倍率） */
     public static final RegistryObject<Item> CATALYST_BASIC = ITEMS.register(
             "catalyst_basic",
@@ -149,6 +156,7 @@ public class ModItems {
                         acceptTabItem(output, ModBlocks.INFINITE_CRAFTING_STORAGE.get());
                         acceptTabItem(output, ModBlocks.INFINITE_CO_PROCESSING.get());
                         acceptTabItem(output, ModBlocks.INTEGRATED_CPU.get());
+                        acceptTabItem(output, INTEGRATED_CPU_FORMED_ITEM.get());
                         acceptTabItem(output, ModBlocks.ASSEMBLER_CORE.get());
                         acceptTabItem(output, ModBlocks.INFINITE_INTERFACE.get());
                         acceptTabItem(output, INFINITE_INTERFACE_PANEL_ITEM.get());
