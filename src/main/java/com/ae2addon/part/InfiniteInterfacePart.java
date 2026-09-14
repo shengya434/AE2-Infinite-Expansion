@@ -1155,7 +1155,7 @@ public class InfiniteInterfacePart extends AEBasePart
     }
 
     @Override
-    public boolean isRemoved() {
+    public boolean isFeederRemoved() {
         return removed;
     }
 

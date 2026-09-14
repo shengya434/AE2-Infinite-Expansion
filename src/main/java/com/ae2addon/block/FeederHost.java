@@ -32,7 +32,16 @@ public interface FeederHost {
     /** 最大页数（0 起）。 */
     int maxPage();
 
-    boolean isRemoved();
+    /**
+     * 宿主是否已被移除。
+     * <p>
+     * ⚠ 别改回 {@code isRemoved()}：那个名字与 MC {@code Entity.isRemoved()} 撞签名，
+     * ForgeGradle reobf 会把**调用点与实现类**重命名成 SRG {@code m_58901_}，
+     * 但**接口自己的抽象声明**不会被改 → 运行期 {@code NoSuchMethodError}
+     * （2026-09-14 打开 ME 接口面板即崩；编译/构建全过）。
+     * 用 tools/check_reobf_consistency.py 可扫出这类不一致。
+     */
+    boolean isFeederRemoved();
 
     /** 正面 = 机器所在方向（part 版 = 面板伸出方向）。 */
     @Nullable

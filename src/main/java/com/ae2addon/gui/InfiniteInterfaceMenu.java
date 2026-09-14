@@ -233,7 +233,7 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
 
     @Override
     public boolean stillValid(Player player) {
-        if (feeder.isRemoved()) {
+        if (feeder.isFeederRemoved()) {
             return false;
         }
         if (toolHost != null && toolSlot >= 0) {

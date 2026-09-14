@@ -117,7 +117,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         // 线缆面板 part 同样回退（2026-09-03）
         for (var part : com.ae2addon.part.InfiniteInterfacePart.ACTIVE_PARTS) {
-            if (!part.isRemoved()) {
+            if (!part.isFeederRemoved()) {
                 part.returnPushedForClusterPublic(cluster);
             }
         }
@@ -135,7 +135,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
             be.pushedByCluster.remove(cluster);
         }
         for (var part : com.ae2addon.part.InfiniteInterfacePart.ACTIVE_PARTS) {
-            if (!part.isRemoved()) {
+            if (!part.isFeederRemoved()) {
                 part.resetPushedForClusterPublic(cluster);
             }
         }
@@ -370,6 +370,18 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     public boolean activeExtract = true;
 
     // ── FeederHost 接口读方法（字段同名 0 参方法，GUI 经接口访问；2026-09-02 part 解耦） ──
+
+    /**
+     * 宿主是否已被移除。
+     * <p>
+     * 必须**显式声明**：接口方法已改名成 {@code isFeederRemoved}（原名 isRemoved 与 MC
+     * {@code Entity.isRemoved()} 撞签名，reobf 只改引用方不改接口声明 → NoSuchMethodError）。
+     * 委托给继承自 BlockEntity 的 {@code isRemoved()}。
+     */
+    @Override
+    public boolean isFeederRemoved() {
+        return isRemoved();
+    }
 
     @Override
     public boolean activeExtract() {
