@@ -29,12 +29,14 @@ public abstract class ProcessingPatternEncodingMixin {
     @Inject(method = "encodeProcessingPattern", at = @At("TAIL"))
     private static void ae2addon$attachQianJiData(CompoundTag tag, GenericStack[] inputs, GenericStack[] outputs,
                                                   CallbackInfo ci) {
+        LOGGER.info("[ae2addon] encodeProcessingPattern(tag) 触发: 输入 {} / 输出 {}",
+                inputs == null ? 0 : inputs.length, outputs == null ? 0 : outputs.length);
         if (tag == null || outputs == null || outputs.length == 0) return;
         QianJiPatternData data = QianJiPatternCodec.matchCurrent(inputs, outputs);
         if (data == null) return;
 
         QianJiPatternCodec.attachTo(tag, data);
-        LOGGER.info("[ae2addon] 样板已挂千机元数据: {}（主产物 {} / 概率产出 {}）",
+        LOGGER.info("[ae2addon] 样板已挂千机元数据(tag 路径): {}（主产物 {} / 概率产出 {}）",
                 data.recipeId(), data.primary().size(), data.chanced().size());
     }
 }

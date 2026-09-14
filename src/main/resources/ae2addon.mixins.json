@@ -15,6 +15,7 @@
     "InfiniteCellSlotGuardMixin",
     "MemoryCardItemMixin",
     "ProcessingPatternEncodingMixin",
+    "ProcessingPatternItemMixin",
     "TooltipsMixin"
   ],
   "client": [],

@@ -60,8 +60,15 @@ public class QianJiPatternItem extends Item {
     }
 
     private static ItemStack blankPattern() {
-        var item = net.minecraftforge.registries.ForgeRegistries.ITEMS.getValue(
+        // 用 AE2 自己的常量（比按 id 查注册表稳）
+        try {
+            var item = appeng.core.definitions.AEItems.BLANK_PATTERN.asItem();
+            if (item != null && item != net.minecraft.world.item.Items.AIR) return new ItemStack(item);
+        } catch (Throwable ignored) {
+            // 退化到注册名查找
+        }
+        var fallback = net.minecraftforge.registries.ForgeRegistries.ITEMS.getValue(
                 new net.minecraft.resources.ResourceLocation("ae2", "blank_pattern"));
-        return item == null ? ItemStack.EMPTY : new ItemStack(item);
+        return fallback == null ? ItemStack.EMPTY : new ItemStack(fallback);
     }
 }
