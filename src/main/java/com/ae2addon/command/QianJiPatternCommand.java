@@ -75,14 +75,22 @@ public class QianJiPatternCommand {
                 : standard.getHoverName().getString() + " ×" + standard.getCount()));
         say(source, "§7标准 getIngredients 条数: §f" + recipe.getIngredients().size());
 
-        var gtInputs = com.ae2addon.compat.GregTechCompat.itemInputIngredients(recipe);
-        say(source, "§7GT 输入 Ingredient 数: §f" + gtInputs.size());
+        var gtSlots = com.ae2addon.compat.GregTechCompat.inputSlots(recipe);
+        say(source, "§7GT 输入槽数（含流体）: §f" + gtSlots.size());
+        for (var slot : gtSlots) {
+            var sb = new StringBuilder();
+            for (var opt : slot) {
+                if (!sb.isEmpty()) sb.append("§8/");
+                sb.append("§8").append(opt.what().getDisplayName().getString()).append(" ×").append(opt.amount());
+            }
+            say(source, "§8  · [" + sb + "§8]");
+        }
 
-        var gtOutputs = com.ae2addon.compat.GregTechCompat.itemOutputs(recipe);
-        say(source, "§7GT 物品产出数: §f" + gtOutputs.size());
+        var gtOutputs = com.ae2addon.compat.GregTechCompat.outputs(recipe);
+        say(source, "§7GT 产出数（物品 + 流体）: §f" + gtOutputs.size());
         for (var c : gtOutputs) {
-            say(source, "§8  · " + c.stack().getHoverName().getString() + " ×" + c.stack().getCount()
-                    + " §8几率=" + (c.chance() >= 0f ? Math.round(c.chance() * 100) + "%" : "未知"));
+            say(source, "§8  · " + c.stack().what().getDisplayName().getString() + " ×" + c.stack().amount()
+                    + " §8几率=" + (c.chance() >= 0f ? Math.round(c.chance() * 100) + "%" : "未声明"));
         }
 
         var byproducts = com.ae2addon.util.RecipeByproducts.extract(recipe, level);
@@ -119,7 +127,7 @@ public class QianJiPatternCommand {
                 shown++;
                 final String line = "§7" + id + " §8→ §a"
                         + (data.primary().isEmpty() ? "无主产物"
-                        : data.primary().get(0).item().getDescription().getString())
+                        : data.primary().get(0).stack().what().getDisplayName().getString())
                         + (data.chanced().isEmpty() ? ""
                         : " §d(+" + data.chanced().size() + " 概率产出)");
                 ctx.getSource().sendSuccess(() -> Component.literal(line), false);

@@ -46,44 +46,50 @@ public final class QianJiRecipeModel {
         return out;
     }
 
-    /** 真实配方 → 我们的样板数据 */
+    /** 真实配方 → 我们的样板数据（**物品 + 流体**一起抽，2026-09-15 补流体） */
     @Nullable
     public static QianJiPatternData fromRecipe(Recipe<?> recipe, Level level) {
         if (recipe == null) return null;
 
-        // ── 输入槽 ──
         var inputs = new ArrayList<QianJiPatternData.Slot>();
-        for (var ingredient : rawInputIngredients(recipe)) {
-            var options = new ArrayList<Item>();
-            int count = 1;
-            for (ItemStack stack : ingredient.getItems()) {
-                if (stack.isEmpty()) continue;
-                if (options.isEmpty()) count = Math.max(1, stack.getCount());
-                if (!options.contains(stack.getItem())) options.add(stack.getItem());
-                if (options.size() >= MAX_OPTIONS_PER_SLOT) break;
-            }
-            if (!options.isEmpty()) inputs.add(new QianJiPatternData.Slot(options, count));
-        }
-
-        // ── 主产物：标准结果 + GT 的确定性产出 ──
         var primary = new ArrayList<QianJiPatternData.Out>();
-        ItemStack standard = recipe.getResultItem(level.registryAccess());
-        if (!standard.isEmpty()) {
-            primary.add(new QianJiPatternData.Out(standard.getItem(), standard.getCount()));
-        }
-        for (var chanced : GregTechCompat.itemOutputs(recipe)) {
-            if (chanced.stack().isEmpty()) continue;
-            if (chanced.chance() >= 1f) {
-                primary.add(new QianJiPatternData.Out(chanced.stack().getItem(), chanced.stack().getCount()));
-            }
-        }
-
-        // ── 概率产出 ──
         var chanced = new ArrayList<QianJiPatternData.Chanced>();
-        for (var bp : RecipeByproducts.extract(recipe, level)) {
-            if (bp.stack().isEmpty()) continue;
-            chanced.add(new QianJiPatternData.Chanced(bp.stack().getItem(), bp.stack().getCount(),
-                    bp.chance() > 0f ? bp.chance() : -1f));
+
+        if (GregTechCompat.isGtRecipe(recipe)) {
+            // GT：走 inputs/outputs 映射，**物品与流体都读**（如矿石清洗机要耗水/产流体）
+            for (var slot : GregTechCompat.inputSlots(recipe)) {
+                inputs.add(new QianJiPatternData.Slot(slot));
+            }
+            for (var stat : GregTechCompat.outputs(recipe)) {
+                var stack = stat.stack();
+                if (stack == null || stack.amount() <= 0) continue;
+                if (stat.chance() >= 1f) {
+                    primary.add(new QianJiPatternData.Out(stack));
+                } else {
+                    chanced.add(new QianJiPatternData.Chanced(stack,
+                            stat.chance() > 0f ? stat.chance() : -1f));
+                }
+            }
+        } else {
+            // 标准路径（物品）：输入 Ingredient → 选项；主产物 = getResultItem；概率产出 = RecipeByproducts
+            for (var ingredient : rawInputIngredients(recipe)) {
+                var options = new ArrayList<appeng.api.stacks.GenericStack>();
+                for (ItemStack stack : ingredient.getItems()) {
+                    if (stack.isEmpty()) continue;
+                    options.add(appeng.api.stacks.GenericStack.fromItemStack(stack));
+                    if (options.size() >= MAX_OPTIONS_PER_SLOT) break;
+                }
+                if (!options.isEmpty()) inputs.add(new QianJiPatternData.Slot(List.copyOf(options)));
+            }
+            ItemStack standard = recipe.getResultItem(level.registryAccess());
+            if (!standard.isEmpty()) {
+                primary.add(new QianJiPatternData.Out(appeng.api.stacks.GenericStack.fromItemStack(standard)));
+            }
+            for (var bp : RecipeByproducts.extract(recipe, level)) {
+                if (bp.stack().isEmpty()) continue;
+                chanced.add(new QianJiPatternData.Chanced(appeng.api.stacks.GenericStack.fromItemStack(bp.stack()),
+                        bp.chance() > 0f ? bp.chance() : -1f));
+            }
         }
 
         if (inputs.isEmpty() && primary.isEmpty() && chanced.isEmpty()) return null;
@@ -102,13 +108,13 @@ public final class QianJiRecipeModel {
         return recipe.getIngredients();
     }
 
-    /** 产出物品集合（标准 + GT） */
-    private static Set<Item> outputsOf(Recipe<?> recipe, Level level) {
-        var items = new HashSet<Item>();
+    /** 产出物品集合（标准 + GT，含流体） */
+    private static Set<Object> outputsOf(Recipe<?> recipe, Level level) {
+        var items = new HashSet<Object>();
         ItemStack standard = recipe.getResultItem(level.registryAccess());
         if (!standard.isEmpty()) items.add(standard.getItem());
-        for (var c : GregTechCompat.itemOutputs(recipe)) {
-            if (!c.stack().isEmpty()) items.add(c.stack().getItem());
+        for (var c : GregTechCompat.outputs(recipe)) {
+            if (c.stack() != null) items.add(c.stack().what());
         }
         return items;
     }

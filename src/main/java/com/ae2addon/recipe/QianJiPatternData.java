@@ -1,12 +1,9 @@
 package com.ae2addon.recipe;
 
+import appeng.api.stacks.GenericStack;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
-import net.minecraft.nbt.StringTag;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
-import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraft.nbt.Tag;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -15,32 +12,32 @@ import java.util.List;
 /**
  * 千机**自有样板**的数据模型（2026-09-15 sensei 定稿：独立样板体系，不强兼原版 AE2 样板）。
  * <p>
- * 为什么自建：原版处理样板只能表达「输入 → 输出（数量）」，**没有概率的概念** ——
- * 副产只能写成"必出"，或者靠运行时反推各 mod 配方去猜几率（GT 一个产物多条配方时就会猜错）。
- * 我们自己的样板把「概率产出」显式写进数据里，千机读到就是**精确执行**，不猜。
+ * 用 AE2 的 {@link GenericStack} 作为内容单位 —— 它**物品与流体通吃**
+ * （2026-09-15 补：原先只存 Item，把 GT 矿石清洗机这类"要耗水/产流体"的配方整条漏掉了），
+ * 且自带 NBT 读写（{@code writeTag/readTag}），正好当样板数据的序列化载体。
  * <p>
  * 数据存在样板物品的 NBT 上（key = {@link #TAG_KEY}）：
  * <pre>
  * machine : 来源机器/配方类型 id（展示用）
  * recipe  : 来源配方 id（可追溯）
- * inputs  : [ { options:[物品id…], count:N } ]     输入槽（options = 标签展开后的可接受集合）
- * primary : [ { item:id, count:N } ]               主产物（必出）
- * chanced : [ { item:id, count:N, chance:0.15 } ]  概率产出
+ * inputs  : [ { options:[GenericStack…] } ]         输入槽（options = 可接受集合，含物品与流体）
+ * primary : [ GenericStack … ]                      主产物（必出）
+ * chanced : [ { stack:GenericStack, chance:0.15 } ] 概率产出
  * </pre>
  */
 public final class QianJiPatternData {
 
     /** 样板物品上的 NBT 键 */
-    public static final String TAG_KEY = "ae2addon:qianji_pattern";
+    public static final String TAG_KEY = "***";
+
+    /** 一个输入槽：options = 可接受的输入（物品/流体，各自带数量；标签类原料会有多个） */
+    public record Slot(List<GenericStack> options) {}
 
     /** 确定产出 */
-    public record Out(Item item, int count) {}
+    public record Out(GenericStack stack) {}
 
     /** 概率产出（chance: 0..1；<0 = 未声明 → 按必出处理） */
-    public record Chanced(Item item, int count, float chance) {}
-
-    /** 一个输入槽：options = 可接受的物品集合（标签类原料展开后的代表集），count = 数量 */
-    public record Slot(List<Item> options, int count) {}
+    public record Chanced(GenericStack stack, float chance) {}
 
     private final String machine;
     private final String recipeId;
@@ -76,34 +73,24 @@ public final class QianJiPatternData {
         for (var slot : inputs) {
             var slotTag = new CompoundTag();
             var options = new ListTag();
-            for (var item : slot.options()) {
-                ResourceLocation id = ForgeRegistries.ITEMS.getKey(item);
-                if (id != null) options.add(StringTag.valueOf(id.toString()));
+            for (var option : slot.options()) {
+                options.add(GenericStack.writeTag(option));
             }
             slotTag.put("options", options);
-            slotTag.putInt("count", slot.count());
             inputsTag.add(slotTag);
         }
         tag.put("inputs", inputsTag);
 
         var primaryTag = new ListTag();
         for (var out : primary) {
-            ResourceLocation id = ForgeRegistries.ITEMS.getKey(out.item());
-            if (id == null) continue;
-            var outTag = new CompoundTag();
-            outTag.putString("item", id.toString());
-            outTag.putInt("count", out.count());
-            primaryTag.add(outTag);
+            primaryTag.add(GenericStack.writeTag(out.stack()));
         }
         tag.put("primary", primaryTag);
 
         var chancedTag = new ListTag();
         for (var c : chanced) {
-            ResourceLocation id = ForgeRegistries.ITEMS.getKey(c.item());
-            if (id == null) continue;
             var cTag = new CompoundTag();
-            cTag.putString("item", id.toString());
-            cTag.putInt("count", c.count());
+            cTag.put("stack", GenericStack.writeTag(c.stack()));
             cTag.putFloat("chance", c.chance());
             chancedTag.add(cTag);
         }
@@ -116,32 +103,29 @@ public final class QianJiPatternData {
         var primary = new ArrayList<Out>();
         var chanced = new ArrayList<Chanced>();
 
-        var inputsTag = tag.getList("inputs", 10);
+        var inputsTag = tag.getList("inputs", Tag.TAG_COMPOUND);
         for (int i = 0; i < inputsTag.size(); i++) {
-            var slotTag = inputsTag.getCompound(i);
-            var options = new ArrayList<Item>();
-            var optionsTag = slotTag.getList("options", 8);
+            var optionsTag = inputsTag.getCompound(i).getList("options", Tag.TAG_COMPOUND);
+            var options = new ArrayList<GenericStack>();
             for (int j = 0; j < optionsTag.size(); j++) {
-                Item item = itemOf(optionsTag.getString(j));
-                if (item != null) options.add(item);
+                GenericStack stack = GenericStack.readTag(optionsTag.getCompound(j));
+                if (stack != null && stack.amount() > 0) options.add(stack);
             }
-            if (!options.isEmpty()) inputs.add(new Slot(options, Math.max(1, slotTag.getInt("count"))));
+            if (!options.isEmpty()) inputs.add(new Slot(List.copyOf(options)));
         }
 
-        var primaryTag = tag.getList("primary", 10);
+        var primaryTag = tag.getList("primary", Tag.TAG_COMPOUND);
         for (int i = 0; i < primaryTag.size(); i++) {
-            var outTag = primaryTag.getCompound(i);
-            Item item = itemOf(outTag.getString("item"));
-            if (item != null) primary.add(new Out(item, Math.max(1, outTag.getInt("count"))));
+            GenericStack stack = GenericStack.readTag(primaryTag.getCompound(i));
+            if (stack != null && stack.amount() > 0) primary.add(new Out(stack));
         }
 
-        var chancedTag = tag.getList("chanced", 10);
+        var chancedTag = tag.getList("chanced", Tag.TAG_COMPOUND);
         for (int i = 0; i < chancedTag.size(); i++) {
             var cTag = chancedTag.getCompound(i);
-            Item item = itemOf(cTag.getString("item"));
-            if (item != null) {
-                chanced.add(new Chanced(item, Math.max(1, cTag.getInt("count")),
-                        cTag.contains("chance") ? cTag.getFloat("chance") : -1f));
+            GenericStack stack = GenericStack.readTag(cTag.getCompound("stack"));
+            if (stack != null && stack.amount() > 0) {
+                chanced.add(new Chanced(stack, cTag.contains("chance") ? cTag.getFloat("chance") : -1f));
             }
         }
 
@@ -151,7 +135,7 @@ public final class QianJiPatternData {
 
     /** 从物品上读（没有 = null） */
     @Nullable
-    public static QianJiPatternData of(ItemStack stack) {
+    public static QianJiPatternData of(net.minecraft.world.item.ItemStack stack) {
         if (stack.isEmpty() || !stack.hasTag()) return null;
         var tag = stack.getTag();
         if (tag == null || !tag.contains(TAG_KEY)) return null;
@@ -159,16 +143,8 @@ public final class QianJiPatternData {
     }
 
     /** 写到物品上 */
-    public void writeTo(ItemStack stack) {
+    public void writeTo(net.minecraft.world.item.ItemStack stack) {
         stack.getOrCreateTag().put(TAG_KEY, toTag());
-    }
-
-    @Nullable
-    private static Item itemOf(String id) {
-        ResourceLocation rl = ResourceLocation.tryParse(id);
-        if (rl == null) return null;
-        Item item = ForgeRegistries.ITEMS.getValue(rl);
-        return item == null || item == net.minecraft.world.item.Items.AIR ? null : item;
     }
 
     // ── 展示 ──
@@ -176,31 +152,33 @@ public final class QianJiPatternData {
     /** 人类可读的摘要（tooltip / 聊天栏） */
     public List<String> describe() {
         var lines = new ArrayList<String>();
+
         var in = new StringBuilder();
         for (var slot : inputs) {
-            if (!in.isEmpty()) in.append(" + ");
-            in.append(displayName(slot.options().get(0)));
-            if (slot.count() > 1) in.append(" ×").append(slot.count());
-            if (slot.options().size() > 1) in.append("(任一)");
+            if (slot.options().isEmpty()) continue;
+            if (!in.isEmpty()) in.append(" §7+ ");
+            in.append(label(slot.options().get(0)));
+            if (slot.options().size() > 1) in.append("§8(任一)");
         }
         lines.add("§7输入: §f" + (in.isEmpty() ? "—" : in));
+
         var out = new StringBuilder();
         for (var p : primary) {
-            if (!out.isEmpty()) out.append("、");
-            out.append(displayName(p.item()));
-            if (p.count() > 1) out.append(" ×").append(p.count());
+            if (!out.isEmpty()) out.append("§7、");
+            out.append("§a").append(label(p.stack()));
         }
-        lines.add("§7主产物: §a" + (out.isEmpty() ? "—" : out));
+        lines.add("§7主产物: " + (out.isEmpty() ? "§c—" : out));
+
         for (var c : chanced) {
             String pct = c.chance() > 0f ? Math.round(c.chance() * 100) + "%" : "几率未知";
-            lines.add("§7概率产出: §d" + displayName(c.item())
-                    + (c.count() > 1 ? " ×" + c.count() : "") + " §8(" + pct + ")");
+            lines.add("§7概率产出: §d" + label(c.stack()) + " §8(" + pct + ")");
         }
         if (!machine.isEmpty()) lines.add("§8来源: " + machine);
         return lines;
     }
 
-    private static String displayName(Item item) {
-        return item.getDescription().getString();
+    private static String label(GenericStack stack) {
+        String name = stack.what().getDisplayName().getString();
+        return stack.amount() > 1 ? name + " ×" + stack.amount() : name;
     }
 }

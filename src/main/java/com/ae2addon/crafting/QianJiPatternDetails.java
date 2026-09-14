@@ -33,17 +33,21 @@ public final class QianJiPatternDetails implements IPatternDetails {
 
         var in = new ArrayList<IInput>();
         for (var slot : data.inputs()) {
+            // 选项数量统一为 1，槽位数量交给 multiplier（与 AE2 样板解码约定一致）
             var options = new GenericStack[slot.options().size()];
+            long multiplier = 1;
             for (int i = 0; i < options.length; i++) {
-                options[i] = new GenericStack(AEItemKey.of(slot.options().get(i)), slot.count());
+                var option = slot.options().get(i);
+                options[i] = new GenericStack(option.what(), 1);
+                if (option.amount() > multiplier) multiplier = option.amount();
             }
-            in.add(new SimpleInput(options, slot.count()));
+            if (options.length > 0) in.add(new SimpleInput(options, multiplier));
         }
         this.inputs = in.toArray(new IInput[0]);
 
         var out = new ArrayList<GenericStack>();
         for (var p : data.primary()) {
-            out.add(new GenericStack(AEItemKey.of(p.item()), p.count()));
+            out.add(p.stack());
         }
         this.outputs = out.toArray(new GenericStack[0]);
     }

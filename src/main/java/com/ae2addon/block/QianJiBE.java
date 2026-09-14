@@ -599,20 +599,20 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         if (ownData != null) {
             // ══ 自有样板：精确执行（不猜配方）══
             for (var p : ownData.primary()) {
-                produced.add(new GenericStack(AEItemKey.of(p.item()), p.count()));
+                produced.add(p.stack());
             }
             for (var c : ownData.chanced()) {
                 float chance = c.chance() > 0f ? c.chance() : 1.0f;
                 float effective = (float) Math.min(1.0, chance + bonus);
-                var key = AEItemKey.of(c.item());
+                var key = c.stack().what();
                 if (level.random.nextFloat() >= effective) {
                     ChatLog.info(level, worldPosition, "概率产出未触发: " + key.getDisplayName().getString()
-                            + " ×" + c.count() + "（概率 " + Math.round(effective * 100) + "%）");
+                            + " ×" + c.stack().amount() + "（概率 " + Math.round(effective * 100) + "%）");
                     continue;
                 }
-                produced.add(new GenericStack(key, c.count()));
+                produced.add(c.stack());
                 ChatLog.ok(level, worldPosition, "概率产出: " + key.getDisplayName().getString()
-                        + " ×" + c.count() + "（概率 " + Math.round(effective * 100) + "%）");
+                        + " ×" + c.stack().amount() + "（概率 " + Math.round(effective * 100) + "%）");
             }
             AE2Addon.LOGGER.info("QianJi craft(自有样板): recipe={} primary={} chanced={}",
                     ownData.recipeId(), ownData.primary().size(), ownData.chanced().size());
