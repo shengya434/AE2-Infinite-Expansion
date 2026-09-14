@@ -25,6 +25,8 @@ import com.ae2addon.compat.GregTechCompat;
 import com.ae2addon.gui.QianJiMenu;
 import com.ae2addon.init.ModBlockEntities;
 import com.ae2addon.item.CatalystItem;
+import com.ae2addon.crafting.QianJiPatternDetails;
+import com.ae2addon.recipe.QianJiPatternData;
 import com.ae2addon.util.ChatLog;
 import com.ae2addon.util.RecipeByproducts;
 import net.minecraft.world.item.crafting.Ingredient;
@@ -552,9 +554,10 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         final var lvl = level;
         final var p = pattern;
         final var src = source;
+        final QianJiPatternData ownData = pattern instanceof QianJiPatternDetails qp ? qp.data() : null;
         TickHandler.instance().addCallable(lvl, () -> {
             if (lvl == null || lvl.isClientSide || !formed) return;
-            boolean ok = instantCraft(p);
+            boolean ok = instantCraft(p, ownData);
             if (ok) {
                 ChatLog.ok(lvl, worldPosition, "千机完成合成: " + describeOutputs(p));
             } else {
@@ -577,7 +580,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      * —— 基线永远是**配方自己写的几率**；催化剂只给小幅加成，不会把 15% 顶成必然。
      * 配方没标几率的确定性次级产出照给（不受影响）。
      */
-    private boolean instantCraft(IPatternDetails pattern) {
+    private boolean instantCraft(IPatternDetails pattern, @Nullable QianJiPatternData ownData) {
         var grid = getMainNode().getGrid();
         if (grid == null) {
             ChatLog.err(level, worldPosition, "instantCraft: 未接入网格");
@@ -590,63 +593,82 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         }
         var netInv = storage.getInventory();
         var src = IActionSource.ofMachine(this);
-
-        var recipe = findRecipeFor(pattern);
-        var chanced = (byproductEnabled && recipe != null)
-                ? RecipeByproducts.extract(recipe, level)
-                : List.<RecipeByproducts.Chanced> of();
         double bonus = catalystByproductBonus();
-
-        // 诊断：把「命中的配方 + 读取到的概率产出表」写清楚（聊天栏+日志），
-        // 方便一眼看出是「几率没读到」还是「配方匹配错了」
-        if (recipe != null) {
-            var summary = new StringBuilder();
-            for (var c : chanced) {
-                if (!summary.isEmpty()) summary.append("、");
-                summary.append(c.stack().getHoverName().getString()).append(' ')
-                        .append(c.chance() > 0f ? Math.round(c.chance() * 100) + "%" : "几率未知");
-            }
-            ChatLog.info(level, worldPosition, "配方命中 " + recipe.getClass().getSimpleName()
-                    + " · 概率产出[" + (summary.isEmpty() ? "无" : summary) + "]");
-            AE2Addon.LOGGER.info("QianJi craft: recipe={} chanced={}",
-                    recipe.getClass().getName(), summary);
-        } else {
-            ChatLog.warn(level, worldPosition, "未匹配到真实配方 → 产出按样板声明直接给（不掷骰）");
-        }
-
-        // ── ① 先算这次「真正产出了什么」（含掷骰）──
         var produced = new ArrayList<GenericStack>();
-        var declaredItems = new HashSet<Item>();
 
-        for (var out : pattern.getOutputs()) {
-            if (out == null || out.amount() <= 0) continue;
-            AEItemKey key = out.what() instanceof AEItemKey k ? k : null;
-            float chance = -1f;
-            if (key != null) {
-                declaredItems.add(key.getItem());
-                chance = recipeChanceFor(key.getItem(), chanced);
+        if (ownData != null) {
+            // ══ 自有样板：精确执行（不猜配方）══
+            for (var p : ownData.primary()) {
+                produced.add(new GenericStack(AEItemKey.of(p.item()), p.count()));
             }
-            if (chance >= 0f) {
+            for (var c : ownData.chanced()) {
+                float chance = c.chance() > 0f ? c.chance() : 1.0f;
                 float effective = (float) Math.min(1.0, chance + bonus);
+                var key = AEItemKey.of(c.item());
                 if (level.random.nextFloat() >= effective) {
-                    ChatLog.info(level, worldPosition, "概率产出未触发: " + out.what().getDisplayName()
-                            + " ×" + out.amount() + "（概率 " + Math.round(effective * 100) + "%）");
+                    ChatLog.info(level, worldPosition, "概率产出未触发: " + key.getDisplayName().getString()
+                            + " ×" + c.count() + "（概率 " + Math.round(effective * 100) + "%）");
                     continue;
                 }
+                produced.add(new GenericStack(key, c.count()));
+                ChatLog.ok(level, worldPosition, "概率产出: " + key.getDisplayName().getString()
+                        + " ×" + c.count() + "（概率 " + Math.round(effective * 100) + "%）");
             }
-            produced.add(new GenericStack(out.what(), out.amount()));
-        }
+            AE2Addon.LOGGER.info("QianJi craft(自有样板): recipe={} primary={} chanced={}",
+                    ownData.recipeId(), ownData.primary().size(), ownData.chanced().size());
+        } else {
+            // ══ 兼容通道：普通 AE2 处理样板 → 用兼容层反推配方的概率产出 ══
+            var recipe = findRecipeFor(pattern);
+            var chanced = (byproductEnabled && recipe != null)
+                    ? RecipeByproducts.extract(recipe, level)
+                    : List.<RecipeByproducts.Chanced> of();
 
-        for (var bp : chanced) {
-            if (bp.stack().isEmpty()) continue;
-            if (declaredItems.contains(bp.stack().getItem())) continue; // 已在 ① 处理
-            float chance = bp.chance() > 0f ? bp.chance() : 1.0f;
-            float effective = (float) Math.min(1.0, chance + bonus);
-            if (level.random.nextFloat() >= effective) continue;
-            var key = AEItemKey.of(bp.stack());
-            produced.add(new GenericStack(key, bp.stack().getCount()));
-            ChatLog.ok(level, worldPosition, "副产物: " + key.getDisplayName().getString()
-                    + " ×" + bp.stack().getCount() + "（概率 " + Math.round(effective * 100) + "%）");
+            if (recipe != null) {
+                var summary = new StringBuilder();
+                for (var c : chanced) {
+                    if (!summary.isEmpty()) summary.append("、");
+                    summary.append(c.stack().getHoverName().getString()).append(' ')
+                            .append(c.chance() > 0f ? Math.round(c.chance() * 100) + "%" : "几率未知");
+                }
+                ChatLog.info(level, worldPosition, "配方命中 " + recipe.getClass().getSimpleName()
+                        + " · 概率产出[" + (summary.isEmpty() ? "无" : summary) + "]");
+                AE2Addon.LOGGER.info("QianJi craft(兼容): recipe={} chanced={}",
+                        recipe.getClass().getName(), summary);
+            } else {
+                ChatLog.warn(level, worldPosition, "未匹配到真实配方 → 产出按样板声明直接给（不掷骰）");
+            }
+
+            var declaredItems = new HashSet<Item>();
+            for (var out : pattern.getOutputs()) {
+                if (out == null || out.amount() <= 0) continue;
+                AEItemKey key = out.what() instanceof AEItemKey k ? k : null;
+                float chance = -1f;
+                if (key != null) {
+                    declaredItems.add(key.getItem());
+                    chance = recipeChanceFor(key.getItem(), chanced);
+                }
+                if (chance >= 0f) {
+                    float effective = (float) Math.min(1.0, chance + bonus);
+                    if (level.random.nextFloat() >= effective) {
+                        ChatLog.info(level, worldPosition, "概率产出未触发: " + out.what().getDisplayName()
+                                + " ×" + out.amount() + "（概率 " + Math.round(effective * 100) + "%）");
+                        continue;
+                    }
+                }
+                produced.add(new GenericStack(out.what(), out.amount()));
+            }
+
+            for (var bp : chanced) {
+                if (bp.stack().isEmpty()) continue;
+                if (declaredItems.contains(bp.stack().getItem())) continue;
+                float chance = bp.chance() > 0f ? bp.chance() : 1.0f;
+                float effective = (float) Math.min(1.0, chance + bonus);
+                if (level.random.nextFloat() >= effective) continue;
+                var key = AEItemKey.of(bp.stack());
+                produced.add(new GenericStack(key, bp.stack().getCount()));
+                ChatLog.ok(level, worldPosition, "副产物: " + key.getDisplayName().getString()
+                        + " ×" + bp.stack().getCount() + "（概率 " + Math.round(effective * 100) + "%）");
+            }
         }
 
         if (produced.isEmpty()) {
@@ -654,7 +676,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             return true;
         }
 
-        // ── ② 空间检查（模拟）──
+        // ── 空间检查（模拟）──
         for (var out : produced) {
             long room = netInv.insert(out.what(), out.amount(), Actionable.SIMULATE, src);
             if (room < out.amount()) {
@@ -664,7 +686,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             }
         }
 
-        // ── ③ 真正注入 ──
+        // ── 真正注入 ──
         for (var out : produced) {
             long inserted = netInv.insert(out.what(), out.amount(), Actionable.MODULATE, src);
             if (inserted < out.amount()) {
@@ -816,6 +838,13 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         for (int i = 0; i < patternHandler.getSlots(); i++) {
             ItemStack stack = patternHandler.getStackInSlot(i);
             if (stack.isEmpty()) continue;
+            // 自有样板：直接合成我们的 IPatternDetails（输出只报主产物，概率产出我们自己掷）
+            if (stack.getItem() instanceof com.ae2addon.item.QianJiPatternItem) {
+                var own = QianJiPatternData.of(stack);
+                if (own == null || own.isEmpty()) { skipped++; continue; }
+                result.add(new QianJiPatternDetails(own, stack));
+                continue;
+            }
             var details = PatternDetailsHelper.decodePattern(stack, level);
             if (details == null) {
                 skipped++;
@@ -890,6 +919,15 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
 
         @Override
         public boolean isItemValid(int slot, @NotNull ItemStack stack) {
+            // 自有样板（2026-09-15）：数据自洽（输入/主产物/概率产出都在物品数据里）→ 直接收
+            if (stack.getItem() instanceof com.ae2addon.item.QianJiPatternItem) {
+                var own = QianJiPatternData.of(stack);
+                if (own == null || own.isEmpty()) {
+                    ChatLog.warn(level, worldPosition, "空千机样板（未写入配方数据），已拒收");
+                    return false;
+                }
+                return true;
+            }
             if (!PatternDetailsHelper.isEncodedPattern(stack)) return false;
             // 配方校验：只接受"输入输出组合有真实配方"的处理样板（防刷物品）
             if (level != null) {

@@ -163,6 +163,7 @@ public class AE2Addon {
 
         MinecraftForge.EVENT_BUS.register(this);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);
+        MinecraftForge.EVENT_BUS.register(com.ae2addon.command.QianJiPatternCommand.class);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.crafting.BatchedCraftingQueue.class);
 
         // 升级卡注册统一在 ensureCompatUpgrades（BE 构造时触发）：此时所有注册表

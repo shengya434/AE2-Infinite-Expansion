@@ -141,6 +141,12 @@ public class ModItems {
             com.ae2addon.item.ConfigCardItem::new
     );
 
+    /** 千机配方样板（自有样板体系，2026-09-15） */
+    public static final RegistryObject<Item> QIAN_JI_PATTERN = ITEMS.register(
+            "qianji_pattern",
+            com.ae2addon.item.QianJiPatternItem::new
+    );
+
     // ── 创造模式标签页 ──
 
     public static final RegistryObject<CreativeModeTab> TAB_AE2ADDON = CREATIVE_TABS.register(
@@ -169,6 +175,7 @@ public class ModItems {
                         acceptTabItem(output, CATALYST_BASIC.get());
                         acceptTabItem(output, CATALYST_ADVANCED.get());
                         acceptTabItem(output, CATALYST_ULTIMATE.get());
+                        acceptTabItem(output, QIAN_JI_PATTERN.get());
                         acceptTabItem(output, CONFIG_CARD.get());
                         acceptTabItem(output, MATTER_BALL.get());
                     })
