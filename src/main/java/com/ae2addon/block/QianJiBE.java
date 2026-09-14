@@ -24,6 +24,7 @@ import com.ae2addon.gui.QianJiMenu;
 import com.ae2addon.init.ModBlockEntities;
 import com.ae2addon.item.CatalystItem;
 import com.ae2addon.util.ChatLog;
+import com.ae2addon.util.RecipeByproducts;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -34,11 +35,9 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraftforge.common.capabilities.ForgeCapabilities;
-import net.minecraftforge.common.util.LazyOptional;
-import net.minecraftforge.items.IItemHandler;
 import net.minecraftforge.items.ItemStackHandler;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -57,8 +56,9 @@ import java.util.Set;
  * <p>
  * - 1280 样板槽（仅接受编码处理样板）
  * - 催化剂槽（基础/高级/终极）
+ * - 副产物：实时查「真实配方」的次级产出，按概率额外给（催化剂 ×2/×5/×10）
  * - ICraftingProvider — AE2 合成提供商，直接响应合成 CPU 请求
- * - 处理流程：CPU 请求 → 从 ME 网络拉取输入 → 瞬间处理 → 推回输出
+ * - 处理流程：CPU 请求 → 瞬间处理 → 产物（+副产物）注入 ME 网络
  */
 public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICraftingProvider, ICraftingMachine {
 
@@ -66,13 +66,11 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     private static final int CATALYST_SLOTS = 1;
 
     private boolean formed = false;
-    private boolean byproductEnabled = false;
+    /** 副产物（真实配方的次级产出）开关，默认开；留给后续 GUI 开关 */
+    private boolean byproductEnabled = true;
 
     private final PatternHandler patternHandler = new PatternHandler();
     private final CatalystHandler catalystHandler = new CatalystHandler();
-    /** 输入缓存：PatternProvider 把原料推进来，我们在 pushPattern 时消耗 */
-    private final InputBuffer inputBuffer = new InputBuffer();
-    private final LazyOptional<IItemHandler> inputBufferCap = LazyOptional.of(() -> inputBuffer);
     private final Set<AEKey> emitableItems = new HashSet<>();
 
     @Nullable
@@ -82,17 +80,22 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     /** 输出物品 → 所有能产出它的配方的输入物品集合列表（静态缓存） */
     @Nullable
     private static Map<Item, List<Set<Item>>> recipeIndex = null;
+    /** 输出物品 → 能产出它的配方对象（副产物查询用，同一次扫描建） */
+    @Nullable
+    private static Map<Item, List<Recipe<?>>> recipeObjects = null;
     /** 有配方但输入未知（自定义 RecipeType 如 ProjectE/Mekanism）的输出物品 */
     private static Set<Item> customRecipeOutputs = null;
 
     private static Map<Item, List<Set<Item>>> getRecipeIndex(Level level) {
         if (recipeIndex != null) return recipeIndex;
         var index = new HashMap<Item, List<Set<Item>>>();
+        var objects = new HashMap<Item, List<Recipe<?>>>();
         var custom = new HashSet<Item>();
         try {
             for (var recipe : level.getRecipeManager().getRecipes()) {
                 var result = recipe.getResultItem(level.registryAccess());
                 if (result.isEmpty()) continue;
+                objects.computeIfAbsent(result.getItem(), k -> new ArrayList<>()).add(recipe);
                 var inputs = new HashSet<Item>();
                 for (var ing : recipe.getIngredients()) {
                     for (var stack : ing.getItems()) {
@@ -111,6 +114,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             AE2Addon.LOGGER.warn("QianJi: recipe index build failed: {}", e.getMessage());
         }
         recipeIndex = index;
+        recipeObjects = objects;
         customRecipeOutputs = custom;
         AE2Addon.LOGGER.info("QianJi: recipe index built, {} standard + {} custom outputs",
                 index.size(), custom.size());
@@ -275,14 +279,6 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return formed ? AECableType.SMART : AECableType.NONE;
     }
 
-    @Override
-    public <T> LazyOptional<T> getCapability(net.minecraftforge.common.capabilities.Capability<T> cap, @Nullable Direction side) {
-        if (formed && cap == ForgeCapabilities.ITEM_HANDLER) {
-            return inputBufferCap.cast();
-        }
-        return super.getCapability(cap, side);
-    }
-
     public double getIdlePowerUsage() {
         return formed ? 20000.0 * getPowerMultiplier() : 0.0;
     }
@@ -424,7 +420,78 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             }
         }
 
+        // 副产物：查真实配方的次级产出，按概率额外给（不阻塞主产物完成）
+        applyByproducts(pattern, netInv, src);
+
         return true;
+    }
+
+    /**
+     * 副产物：拿本次样板去匹配一条真实配方 → 取其次级产出 → 按概率额外注入网络。
+     * <p>
+     * 几率模型：{@code min(100%, 配方几率(未声明=100%) × 基础几率10% × 催化剂倍率)}；
+     * 催化剂倍率 = 无 1 / 基础 2 / 高级 5 / 终极 10 → 终极即「必然」（与催化剂 tooltip 一致）。
+     * 副产物失败（网络装不下等）不影响主产物，只记日志。
+     */
+    private void applyByproducts(IPatternDetails pattern, appeng.api.storage.MEStorage netInv, IActionSource src) {
+        if (!byproductEnabled || level == null) return;
+        var recipe = findRecipeFor(pattern);
+        if (recipe == null) return;
+        var byproducts = RecipeByproducts.extract(recipe, level);
+        if (byproducts.isEmpty()) return;
+
+        double multiplier = switch (getCatalystLevel()) {
+            case 1 -> 2.0;
+            case 2 -> 5.0;
+            case 3 -> 10.0;
+            default -> 1.0;
+        };
+        for (var bp : byproducts) {
+            float recipeChance = bp.chance() > 0f ? bp.chance() : 1.0f;
+            float chance = (float) Math.min(1.0, BASE_BYPRODUCT_CHANCE * recipeChance * multiplier);
+            if (level.random.nextFloat() >= chance) continue;
+            var key = AEItemKey.of(bp.stack());
+            long inserted = netInv.insert(key, bp.stack().getCount(), Actionable.MODULATE, src);
+            if (inserted > 0) {
+                ChatLog.ok(level, worldPosition, "副产物: " + key.getDisplayName().getString()
+                        + " ×" + inserted + "（概率 " + Math.round(chance * 100) + "%）");
+            } else {
+                AE2Addon.LOGGER.info("QianJi byproduct dropped (no room): {} x{}",
+                        key.getDisplayName().getString(), bp.stack().getCount());
+            }
+        }
+    }
+
+    /** 样板 → 真实配方：按「样板输入覆盖配方全部输入」匹配（与校验规则一致） */
+    @Nullable
+    private Recipe<?> findRecipeFor(IPatternDetails details) {
+        if (level == null) return null;
+        getRecipeIndex(level);
+        var objects = recipeObjects;
+        if (objects == null) return null;
+
+        var patternInputs = new HashSet<Item>();
+        for (var input : details.getInputs()) {
+            for (var option : input.getPossibleInputs()) {
+                if (option != null && option.what() instanceof AEItemKey k) patternInputs.add(k.getItem());
+            }
+        }
+        for (var out : details.getOutputs()) {
+            if (out == null || out.amount() <= 0) continue;
+            if (!(out.what() instanceof AEItemKey itemKey)) continue;
+            var candidates = objects.get(itemKey.getItem());
+            if (candidates == null) continue;
+            for (var candidate : candidates) {
+                var recipeInputs = new HashSet<Item>();
+                for (var ing : candidate.getIngredients()) {
+                    for (var stack : ing.getItems()) {
+                        if (!stack.isEmpty()) recipeInputs.add(stack.getItem());
+                    }
+                }
+                if (recipeInputs.isEmpty() || patternInputs.containsAll(recipeInputs)) return candidate;
+            }
+        }
+        return null;
     }
 
     private String describeOutputs(IPatternDetails pattern) {
@@ -517,17 +584,15 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         tag.putBoolean("byproduct", byproductEnabled);
         tag.put("patterns", patternHandler.serializeNBT());
         tag.put("catalyst", catalystHandler.serializeNBT());
-        tag.put("inputBuf", inputBuffer.serializeNBT());
     }
 
     @Override
     public void loadTag(CompoundTag tag) {
         super.loadTag(tag);
         formed = tag.getBoolean("formed");
-        byproductEnabled = tag.getBoolean("byproduct");
+        byproductEnabled = !tag.contains("byproduct") || tag.getBoolean("byproduct");
         if (tag.contains("patterns")) patternHandler.deserializeNBT(tag.getCompound("patterns"));
         if (tag.contains("catalyst")) catalystHandler.deserializeNBT(tag.getCompound("catalyst"));
-        if (tag.contains("inputBuf")) inputBuffer.deserializeNBT(tag.getCompound("inputBuf"));
         invalidatePatternCache();
         syncPowerUsage();
     }
@@ -608,10 +673,6 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         }
     }
 
-    /** 输入缓存：PatternProvider 推原料进来 */
-    private class InputBuffer extends ItemStackHandler {
-        InputBuffer() { super(36); }
-        @Override
-        protected void onContentsChanged(int slot) { setChanged(); }
-    }
+    /** 基础副产物几率（无催化剂、配方也没声明几率时）—— 催化剂 ×N 在此基数上乘 */
+    private static final float BASE_BYPRODUCT_CHANCE = 0.1f;
 }
