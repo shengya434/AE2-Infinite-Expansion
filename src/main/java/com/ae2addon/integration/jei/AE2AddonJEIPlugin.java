@@ -38,8 +38,8 @@ public class AE2AddonJEIPlugin implements IModPlugin {
         );
     }
 
-    /** JEI 页「千机·自用配方」一次最多注册多少条（GT 配方动辄上万，这里限量并记日志） */
-    private static final int MAX_QIANJI_RECIPES = 1000;
+    /** 千机 JEI 页：一次注册多少条（0 / 负数 = 不限量；2026-09-15 sensei：先完全放开） */
+    private static final int MAX_QIANJI_RECIPES = Integer.MAX_VALUE;
 
     private void registerQianJiRecipes(IRecipeRegistration registration) {
         var level = net.minecraft.client.Minecraft.getInstance().level;
@@ -47,6 +47,7 @@ public class AE2AddonJEIPlugin implements IModPlugin {
             AE2Addon.LOGGER.warn("[ae2addon] JEI: 客户端世界未就绪，跳过千机配方页");
             return;
         }
+        long started = System.currentTimeMillis();
         var entries = new java.util.ArrayList<QianJiRecipeCategory.Entry>();
         int considered = 0;
         for (var recipe : level.getRecipeManager().getRecipes()) {
@@ -57,8 +58,8 @@ public class AE2AddonJEIPlugin implements IModPlugin {
             entries.add(QianJiRecipeCategory.of(recipe, data));
         }
         registration.addRecipes(QianJiRecipeCategory.TYPE, entries);
-        AE2Addon.LOGGER.info("[ae2addon] JEI 千机配方页：注册 {} 条（扫描 {} 条配方）",
-                entries.size(), considered);
+        AE2Addon.LOGGER.info("[ae2addon] JEI 千机配方页：注册 {} 条（扫描 {} 条，耗时 {} ms）",
+                entries.size(), considered, System.currentTimeMillis() - started);
     }
 
     @Override
