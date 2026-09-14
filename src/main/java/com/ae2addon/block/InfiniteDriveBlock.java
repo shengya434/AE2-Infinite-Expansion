@@ -9,6 +9,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
@@ -218,6 +219,26 @@ public class InfiniteDriveBlock extends BaseEntityBlock {
                     .getValue(new net.minecraft.resources.ResourceLocation("ae2:drive"));
         }
         return cachedMeDrive;
+    }
+
+    /**
+     * 拆掉时把驱动器内容物（10 格元件）也吐出来。
+     * <p>
+     * 本方块直接 extends BaseEntityBlock，不走 AE2 的 AEBaseEntityBlock ——
+     * AE2 把 {@code addAdditionalDrops} 挂在 AEBaseEntityBlock#onRemove 里，
+     * 这里按同样时机手动调一次；否则元件会跟方块一起消失（loot table 只能掉方块本体）。
+     */
+    @Override
+    public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean isMoving) {
+        if (!level.isClientSide && !state.is(newState.getBlock())
+                && level.getBlockEntity(pos) instanceof InfiniteDriveBE be) {
+            List<ItemStack> contents = new ArrayList<>();
+            be.addAdditionalDrops(level, pos, contents);
+            for (ItemStack stack : contents) {
+                if (!stack.isEmpty()) popResource(level, pos, stack);
+            }
+        }
+        super.onRemove(state, level, pos, newState, isMoving);
     }
 
     @Override

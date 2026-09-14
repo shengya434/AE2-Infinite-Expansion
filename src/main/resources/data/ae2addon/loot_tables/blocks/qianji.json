@@ -1,0 +1,42 @@
+{
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "ae2addon:qianji",
+          "functions": [
+            {
+              "function": "minecraft:copy_nbt",
+              "source": "block_entity",
+              "ops": [
+                {
+                  "source": "formed",
+                  "target": "BlockEntityTag.formed",
+                  "op": "replace"
+                },
+                {
+                  "source": "patterns",
+                  "target": "BlockEntityTag.patterns",
+                  "op": "replace"
+                },
+                {
+                  "source": "catalyst",
+                  "target": "BlockEntityTag.catalyst",
+                  "op": "replace"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "minecraft:survives_explosion"
+        }
+      ]
+    }
+  ]
+}
