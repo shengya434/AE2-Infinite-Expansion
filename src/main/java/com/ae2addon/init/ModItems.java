@@ -3,6 +3,7 @@ package com.ae2addon.init;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.item.CatalystItem;
 import com.ae2addon.item.EternalHeartItem;
+import com.ae2addon.item.FormedBlockItem;
 import com.ae2addon.item.MatterBallItem;
 import com.ae2addon.item.UniversalStorageCell;
 import net.minecraft.core.registries.Registries;
@@ -88,6 +89,22 @@ public class ModItems {
             () -> new BlockItem(ModBlocks.QIAN_JI.get(), new Item.Properties().fireResistant())
     );
 
+    /**
+     * 已成型变体（创造模式随取随用）：与本体共用方块 + BE 类型，
+     * 只在放置瞬间把 BE 置为成型，免搭 3×3×3 / 5×5×5 结构。
+     */
+    public static final RegistryObject<Item> QIAN_JI_FORMED_ITEM = ITEMS.register(
+            "qianji_formed",
+            () -> new FormedBlockItem(ModBlocks.QIAN_JI.get(),
+                    new Item.Properties().fireResistant(), "qianji_formed")
+    );
+
+    public static final RegistryObject<Item> INFINITE_DRIVE_FORMED_ITEM = ITEMS.register(
+            "infinite_drive_formed",
+            () -> new FormedBlockItem(ModBlocks.INFINITE_DRIVE.get(),
+                    new Item.Properties(), "infinite_drive_formed")
+    );
+
     /** 催化剂三档（千机副产物概率 / 耗电倍率） */
     public static final RegistryObject<Item> CATALYST_BASIC = ITEMS.register(
             "catalyst_basic",
@@ -135,8 +152,12 @@ public class ModItems {
                         acceptTabItem(output, ModBlocks.ASSEMBLER_CORE.get());
                         acceptTabItem(output, ModBlocks.INFINITE_INTERFACE.get());
                         acceptTabItem(output, INFINITE_INTERFACE_PANEL_ITEM.get());
-                        acceptTabItem(output, ModBlocks.INFINITE_DRIVE.get());
-                        acceptTabItem(output, ModBlocks.QIAN_JI.get());
+                        // 方块物品显式传 Item：两个物品共用同一方块 id，
+                        // Block.asItem() 的结果由注册顺序决定，不能依赖
+                        acceptTabItem(output, INFINITE_DRIVE_ITEM.get());
+                        acceptTabItem(output, INFINITE_DRIVE_FORMED_ITEM.get());
+                        acceptTabItem(output, QIAN_JI_ITEM.get());
+                        acceptTabItem(output, QIAN_JI_FORMED_ITEM.get());
                         acceptTabItem(output, CATALYST_BASIC.get());
                         acceptTabItem(output, CATALYST_ADVANCED.get());
                         acceptTabItem(output, CATALYST_ULTIMATE.get());

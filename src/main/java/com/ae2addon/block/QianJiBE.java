@@ -60,7 +60,7 @@ import java.util.Set;
  * - ICraftingProvider — AE2 合成提供商，直接响应合成 CPU 请求
  * - 处理流程：CPU 请求 → 瞬间处理 → 产物（+副产物）注入 ME 网络
  */
-public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICraftingProvider, ICraftingMachine {
+public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICraftingProvider, ICraftingMachine, Formable {
 
     private static final int PATTERN_SLOTS = 1280;
     private static final int CATALYST_SLOTS = 1;

@@ -22,7 +22,7 @@ import java.util.EnumSet;
  * 无限驱动器方块实体。
  * 复用 DriveBlockEntity 的 10 格细胞系统 + AE2 原版驱动器面板。
  */
-public class InfiniteDriveBE extends DriveBlockEntity implements MenuProvider {
+public class InfiniteDriveBE extends DriveBlockEntity implements MenuProvider, Formable {
 
     private boolean formed = false;
 

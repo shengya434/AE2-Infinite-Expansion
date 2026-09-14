@@ -4,6 +4,8 @@
 产出：
   textures/block/infinite_drive.png   驱动器（无限级）方块面
   textures/block/qianji.png           千机·阿比舒 方块面
+  textures/block/infinite_drive_formed.png  同上「已成型」变体（提亮 + 充能描边）
+  textures/block/qianji_formed.png          同上「已成型」变体（提亮 + 白热核心）
   textures/item/catalyst_{basic,advanced,ultimate}.png  催化剂图标
 """
 import os
@@ -130,11 +132,53 @@ def catalyst(base, light, dark):
     return c
 
 
+# ── 「已成型」变体：本体提亮 + 能量描边 / 白热核心（占位级，可替换）──
+def brighten(color, factor):
+    r, g, b, a = color
+    if a == 0:
+        return color
+    return (min(255, round(r * factor)), min(255, round(g * factor)),
+            min(255, round(b * factor)), a)
+
+
+def charged_face(base, factor=1.3, glow=None, core=None):
+    """整体提亮；glow=内圈 1px 能量描边；core=中央高亮块。"""
+    c = [[brighten(p, factor) for p in row] for row in base]
+    if glow is not None:
+        for i in range(1, 15):
+            px(c, i, 1, glow)
+            px(c, i, 14, glow)
+            px(c, 1, i, glow)
+            px(c, 14, i, glow)
+    if core is not None:
+        rect(c, 6, 6, 9, 9, core)
+        rect(c, 7, 7, 8, 8, (255, 255, 255, 255))
+    return c
+
+
+def infinite_drive_formed():
+    c = charged_face(infinite_drive(), factor=1.30, glow=(110, 238, 255, 255))
+    # ∞ 充能：环提到近白
+    ring(c, 5.8, 8.0, 2.6, (200, 252, 255, 255))
+    ring(c, 10.2, 8.0, 2.6, (200, 252, 255, 255))
+    return c
+
+
+def qianji_formed():
+    # 只轻提亮：保留黑金外壳与紫品菱形的辨识度，靠“能量描边 + 白热核心”表达已成型
+    c = charged_face(qianji(), factor=1.12, glow=(255, 216, 120, 255))
+    rect(c, 7, 7, 8, 8, (255, 250, 240, 255))
+    px(c, 7, 7, (255, 255, 255, 255))
+    return c
+
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RES = os.path.join(ROOT, "src/main/resources/assets/ae2addon/textures")
 
 write_png(os.path.join(RES, "block/infinite_drive.png"), infinite_drive())
 write_png(os.path.join(RES, "block/qianji.png"), qianji())
+write_png(os.path.join(RES, "block/infinite_drive_formed.png"), infinite_drive_formed())
+write_png(os.path.join(RES, "block/qianji_formed.png"), qianji_formed())
 write_png(os.path.join(RES, "item/catalyst_basic.png"),
           catalyst((94, 224, 122, 255), (196, 255, 208, 255), (28, 122, 52, 255)))
 write_png(os.path.join(RES, "item/catalyst_advanced.png"),

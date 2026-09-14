@@ -186,5 +186,8 @@
   "block.ae2addon.qianji": "Qianji · Abishu",
   "item.ae2addon.catalyst_basic": "Basic Catalyst",
   "item.ae2addon.catalyst_advanced": "Advanced Catalyst",
-  "item.ae2addon.catalyst_ultimate": "Ultimate Catalyst"
+  "item.ae2addon.catalyst_ultimate": "Ultimate Catalyst",
+  "item.ae2addon.qianji_formed": "Qianji · Abishu (Pre-formed)",
+  "item.ae2addon.infinite_drive_formed": "Infinite Drive (Pre-formed)",
+  "tooltip.ae2addon.formed_variant": "Places already formed — no multiblock needed"
 }
