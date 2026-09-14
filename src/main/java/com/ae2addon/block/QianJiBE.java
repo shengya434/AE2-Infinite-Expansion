@@ -838,10 +838,10 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         for (int i = 0; i < patternHandler.getSlots(); i++) {
             ItemStack stack = patternHandler.getStackInSlot(i);
             if (stack.isEmpty()) continue;
-            // 自有样板：直接合成我们的 IPatternDetails（输出只报主产物，概率产出我们自己掷）
-            if (stack.getItem() instanceof com.ae2addon.item.QianJiPatternItem) {
-                var own = QianJiPatternData.of(stack);
-                if (own == null || own.isEmpty()) { skipped++; continue; }
+            // 自有样板（自有物品 或 AE2 样板 + 我们的元数据）：直接合成我们的 IPatternDetails
+            var own = QianJiPatternData.of(stack);
+            if (own != null) {
+                if (own.isEmpty()) { skipped++; continue; }
                 result.add(new QianJiPatternDetails(own, stack));
                 continue;
             }
@@ -919,10 +919,11 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
 
         @Override
         public boolean isItemValid(int slot, @NotNull ItemStack stack) {
-            // 自有样板（2026-09-15）：数据自洽（输入/主产物/概率产出都在物品数据里）→ 直接收
-            if (stack.getItem() instanceof com.ae2addon.item.QianJiPatternItem) {
-                var own = QianJiPatternData.of(stack);
-                if (own == null || own.isEmpty()) {
+            // 自有样板（2026-09-15）：我们的样板物品，或 AE2 样板 + 我们的元数据
+            // （ME 样板编码器编码千机配方时会挂上元数据，见 ProcessingPatternEncodingMixin）
+            var own = QianJiPatternData.of(stack);
+            if (own != null) {
+                if (own.isEmpty()) {
                     ChatLog.warn(level, worldPosition, "空千机样板（未写入配方数据），已拒收");
                     return false;
                 }

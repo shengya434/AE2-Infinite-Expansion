@@ -2,6 +2,9 @@ package com.ae2addon.item;
 
 import com.ae2addon.recipe.QianJiPatternData;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.TooltipFlag;
@@ -33,5 +36,32 @@ public class QianJiPatternItem extends Item {
         for (String line : data.describe()) {
             tooltip.add(Component.literal(line));
         }
+        tooltip.add(Component.literal("§8潜行+右键空气 = 还原为空白样板"));
+    }
+
+    /** 潜行 + 右键空气 → 还原成普通 AE2 空白样板（误编码/回收用） */
+    @Override
+    public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
+        ItemStack stack = player.getItemInHand(hand);
+        if (!player.isCrouching()) return InteractionResultHolder.pass(stack);
+        if (level.isClientSide) return InteractionResultHolder.sidedSuccess(stack, true);
+
+        ItemStack blank = blankPattern();
+        if (blank.isEmpty()) {
+            player.displayClientMessage(Component.literal("§c找不到 ae2:blank_pattern，无法还原"), false);
+            return InteractionResultHolder.fail(stack);
+        }
+        stack.shrink(1);
+        if (!player.getInventory().add(blank)) {
+            player.drop(blank, false);
+        }
+        player.displayClientMessage(Component.literal("§7已还原为空白样板"), true);
+        return InteractionResultHolder.sidedSuccess(stack, false);
+    }
+
+    private static ItemStack blankPattern() {
+        var item = net.minecraftforge.registries.ForgeRegistries.ITEMS.getValue(
+                new net.minecraft.resources.ResourceLocation("ae2", "blank_pattern"));
+        return item == null ? ItemStack.EMPTY : new ItemStack(item);
     }
 }

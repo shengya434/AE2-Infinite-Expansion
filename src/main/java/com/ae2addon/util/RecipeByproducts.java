@@ -62,15 +62,20 @@ public final class RecipeByproducts {
         return cached != null && !cached.isEmpty();
     }
 
-    public static List<Chanced> extract(Recipe<?> recipe, @Nullable Level level) {
+    public static List<Chanced> extract(Recipe<?> recipe, net.minecraft.world.level.Level level) {
+        return extract(recipe, level == null ? null : level.registryAccess());
+    }
+
+    /** 同上（不依赖 Level：编码/索引场景用 RecipeManager.registries()） */
+    public static List<Chanced> extract(Recipe<?> recipe, @Nullable net.minecraft.core.RegistryAccess access) {
         List<Chanced> cached = PROBE_CACHE.get(recipe.getClass());
         if (cached != null) return cached;
 
         List<Chanced> out = new ArrayList<>();
         ItemStack primary = ItemStack.EMPTY;
-        if (level != null) {
+        if (access != null) {
             try {
-                primary = recipe.getResultItem(level.registryAccess());
+                primary = recipe.getResultItem(access);
             } catch (Throwable ignored) {
                 // 个别 mod 配方在此抛异常 → 退化为「无主产物」
             }
