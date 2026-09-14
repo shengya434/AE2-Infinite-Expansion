@@ -4,6 +4,7 @@ import com.ae2addon.AE2Addon;
 import com.ae2addon.gui.InfiniteInterfaceScreen;
 import com.ae2addon.gui.IntegratedCPUScreen;
 import com.ae2addon.gui.AssemblerScreen;
+import com.ae2addon.gui.InfiniteDriveScreen;
 import com.ae2addon.gui.QianJiScreen;
 import com.ae2addon.gui.Mode2ConfigScreen;
 import com.ae2addon.gui.ModeSelectScreen;
@@ -36,6 +37,7 @@ public class ClientSetup {
             MenuScreens.register(ModMenuTypes.INFINITE_INTERFACE.get(), InfiniteInterfaceScreen::new);
             MenuScreens.register(ModMenuTypes.ASSEMBLER.get(), AssemblerScreen::new);
             MenuScreens.register(ModMenuTypes.QIAN_JI.get(), QianJiScreen::new);
+            MenuScreens.register(ModMenuTypes.INFINITE_DRIVE.get(), InfiniteDriveScreen::new);
 
         });
     }

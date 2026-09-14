@@ -4,6 +4,7 @@ import com.ae2addon.AE2Addon;
 import com.ae2addon.gui.InfiniteInterfaceMenu;
 import com.ae2addon.gui.IntegratedCPUMenu;
 import com.ae2addon.gui.AssemblerMenu;
+import com.ae2addon.gui.InfiniteDriveMenu;
 import com.ae2addon.gui.QianJiMenu;
 import com.ae2addon.gui.Mode2ConfigMenu;
 import com.ae2addon.gui.ModeSelectMenu;
@@ -50,5 +51,10 @@ public class ModMenuTypes {
     public static final RegistryObject<MenuType<QianJiMenu>> QIAN_JI =
             MENUS.register("qianji",
                     () -> IForgeMenuType.create(QianJiMenu::new));
+
+    // 驱动器（无限级）512 格元件面板（2026-09-14 重写）
+    public static final RegistryObject<MenuType<InfiniteDriveMenu>> INFINITE_DRIVE =
+            MENUS.register("infinite_drive",
+                    () -> IForgeMenuType.create(InfiniteDriveMenu::new));
 
 }
