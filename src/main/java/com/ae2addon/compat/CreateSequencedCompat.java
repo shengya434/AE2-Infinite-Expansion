@@ -34,11 +34,16 @@ public final class CreateSequencedCompat {
     /**
      * 序列装配的完整需求。
      *
-     * @param allItems  基础原料 + 各步原料（物品集合，用于「原料齐不齐」）
-     * @param stepItems 各步原料（不含基础原料，用于「装配次数」计数）
-     * @param loops     装配次数
+     * @param allItems        基础原料 + 各步原料（物品集合，用于「原料齐不齐」）
+     * @param stepItems       各步原料（不含基础原料，用于「装配次数」计数）
+     * @param loops           装配次数
+     * @param transitionalItem 过渡物品（序列中流转的「未完成品」；样板带它 = 这是一道「步骤」样板）
+     * @param stepInputs      每一步的完整配方输入集合（含过渡物品），用于按步骤校验
      */
-    public record Requirement(Set<Item> allItems, Set<Item> stepItems, int loops) {}
+    public record Requirement(Set<Item> allItems, Set<Item> stepItems, int loops,
+                              @org.jetbrains.annotations.Nullable Item transitionalItem,
+                              List<Set<Item>> stepInputs,
+                              List<List<Ingredient>> stepIngredients) {}
 
     private CreateSequencedCompat() {}
 
@@ -66,12 +71,78 @@ public final class CreateSequencedCompat {
 
             int loops = (int) recipe.getClass().getMethod("getLoops").invoke(recipe);
 
+            Item transitional = transitionalItem(recipe);
+            var stepInputs = new ArrayList<Set<Item>>();
+            var stepIngredients = new ArrayList<List<Ingredient>>();
+            Object sequence = readField(recipe, "sequence");
+            if (sequence instanceof List<?> steps) {
+                for (var step : steps) {
+                    Object inner = invokeNoArg(step, "getRecipe");
+                    if (!(inner instanceof Recipe<?> stepRecipe)) continue;
+                    var raw = new ArrayList<Ingredient>();
+                    var inputs = new HashSet<Item>();
+                    for (var ingredient : stepRecipe.getIngredients()) {
+                        raw.add(ingredient);
+                        collect(ingredient, inputs);
+                    }
+                    if (transitional != null) inputs.add(transitional);
+                    if (!inputs.isEmpty()) stepInputs.add(Set.copyOf(inputs));
+                    if (!raw.isEmpty()) stepIngredients.add(List.copyOf(raw));
+                }
+            }
+
             var all = new HashSet<>(base);
             all.addAll(stepItems);
-            return new Requirement(Set.copyOf(all), Set.copyOf(stepItems), loops);
+            return new Requirement(Set.copyOf(all), Set.copyOf(stepItems), loops, transitional,
+                    List.copyOf(stepInputs), List.copyOf(stepIngredients));
         } catch (Throwable t) {
             return null; // 反射失败 → 不做额外校验，避免误伤
         }
+    }
+
+    /** 过渡物品（未完成品）：字段 transitionalItem 是 protected ProcessingOutput，取 getStack() */
+    @Nullable
+    private static Item transitionalItem(Recipe<?> recipe) {
+        try {
+            Object output = readField(recipe, "transitionalItem");
+            if (output == null) return null;
+            Object stack = invokeNoArg(output, "getStack");
+            if (stack instanceof ItemStack itemStack && !itemStack.isEmpty()) return itemStack.getItem();
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Object readField(Object target, String name) {
+        for (Class<?> c = target.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                var field = c.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(target);
+            } catch (NoSuchFieldException ignored) {
+                // 沿父类继续找
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    @Nullable
+    private static Object invokeNoArg(Object target, String method) {
+        for (Class<?> c = target.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                var m = c.getDeclaredMethod(method);
+                m.setAccessible(true);
+                return m.invoke(target);
+            } catch (NoSuchMethodException ignored) {
+                // 沿父类继续找
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private static void collect(@Nullable Ingredient ingredient, Set<Item> out) {

@@ -21,11 +21,13 @@ import appeng.hooks.ticking.TickHandler;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.compat.CreateSequencedCompat;
 import com.ae2addon.compat.EMCCompat;
+import com.ae2addon.compat.GregTechCompat;
 import com.ae2addon.gui.QianJiMenu;
 import com.ae2addon.init.ModBlockEntities;
 import com.ae2addon.item.CatalystItem;
 import com.ae2addon.util.ChatLog;
 import com.ae2addon.util.RecipeByproducts;
+import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -94,14 +96,16 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         var custom = new HashSet<Item>();
         try {
             for (var recipe : level.getRecipeManager().getRecipes()) {
-                var result = recipe.getResultItem(level.registryAccess());
-                if (result.isEmpty()) continue;
-                objects.computeIfAbsent(result.getItem(), k -> new ArrayList<>()).add(recipe);
-                var inputs = new HashSet<Item>();
-                for (var ing : recipe.getIngredients()) {
-                    for (var stack : ing.getItems()) {
-                        if (!stack.isEmpty()) inputs.add(stack.getItem());
-                    }
+                // 产出物品：标准 API + GT 多产出（GT 的 getResultItem 返回空，产出全在 outputs 映射里）
+                var outputs = outputItemsOf(recipe, level);
+                if (outputs.isEmpty()) continue;
+
+                // 输入物品：GT 走 inputs 映射，其余走标准 getIngredients()
+                var inputs = standardInputItems(recipe);
+                boolean sequenced = CreateSequencedCompat.isSequencedAssembly(recipe);
+
+                for (var item : outputs) {
+                    objects.computeIfAbsent(item, k -> new ArrayList<>()).add(recipe);
                 }
                 if (inputs.isEmpty()) {
                     // 自定义配方类型（ProjectE 世界转换、Mekanism 机器等）：输入不走标准 API，
@@ -109,12 +113,14 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                     // ⚠ 序列装配例外（2026-09-15）：Create 序列装配的 getIngredients() 只报
                     // 基础原料甚至为空，它**有完整可校验的需求**（CreateSequencedCompat）
                     // → 绝不能落入「自定义→放行」，否则「1 份原料→成品」直接被放行
-                    if (!CreateSequencedCompat.isSequencedAssembly(recipe)) {
-                        custom.add(result.getItem());
+                    if (!sequenced) {
+                        custom.addAll(outputs);
                     }
                     continue;
                 }
-                index.computeIfAbsent(result.getItem(), k -> new ArrayList<>()).add(inputs);
+                for (var item : outputs) {
+                    index.computeIfAbsent(item, k -> new ArrayList<>()).add(inputs);
+                }
             }
         } catch (Exception e) {
             AE2Addon.LOGGER.warn("QianJi: recipe index build failed: {}", e.getMessage());
@@ -178,10 +184,9 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                         else if (sequencedReject == null) sequencedReject = reason;
                         continue;
                     }
-                    // ② 标准配方：样板输入必须覆盖配方全部输入
-                    var recipeInputs = recipeItems(candidate);
-                    if (recipeInputs.isEmpty()) continue; // 输入未知 → 交给 ③ 判定
-                    if (patternInputs.containsAll(recipeInputs)) { acceptedRecipes.add(candidate); ok = true; }
+                    // ② 标准配方（含 GT）：逐 Ingredient 命中判定（保留标签语义）
+                    if (!hasAnyIngredient(candidate)) continue; // 输入未知 → 交给 ③ 判定
+                    if (coversRecipeInputs(candidate, patternInputs)) { acceptedRecipes.add(candidate); ok = true; }
                 }
             }
             // ③ 输入未知的自定义配方输出：放行（ProjectE/Mekanism 等，避免误伤）
@@ -221,6 +226,32 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return new ItemStack(item).getHoverName().getString();
     }
 
+    /** 配方的产出物品集合：标准 API + GT 多产出 + Create 序列装配结果池 */
+    private static Set<Item> outputItemsOf(Recipe<?> recipe, Level level) {
+        var items = new java.util.LinkedHashSet<Item>();
+        var standard = recipe.getResultItem(level.registryAccess());
+        if (!standard.isEmpty()) items.add(standard.getItem());
+        for (var chanced : GregTechCompat.itemOutputs(recipe)) {
+            if (!chanced.stack().isEmpty()) items.add(chanced.stack().getItem());
+        }
+        return items;
+    }
+
+    /** 配方所需输入物品集合：GT 走 inputs 映射，其余走标准 getIngredients() */
+    private static Set<Item> standardInputItems(Recipe<?> recipe) {
+        if (GregTechCompat.isGtRecipe(recipe)) {
+            var gt = GregTechCompat.itemInputs(recipe);
+            if (!gt.isEmpty()) return gt;
+        }
+        var items = new HashSet<Item>();
+        for (var ing : recipe.getIngredients()) {
+            for (var stack : ing.getItems()) {
+                if (!stack.isEmpty()) items.add(stack.getItem());
+            }
+        }
+        return items;
+    }
+
     /** 样板输入物品集合（展开所有可能输入） */
     private static Set<Item> collectPatternInputs(IPatternDetails details) {
         var patternInputs = new HashSet<Item>();
@@ -232,15 +263,9 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return patternInputs;
     }
 
-    /** 配方的输入物品集合（标准 Recipe API；序列装配不适用，见 CreateSequencedCompat） */
+    /** 配方的输入物品集合（标准 Recipe API + GT；序列装配不适用，见 CreateSequencedCompat） */
     private static Set<Item> recipeItems(Recipe<?> recipe) {
-        var items = new HashSet<Item>();
-        for (var ing : recipe.getIngredients()) {
-            for (var stack : ing.getItems()) {
-                if (!stack.isEmpty()) items.add(stack.getItem());
-            }
-        }
-        return items;
+        return standardInputItems(recipe);
     }
 
     /** 按「样板输入 ⊇ 配方全部输入」找一条能产出该物品的真实配方（副产物查询用） */
@@ -251,10 +276,42 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         var candidates = objects.get(output);
         if (candidates == null) return null;
         for (var candidate : candidates) {
-            var recipeInputs = recipeItems(candidate);
-            if (!recipeInputs.isEmpty() && patternInputs.containsAll(recipeInputs)) return candidate;
+            if (coversRecipeInputs(candidate, patternInputs)) return candidate;
         }
         return null;
+    }
+
+    /** 配方是否至少有一条标准原料（没有 = 输入未知） */
+    private static boolean hasAnyIngredient(Recipe<?> recipe) {
+        if (GregTechCompat.isGtRecipe(recipe)) {
+            if (!GregTechCompat.itemInputIngredients(recipe).isEmpty()) return true;
+        }
+        return !recipe.getIngredients().isEmpty();
+    }
+
+    /** 样板输入是否覆盖配方全部原料（逐 Ingredient 命中：标签只要求命中其一） */
+    private static boolean coversRecipeInputs(Recipe<?> recipe, Set<Item> patternInputs) {
+        if (GregTechCompat.isGtRecipe(recipe)) {
+            var gt = GregTechCompat.itemInputIngredients(recipe);
+            if (!gt.isEmpty()) return coversAllIngredients(gt, patternInputs);
+        }
+        return coversAllIngredients(recipe.getIngredients(), patternInputs);
+    }
+
+    /** 逐 Ingredient：每条至少有一个可选物品出现在样板输入里（标签类原料不必列出全部变体） */
+    private static boolean coversAllIngredients(List<Ingredient> ingredients, Set<Item> patternInputs) {
+        boolean any = false;
+        for (var ingredient : ingredients) {
+            var options = ingredient.getItems();
+            if (options.length == 0) continue;
+            boolean hit = false;
+            for (var stack : options) {
+                if (!stack.isEmpty() && patternInputs.contains(stack.getItem())) { hit = true; break; }
+            }
+            if (!hit) return false;
+            any = true;
+        }
+        return any;
     }
 
     /**
@@ -271,13 +328,25 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         var requirement = CreateSequencedCompat.requirement(recipe);
         if (requirement == null) return null;
 
+        // ① 样板里带了「过渡物品」→ 这是序列中的**某一步**（机械手/压床那一刀），按步骤校验。
+        //    这正是 Create 自动化的正常用法：机器只负责一步一步推进（2026-09-15 sensei 指出）。
+        if (requirement.transitionalItem() != null
+                && patternInputs.contains(requirement.transitionalItem())) {
+            for (var stepIngredients : requirement.stepIngredients()) {
+                if (coversAllIngredients(stepIngredients, patternInputs)) return null;
+            }
+            return "Create 序列装配：样板带了过渡物品，但缺该步骤所需原料";
+        }
+
+        // ② 没带过渡物品 → 想一步到位产出成品，必须供齐全链（基础 + 各步）且原料总量 ≥ loops
         if (!patternInputs.containsAll(requirement.allItems())) {
             var missing = new ArrayList<Item>();
             for (var item : requirement.allItems()) {
                 if (!patternInputs.contains(item)) missing.add(item);
             }
             return "Create 序列装配：样板缺少装配所需原料（缺 " + missing.size() + " 种："
-                    + displayName(missing.get(0)) + (missing.size() > 1 ? " 等" : "") + "）";
+                    + displayName(missing.get(0)) + (missing.size() > 1 ? " 等" : "")
+                    + "；或改用带过渡物品的步骤样板）";
         }
         long supplied = 0;
         for (var input : details.getInputs()) {

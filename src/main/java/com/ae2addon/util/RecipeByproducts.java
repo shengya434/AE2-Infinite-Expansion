@@ -88,7 +88,22 @@ public final class RecipeByproducts {
             if (!out.isEmpty()) break;
         }
 
-        // ② Mekanism 锯木式：Ingredient 定义 + 独立几率字段
+        // ② Create 序列装配：结果池（概率产出；主产物概率产、副产不明的那类配方就在这里）
+        if (out.isEmpty()) {
+            collectResultPool(recipe, primary, out);
+        }
+
+        // ③ GT：带几率的物品产出（几率 <100% 的即为副产；主产物绝不当副产重复发）
+        if (out.isEmpty()) {
+            for (var chanced : com.ae2addon.compat.GregTechCompat.itemOutputs(recipe)) {
+                ItemStack stack = chanced.stack();
+                if (stack.isEmpty()) continue;
+                if (!primary.isEmpty() && stack.getItem() == primary.getItem()) continue;
+                add(out, stack, chanced.chance(), primary);
+            }
+        }
+
+        // ④ Mekanism 锯木式：Ingredient 定义 + 独立几率字段
         if (out.isEmpty()) {
             Object def = invoke(recipe, "getSecondaryOutputDefinition");
             if (def instanceof Ingredient ing) {
@@ -106,6 +121,23 @@ public final class RecipeByproducts {
     }
 
     // ── 内部 ──
+
+    /** Create 序列装配的结果池（resultPool）：概率产出的另一种表达 */
+    private static void collectResultPool(Recipe<?> recipe, ItemStack primary, List<Chanced> out) {
+        if (!com.ae2addon.compat.CreateSequencedCompat.isSequencedAssembly(recipe)) return;
+        try {
+            Object pool = recipe.getClass().getField("resultPool").get(recipe);
+            if (!(pool instanceof Iterable<?> entries)) return;
+            for (Object entry : entries) {
+                ItemStack stack = stackOf(entry);
+                if (stack == null || stack.isEmpty()) continue;
+                if (!primary.isEmpty() && stack.getItem() == primary.getItem()) continue; // 主产物不重复发
+                add(out, stack, chanceOf(entry), primary);
+            }
+        } catch (Throwable ignored) {
+            // 反射失败 → 当作没有结果池
+        }
+    }
 
     private static void add(List<Chanced> out, @Nullable ItemStack stack, float chance, ItemStack primary) {
         if (stack == null || stack.isEmpty()) return;
