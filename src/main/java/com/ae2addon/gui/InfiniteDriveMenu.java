@@ -1,6 +1,6 @@
 package com.ae2addon.gui;
 
-import appeng.blockentity.inventory.AppEngCellInventory;
+import appeng.api.inventories.InternalInventory;
 import com.ae2addon.block.InfiniteDriveBE;
 import com.ae2addon.init.ModMenuTypes;
 import net.minecraft.core.BlockPos;
@@ -141,7 +141,7 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
 
         void setPage(int page) { this.page = page; }
 
-        private AppEngCellInventory real() { return be.getCellInventory(); }
+        private InternalInventory real() { return be.getInternalInventory(); }
 
         private int realSlot(int slot) { return page * PAGE_SIZE + slot; }
 
