@@ -19,6 +19,7 @@ import appeng.blockentity.crafting.IMolecularAssemblerSupportedPattern;
 import appeng.blockentity.grid.AENetworkBlockEntity;
 import appeng.hooks.ticking.TickHandler;
 import com.ae2addon.AE2Addon;
+import com.ae2addon.compat.CreateSequencedCompat;
 import com.ae2addon.compat.EMCCompat;
 import com.ae2addon.gui.QianJiMenu;
 import com.ae2addon.init.ModBlockEntities;
@@ -122,61 +123,148 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     }
 
     /**
-     * 校验处理样板：
-     * 1. 每个物品输出必须有配方（标准或自定义），否则拒绝（防凭空创造）
-     * 2. 对输入已知的标准配方：样板输入必须覆盖某个配方的全部输入（防少输入刷物品）
-     * 3. 自定义配方（输入未知）跳过输入匹配，避免误伤 ProjectE/Mekanism 等
+     * 校验处理样板：返回 null = 通过，否则返回拒绝原因（便于聊天栏/日志定位）。
+     * <p>
+     * 规则（2026-09-14 修订，修 sensei 实测的两个漏）：
+     * 1. **主产物**：至少一个物品输出能被某条真实配方覆盖（样板输入 ⊇ 该配方输入）；
+     *    一条都匹配不上时，看是否属于「自定义配方」输出（ProjectE/Mekanism 等输入未知类型）。
+     * 2. **序列装配（Create）**：命中的若是序列装配配方，额外要求样板供齐「基础原料 + 各步原料」，
+     *    且原料总量 ≥ 装配次数 loops——否则一次输入直接产出成品 = 跳过全部装配步骤。
+     * 3. **次级产出（副产物）**：除主产物外的输出，允许「自身有配方覆盖」**或**
+     *    「是命中配方的次级产出」——有写副产物的样板不再被误判为无效。
+     * 4. **EMC 守恒**（ProjectE 在场时）。
      */
-    private boolean isValidRecipePattern(IPatternDetails details) {
-        if (level == null) return false;
+    @Nullable
+    private String validatePattern(IPatternDetails details) {
+        if (level == null) return "无世界上下文";
         var index = getRecipeIndex(level);
-        var custom = customRecipeOutputs != null ? customRecipeOutputs : Set.of();
-        if (index.isEmpty() && custom.isEmpty()) return true; // 索引构建失败时放行，避免误伤
+        var custom = customRecipeOutputs != null ? customRecipeOutputs : Set.<Item> of();
+        if (index.isEmpty() && custom.isEmpty()) return null; // 索引构建失败时放行，避免误伤
 
         var outputs = details.getOutputs();
-        if (outputs == null || outputs.length == 0) return false;
+        if (outputs == null || outputs.length == 0) return "样板没有输出";
 
         // 纯流体输出暂不校验（放行）
         boolean hasItemOutput = false;
         for (var out : outputs) {
             if (out != null && out.what() instanceof AEItemKey) { hasItemOutput = true; break; }
         }
-        if (!hasItemOutput) return true;
+        if (!hasItemOutput) return null;
 
-        // 样板输入物品集合（展开所有可能输入）
-        var patternInputs = new HashSet<Item>();
-        for (var input : details.getInputs()) {
-            for (var option : input.getPossibleInputs()) {
-                if (option != null && option.what() instanceof AEItemKey k) {
-                    patternInputs.add(k.getItem());
-                }
-            }
-        }
+        var patternInputs = collectPatternInputs(details);
 
-        // 每个物品输出都必须有匹配的配方
+        // ① 主产物：找一个能匹配上的输出 + 配方
+        Recipe<?> matched = null;
         for (var out : outputs) {
             if (out == null || out.amount() <= 0) continue;
             if (!(out.what() instanceof AEItemKey itemKey)) continue;
-
-            var recipeInputs = index.get(itemKey.getItem());
-            boolean hasStandard = recipeInputs != null && !recipeInputs.isEmpty();
-            boolean hasCustom = custom.contains(itemKey.getItem());
-            if (!hasStandard && !hasCustom) return false; // 输出完全无配方 → 拒绝
-            if (!hasStandard) continue; // 只有自定义配方（输入未知）→ 跳过输入匹配
-
-            // 输入检查：样板输入必须覆盖某个配方的全部输入
-            boolean inputCovered = false;
-            for (var ri : recipeInputs) {
-                if (patternInputs.containsAll(ri)) { inputCovered = true; break; }
+            matched = matchRecipe(itemKey.getItem(), patternInputs);
+            if (matched != null) break;
+        }
+        if (matched == null) {
+            for (var out : outputs) {
+                if (out != null && out.what() instanceof AEItemKey k && custom.contains(k.getItem())) {
+                    return null; // 只有自定义配方（输入未知）→ 放行
+                }
             }
-            if (!inputCovered) return false;
+            return "样板的输入输出无匹配的真实配方";
         }
 
-        // EMC 价值守恒（防"低价值→高价值"刷物品）：仅当 ProjectE 可用时生效
-        if (EMCCompat.isProjectELoaded()) {
-            if (!emcConservationOK(details)) return false;
+        // ② 序列装配（Create）：装配次数必须被原料总量覆盖
+        var sequencedReason = checkSequencedAssembly(matched, details, patternInputs);
+        if (sequencedReason != null) return sequencedReason;
+
+        // ③ 其余输出：各自有配方覆盖，或者是命中配方的次级产出（副产物）
+        var byproducts = RecipeByproducts.extract(matched, level);
+        for (var out : outputs) {
+            if (out == null || out.amount() <= 0) continue;
+            if (!(out.what() instanceof AEItemKey itemKey)) continue;
+            if (matchRecipe(itemKey.getItem(), patternInputs) != null) continue;
+            boolean declaredByproduct = false;
+            for (var bp : byproducts) {
+                if (ItemStack.isSameItem(bp.stack(), itemKey.toStack())) { declaredByproduct = true; break; }
+            }
+            if (!declaredByproduct) {
+                return "输出「" + itemKey.getDisplayName().getString() + "」既无匹配配方，也不是该配方的次级产出";
+            }
         }
-        return true;
+
+        // ④ EMC 守恒（ProjectE）
+        if (EMCCompat.isProjectELoaded() && !emcConservationOK(details)) {
+            return "EMC 价值不守恒（禁止低价值→高价值）";
+        }
+        return null;
+    }
+
+    private boolean isValidRecipePattern(IPatternDetails details) {
+        return validatePattern(details) == null;
+    }
+
+    /** 样板输入物品集合（展开所有可能输入） */
+    private static Set<Item> collectPatternInputs(IPatternDetails details) {
+        var patternInputs = new HashSet<Item>();
+        for (var input : details.getInputs()) {
+            for (var option : input.getPossibleInputs()) {
+                if (option != null && option.what() instanceof AEItemKey k) patternInputs.add(k.getItem());
+            }
+        }
+        return patternInputs;
+    }
+
+    /** 按「样板输入 ⊇ 配方全部输入」找一条能产出该物品的真实配方 */
+    @Nullable
+    private static Recipe<?> matchRecipe(Item output, Set<Item> patternInputs) {
+        var objects = recipeObjects;
+        if (objects == null) return null;
+        var candidates = objects.get(output);
+        if (candidates == null) return null;
+        for (var candidate : candidates) {
+            var recipeInputs = new HashSet<Item>();
+            for (var ing : candidate.getIngredients()) {
+                for (var stack : ing.getItems()) {
+                    if (!stack.isEmpty()) recipeInputs.add(stack.getItem());
+                }
+            }
+            if (!recipeInputs.isEmpty() && patternInputs.containsAll(recipeInputs)) return candidate;
+        }
+        return null;
+    }
+
+    /**
+     * Create 序列装配额外校验。
+     * <p>
+     * 为什么需要：序列装配配方的 {@code getIngredients()} 只报「基础原料」，
+     * 组装所需的各步原料与**装配次数**（loops）都不在里面——只按 getIngredients()
+     * 校验的话，「1 份原料 → 1 份成品」的样板会被当成合法（实际跳过了全部装配步骤）。
+     * 规则：① 样板输入要供齐「基础 + 各步原料」；② 各步原料的总量 ≥ loops
+     * （真实机制里每推进一次装配消耗一份该步原料）。
+     */
+    @Nullable
+    private String checkSequencedAssembly(Recipe<?> matched, IPatternDetails details, Set<Item> patternInputs) {
+        var requirement = CreateSequencedCompat.requirement(matched);
+        if (requirement == null) return null; // 不是序列装配
+
+        if (!patternInputs.containsAll(requirement.allItems())) {
+            return "Create 序列装配：样板缺少装配所需原料（该配方共需 "
+                    + requirement.allItems().size() + " 种）";
+        }
+        long supplied = 0;
+        for (var input : details.getInputs()) {
+            boolean relevant = false;
+            for (var option : input.getPossibleInputs()) {
+                if (option != null && option.what() instanceof AEItemKey k
+                        && requirement.stepItems().contains(k.getItem())) {
+                    relevant = true;
+                    break;
+                }
+            }
+            if (relevant) supplied += input.getMultiplier();
+        }
+        if (supplied < requirement.loops()) {
+            return "Create 序列装配：装配次数不足（需 " + requirement.loops()
+                    + " 份装配原料，样板只给了 " + supplied + "）";
+        }
+        return null;
     }
 
     /**
@@ -462,34 +550,19 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         }
     }
 
-    /** 样板 → 真实配方：按「样板输入覆盖配方全部输入」匹配（与校验规则一致） */
+    /** 样板 → 真实配方：与校验同规则（样板输入覆盖配方全部输入） */
     @Nullable
     private Recipe<?> findRecipeFor(IPatternDetails details) {
         if (level == null) return null;
         getRecipeIndex(level);
-        var objects = recipeObjects;
-        if (objects == null) return null;
+        if (recipeObjects == null) return null;
 
-        var patternInputs = new HashSet<Item>();
-        for (var input : details.getInputs()) {
-            for (var option : input.getPossibleInputs()) {
-                if (option != null && option.what() instanceof AEItemKey k) patternInputs.add(k.getItem());
-            }
-        }
+        var patternInputs = collectPatternInputs(details);
         for (var out : details.getOutputs()) {
             if (out == null || out.amount() <= 0) continue;
             if (!(out.what() instanceof AEItemKey itemKey)) continue;
-            var candidates = objects.get(itemKey.getItem());
-            if (candidates == null) continue;
-            for (var candidate : candidates) {
-                var recipeInputs = new HashSet<Item>();
-                for (var ing : candidate.getIngredients()) {
-                    for (var stack : ing.getItems()) {
-                        if (!stack.isEmpty()) recipeInputs.add(stack.getItem());
-                    }
-                }
-                if (recipeInputs.isEmpty() || patternInputs.containsAll(recipeInputs)) return candidate;
-            }
+            var matched = matchRecipe(itemKey.getItem(), patternInputs);
+            if (matched != null) return matched;
         }
         return null;
     }
@@ -561,10 +634,11 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                 ChatLog.warn(level, worldPosition, "样板槽 " + i + " 是合成样板，千机只支持处理样板，已跳过");
                 continue;
             }
-            if (!isValidRecipePattern(details)) {
+            var rejectReason = validatePattern(details);
+            if (rejectReason != null) {
                 // 配方校验：输入输出组合必须匹配真实配方，防止刷物品
                 skipped++;
-                ChatLog.warn(level, worldPosition, "样板槽 " + i + " 的输入输出无匹配的真实配方，已跳过");
+                ChatLog.warn(level, worldPosition, "样板槽 " + i + " 被拒：" + rejectReason);
                 continue;
             }
             result.add(details);
@@ -631,9 +705,12 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                     ChatLog.warn(level, worldPosition, "合成样板不支持，千机只接受处理样板");
                     return false;
                 }
-                if (details != null && !isValidRecipePattern(details)) {
-                    ChatLog.warn(level, worldPosition, "该样板输入输出无匹配的真实配方，已拒收");
-                    return false;
+                if (details != null) {
+                    var rejectReason = validatePattern(details);
+                    if (rejectReason != null) {
+                        ChatLog.warn(level, worldPosition, "该样板被拒收：" + rejectReason);
+                        return false;
+                    }
                 }
             }
             return true;

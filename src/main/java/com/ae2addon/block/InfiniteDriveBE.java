@@ -2,6 +2,7 @@ package com.ae2addon.block;
 
 import appeng.api.implementations.blockentities.IChestOrDrive;
 import appeng.api.inventories.InternalInventory;
+import appeng.api.networking.GridFlags;
 import appeng.api.networking.IGridNode;
 import appeng.api.storage.IStorageMounts;
 import appeng.api.storage.IStorageProvider;
@@ -77,6 +78,13 @@ public class InfiniteDriveBE extends AENetworkInvBlockEntity
 
     public InfiniteDriveBE(BlockPos pos, BlockState state) {
         super(ModBlockEntities.INFINITE_DRIVE.get(), pos, state);
+        // ⚠ 关键：AE2 的驱动器是在**构造函数里**把「存储提供者」注册到节点上的
+        // （DriveBlockEntity 同款：addService(IStorageProvider) + REQUIRE_CHANNEL）。
+        // 漏了这一步，网格永远不会调 mountInventories → 元件插进去也不工作
+        // （2026-09-14 sensei 实测：插入后无法正常使用）。
+        getMainNode()
+                .addService(IStorageProvider.class, this)
+                .setFlags(GridFlags.REQUIRE_CHANNEL);
     }
 
     // ── 生命周期 ──
