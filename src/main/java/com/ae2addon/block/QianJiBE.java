@@ -926,6 +926,15 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                     ChatLog.warn(level, worldPosition, "空千机样板（未写入配方数据），已拒收");
                     return false;
                 }
+                // AE2 的合成计划靠「主产物」建树：没有主产物的样板放进来也永远不会被推任务 → 直接不收
+                if (own.primary().isEmpty()) {
+                    ChatLog.warn(level, worldPosition, "千机样板没有主产物（只有概率产出），AE2 无法建计划，已拒收");
+                    return false;
+                }
+                if (own.inputs().isEmpty()) {
+                    ChatLog.warn(level, worldPosition, "千机样板没有输入（无原料消耗），已拒收");
+                    return false;
+                }
                 return true;
             }
             if (!PatternDetailsHelper.isEncodedPattern(stack)) return false;
