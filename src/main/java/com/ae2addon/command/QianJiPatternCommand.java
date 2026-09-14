@@ -85,6 +85,13 @@ public class QianJiPatternCommand {
             }
             say(source, "§8  · [" + sb + "§8]");
         }
+        // 逐能力条目直铺类型（流体读不到时看这里）
+        for (String line : com.ae2addon.compat.GregTechCompat.describeEntries(recipe, "inputs")) {
+            say(source, "§8  · 输入能力条目: " + line);
+        }
+        for (String line : com.ae2addon.compat.GregTechCompat.describeEntries(recipe, "outputs")) {
+            say(source, "§8  · 产出能力条目: " + line);
+        }
 
         var gtOutputs = com.ae2addon.compat.GregTechCompat.outputs(recipe);
         say(source, "§7GT 产出数（物品 + 流体）: §f" + gtOutputs.size());
