@@ -181,5 +181,10 @@
   "ae2addon.jade.group.others": "§7Others",
   "ae2addon.jade.more": "§7… and %s more",
   "block.ae2addon.assembler_core": "Infinite Assembly Processor Core",
-  "gui.ae2addon.assembler.title": "Assembly Processor Patterns"
+  "gui.ae2addon.assembler.title": "Assembly Processor Patterns",
+  "block.ae2addon.infinite_drive": "Infinite Drive",
+  "block.ae2addon.qianji": "Qianji · Abishu",
+  "item.ae2addon.catalyst_basic": "Basic Catalyst",
+  "item.ae2addon.catalyst_advanced": "Advanced Catalyst",
+  "item.ae2addon.catalyst_ultimate": "Ultimate Catalyst"
 }

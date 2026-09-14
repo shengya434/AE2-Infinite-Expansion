@@ -6,6 +6,8 @@ import com.ae2addon.block.InfiniteCoProcessingBlock;
 import com.ae2addon.block.InfiniteInterfaceBlock;
 import com.ae2addon.block.IntegratedCPUBlock;
 import com.ae2addon.block.AssemblerCoreBlock;
+import com.ae2addon.block.InfiniteDriveBlock;
+import com.ae2addon.block.QianJiBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
@@ -55,5 +57,19 @@ public class ModBlocks {
     public static final RegistryObject<Block> ASSEMBLER_CORE = BLOCKS.register(
             "assembler_core",
             AssemblerCoreBlock::new
+    );
+
+    // ── 2.0 WIP（2026-08-11 备份恢复，2026-09-14 拾起）──
+
+    /** 驱动器（无限级）— 5×5×5 多方块，装无限元件专用，复用 AE2 原版驱动器面板 */
+    public static final RegistryObject<Block> INFINITE_DRIVE = BLOCKS.register(
+            "infinite_drive",
+            InfiniteDriveBlock::new
+    );
+
+    /** 千机·阿比舒（无限级）— 3×3×3 多方块，无视配方条件的瞬间处理机（1280 样板槽 + 催化剂槽） */
+    public static final RegistryObject<Block> QIAN_JI = BLOCKS.register(
+            "qianji",
+            QianJiBlock::new
     );
 }

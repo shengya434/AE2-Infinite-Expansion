@@ -6,6 +6,8 @@ import com.ae2addon.block.InfiniteCoProcessingBE;
 import com.ae2addon.block.InfiniteInterfaceBE;
 import com.ae2addon.block.IntegratedCPUBE;
 import com.ae2addon.block.AssemblerCoreBE;
+import com.ae2addon.block.InfiniteDriveBE;
+import com.ae2addon.block.QianJiBE;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.ForgeRegistries;
@@ -60,5 +62,21 @@ public class ModBlockEntities {
                     () -> BlockEntityType.Builder.of(
                             AssemblerCoreBE::new,
                             ModBlocks.ASSEMBLER_CORE.get()
+                    ).build(null));
+
+    // ── 2.0 WIP（2026-08-11 备份恢复，2026-09-14 拾起）──
+
+    public static final RegistryObject<BlockEntityType<InfiniteDriveBE>> INFINITE_DRIVE =
+            BLOCK_ENTITIES.register("infinite_drive",
+                    () -> BlockEntityType.Builder.of(
+                            InfiniteDriveBE::new,
+                            ModBlocks.INFINITE_DRIVE.get()
+                    ).build(null));
+
+    public static final RegistryObject<BlockEntityType<QianJiBE>> QIAN_JI =
+            BLOCK_ENTITIES.register("qianji",
+                    () -> BlockEntityType.Builder.of(
+                            QianJiBE::new,
+                            ModBlocks.QIAN_JI.get()
                     ).build(null));
 }

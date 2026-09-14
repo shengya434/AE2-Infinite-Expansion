@@ -4,6 +4,7 @@ import com.ae2addon.AE2Addon;
 import com.ae2addon.gui.InfiniteInterfaceMenu;
 import com.ae2addon.gui.IntegratedCPUMenu;
 import com.ae2addon.gui.AssemblerMenu;
+import com.ae2addon.gui.QianJiMenu;
 import com.ae2addon.gui.Mode2ConfigMenu;
 import com.ae2addon.gui.ModeSelectMenu;
 import net.minecraft.core.registries.Registries;
@@ -44,5 +45,10 @@ public class ModMenuTypes {
     public static final RegistryObject<MenuType<AssemblerMenu>> ASSEMBLER =
             MENUS.register("assembler",
                     () -> IForgeMenuType.create(AssemblerMenu::fromNetwork));
+
+    // 千机·阿比舒 样板槽界面（2.0 WIP 恢复）
+    public static final RegistryObject<MenuType<QianJiMenu>> QIAN_JI =
+            MENUS.register("qianji",
+                    () -> IForgeMenuType.create(QianJiMenu::new));
 
 }

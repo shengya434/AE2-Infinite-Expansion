@@ -1,6 +1,7 @@
 package com.ae2addon.init;
 
 import com.ae2addon.AE2Addon;
+import com.ae2addon.item.CatalystItem;
 import com.ae2addon.item.EternalHeartItem;
 import com.ae2addon.item.MatterBallItem;
 import com.ae2addon.item.UniversalStorageCell;
@@ -73,6 +74,34 @@ public class ModItems {
             () -> new BlockItem(ModBlocks.ASSEMBLER_CORE.get(), new Item.Properties())
     );
 
+    // ── 2.0 WIP（2026-08-11 备份恢复，2026-09-14 拾起）──
+
+    /** 驱动器（无限级）方块物品 */
+    public static final RegistryObject<Item> INFINITE_DRIVE_ITEM = ITEMS.register(
+            "infinite_drive",
+            () -> new BlockItem(ModBlocks.INFINITE_DRIVE.get(), new Item.Properties())
+    );
+
+    /** 千机·阿比舒（无限级）方块物品 */
+    public static final RegistryObject<Item> QIAN_JI_ITEM = ITEMS.register(
+            "qianji",
+            () -> new BlockItem(ModBlocks.QIAN_JI.get(), new Item.Properties().fireResistant())
+    );
+
+    /** 催化剂三档（千机副产物概率 / 耗电倍率） */
+    public static final RegistryObject<Item> CATALYST_BASIC = ITEMS.register(
+            "catalyst_basic",
+            () -> new CatalystItem(1)
+    );
+    public static final RegistryObject<Item> CATALYST_ADVANCED = ITEMS.register(
+            "catalyst_advanced",
+            () -> new CatalystItem(2)
+    );
+    public static final RegistryObject<Item> CATALYST_ULTIMATE = ITEMS.register(
+            "catalyst_ultimate",
+            () -> new CatalystItem(3)
+    );
+
     /** ME接口（无限级）· 线缆面板（part，2026-09-02 sensei：装线缆上喂机器，不占格） */
     public static final RegistryObject<Item> INFINITE_INTERFACE_PANEL_ITEM = ITEMS.register(
             "infinite_interface_panel",
@@ -106,6 +135,11 @@ public class ModItems {
                         acceptTabItem(output, ModBlocks.ASSEMBLER_CORE.get());
                         acceptTabItem(output, ModBlocks.INFINITE_INTERFACE.get());
                         acceptTabItem(output, INFINITE_INTERFACE_PANEL_ITEM.get());
+                        acceptTabItem(output, ModBlocks.INFINITE_DRIVE.get());
+                        acceptTabItem(output, ModBlocks.QIAN_JI.get());
+                        acceptTabItem(output, CATALYST_BASIC.get());
+                        acceptTabItem(output, CATALYST_ADVANCED.get());
+                        acceptTabItem(output, CATALYST_ULTIMATE.get());
                         acceptTabItem(output, CONFIG_CARD.get());
                         acceptTabItem(output, MATTER_BALL.get());
                     })

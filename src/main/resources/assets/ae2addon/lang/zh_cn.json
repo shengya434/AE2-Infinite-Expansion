@@ -181,5 +181,10 @@
   "ae2addon.jade.group.others": "§7其他",
   "ae2addon.jade.more": "§7…等 %s 种",
   "block.ae2addon.assembler_core": "无限级装配处理器·核心",
-  "gui.ae2addon.assembler.title": "装配处理器样板"
+  "gui.ae2addon.assembler.title": "装配处理器样板",
+  "block.ae2addon.infinite_drive": "驱动器（无限级）",
+  "block.ae2addon.qianji": "千机·阿比舒（无限级）",
+  "item.ae2addon.catalyst_basic": "基础催化剂",
+  "item.ae2addon.catalyst_advanced": "高级催化剂",
+  "item.ae2addon.catalyst_ultimate": "终极催化剂"
 }
