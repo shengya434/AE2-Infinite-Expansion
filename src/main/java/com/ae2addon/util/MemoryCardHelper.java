@@ -202,6 +202,6 @@ public final class MemoryCardHelper {
             } catch (RuntimeException ignored) {
             }
         }
-        feeder.setChanged();
+        feeder.feederChanged();
     }
 }

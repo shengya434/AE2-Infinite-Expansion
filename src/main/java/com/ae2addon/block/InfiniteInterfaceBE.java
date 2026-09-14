@@ -384,6 +384,21 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     }
 
     @Override
+    public void feederChanged() {
+        setChanged();
+    }
+
+    @Override
+    public net.minecraft.world.level.Level feederLevel() {
+        return getLevel();
+    }
+
+    @Override
+    public net.minecraft.core.BlockPos feederPos() {
+        return getBlockPos();
+    }
+
+    @Override
     public boolean activeExtract() {
         return activeExtract;
     }

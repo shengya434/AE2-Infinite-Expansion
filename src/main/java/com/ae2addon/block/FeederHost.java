@@ -48,9 +48,17 @@ public interface FeederHost {
     Direction getFront();
 
     @Nullable
-    Level getLevel();
+    /**
+     * 宿主所在世界（part 版 = 宿主方块所在世界）。
+     * <p>
+     * ⚠ 不叫 getLevel()：与 MC {@code BlockEntity.getLevel()} 撚签名 → reobf 改名行为
+     * 不稳定（同源码只因 jar 里类集不同就可能变成单边改名 → 运行期 NoSuchMethodError）。
+     * 自家接口一律用 mod 独有名字。
+     */
+    Level feederLevel();
 
-    BlockPos getBlockPos();
+    /** 宿主坐标（同 feederLevel 理由，不叫 getBlockPos()）。 */
+    BlockPos feederPos();
 
     /**
      * 标记槽点击：content=true（右键）= 容器内容物优先（流体/气体容器 → 内容物，普通物品 → 本体）；
@@ -136,7 +144,8 @@ public interface FeederHost {
 
     void markerTargetsPut(AEKey key, long target);
 
-    void setChanged();
+    /** 宿主数据变更（同 feederLevel 理由：不叫 setChanged()，避开 MC BlockEntity.setChanged 的 SRG 撚名）。 */
+    void feederChanged();
 
     /** Jade 等外部显示：蓄水池全部条目（物品/流体/化学物每类都列，不截断）；文本 translatable，语言在客户端解析。 */
     java.util.List<net.minecraft.network.chat.Component> reservoirTooltipLines();
@@ -251,7 +260,7 @@ public interface FeederHost {
         } catch (RuntimeException ignored) {
         }
         if (insertedAny) {
-            setChanged();
+            feederChanged();
         }
         return insertedAny;
     }

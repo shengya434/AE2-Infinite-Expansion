@@ -143,7 +143,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         addRenderableWidget(Button.builder(Component.literal("⇦退网"),
                 b -> AE2Addon.NETWORK.sendToServer(
                         new com.ae2addon.network.FeederReturnPacket(
-                                getMenu().getFeeder().getBlockPos()))
+                                getMenu().getFeeder().feederPos()))
         ).bounds(leftPos + 164, topPos + 82, 36, 12).build());
         long[] values = {
                 getMenu().getFeeder().stockTargetValue(),
@@ -196,7 +196,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             var be = getMenu().getFeeder();
             AE2Addon.NETWORK.sendToServer(
                     new com.ae2addon.network.FeederTargetPacket(
-                            be.getBlockPos(), targetBoxMarker, value));
+                            be.feederPos(), targetBoxMarker, value));
             AE2Addon.LOGGER.info("[ae2addon][gui] 标记 {} 缓存目标 = {}（文本 {}）",
                     targetBoxMarker, value, targetBox.getValue().trim());
         } catch (NumberFormatException e) {
@@ -218,7 +218,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             AE2Addon.LOGGER.info("[ae2addon][gui] 保存设置: {} = {}（文本 {}）", KEYS[idx], value, text);
             AE2Addon.NETWORK.sendToServer(
                     new com.ae2addon.network.FeederSettingPacket(
-                            getMenu().getFeeder().getBlockPos(), KEYS[idx], value));
+                            getMenu().getFeeder().feederPos(), KEYS[idx], value));
         } catch (NumberFormatException e) {
             AE2Addon.LOGGER.info("[ae2addon][gui] 解析失败: {} 文本={}", KEYS[idx], text);
         }
@@ -617,7 +617,7 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
             String which = switchZoneAt(relX);
             AE2Addon.NETWORK.sendToServer(
                     new com.ae2addon.network.FeederTogglePacket(
-                            getMenu().getFeeder().getBlockPos(), which));
+                            getMenu().getFeeder().feederPos(), which));
             return true;
         }
         return super.mouseClicked(mouseX, mouseY, button);

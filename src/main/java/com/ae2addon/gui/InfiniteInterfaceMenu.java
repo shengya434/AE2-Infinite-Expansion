@@ -397,8 +397,8 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
         var front = feeder.getFront();
         net.minecraft.network.chat.MutableComponent machine =
                 Component.translatable("gui.ae2addon.feeder.no_machine");
-        if (front != null && feeder.getLevel() != null) {
-            var target = feeder.getLevel().getBlockEntity(feeder.getBlockPos().relative(front));
+        if (front != null && feeder.feederLevel() != null) {
+            var target = feeder.feederLevel().getBlockEntity(feeder.feederPos().relative(front));
             if (target != null) {
                 machine = Component.literal("§a")
                         .append(target.getBlockState().getBlock().getName())

@@ -590,7 +590,10 @@ public class InfiniteInterfacePart extends AEBasePart
         setChanged();
     }
 
-    @Override
+    /**
+     * 保留的公开 setChanged()：不实现 FeederHost（接口已改叫 feederChanged），
+     * 仅让本类 reobf 后确实带有 MC 的 m_6596_ 实现。
+     */
     public void setChanged() {
         getHost().markForSave();
     }
@@ -1138,7 +1141,6 @@ public class InfiniteInterfacePart extends AEBasePart
         return capacityCards();
     }
 
-    @Override
     public BlockPos getBlockPos() {
         return getBlockEntity().getBlockPos();
     }
@@ -1147,8 +1149,8 @@ public class InfiniteInterfacePart extends AEBasePart
      * ⚠️ 必须显式覆写：AE2 jar 官方映射直用（方法名 getLevel 未混淆），但本 mod reobf 时
      * getLevel() 签名与 MC BlockEntity.getLevel 相同会被 SRG 映射成 m_58904_ → 不覆写则
      * 运行期 AbstractMethodError（2026-09-02 崩溃实锤 mclo.gs/rMn1RLH）。
+     * 不带 @Override：接口已改叫 feederLevel()，本方法保留仅为让本类 reobf 后真的有 m_58904_。
      */
-    @Override
     public Level getLevel() {
         var be = getBlockEntity();
         return be == null ? null : be.getLevel();
@@ -1157,6 +1159,21 @@ public class InfiniteInterfacePart extends AEBasePart
     @Override
     public boolean isFeederRemoved() {
         return removed;
+    }
+
+    @Override
+    public void feederChanged() {
+        setChanged();
+    }
+
+    @Override
+    public Level feederLevel() {
+        return getLevel();
+    }
+
+    @Override
+    public net.minecraft.core.BlockPos feederPos() {
+        return getBlockPos();
     }
 
     @Override
