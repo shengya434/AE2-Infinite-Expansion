@@ -85,36 +85,41 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
     public void setRecipe(IRecipeLayoutBuilder builder, Entry entry, IFocusGroup focuses) {
         QianJiPatternData data = entry.data();
 
+        // ── 输入：左上，每行 5 格 ──
         int x = 6;
         int y = 16;
         for (QianJiPatternData.Slot slot : data.inputs()) {
             var slotBuilder = builder.addInputSlot(x, y);
             addOptions(slotBuilder, slot.options());
             x += 18;
-            if (x > 96) {
+            if (x > 84) {
                 x = 6;
                 y += 18;
             }
         }
 
-        int ox = 108;
+        // ── 主产物：右侧第一行。
+        //    2026-09-15 修：原来用 addItemStack(itemOf(...))，流体输出会被渲染成**空气**；
+        //    统一走 addStack（内部区分物品/流体）。──
+        int ox = 106;
         int oy = 16;
         for (QianJiPatternData.Out out : data.primary()) {
-            builder.addOutputSlot(ox, oy).addItemStack(itemOf(out.stack()));
+            addStack(builder.addOutputSlot(ox, oy), out.stack());
             ox += 18;
-            if (ox > 160) {
-                ox = 108;
+            if (ox > 142) {
+                ox = 106;
                 oy += 18;
             }
         }
-        ox = 108;
-        oy += 20;
+
+        // ── 概率产出：右侧第二行起 ──
+        ox = 106;
+        oy = 52;
         for (QianJiPatternData.Chanced chanced : data.chanced()) {
-            var slotBuilder = builder.addOutputSlot(ox, oy);
-            addStack(slotBuilder, chanced.stack());
+            addStack(builder.addOutputSlot(ox, oy), chanced.stack());
             ox += 18;
-            if (ox > 160) {
-                ox = 108;
+            if (ox > 142) {
+                ox = 106;
                 oy += 18;
             }
         }
@@ -149,15 +154,15 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         var font = Minecraft.getInstance().font;
         QianJiPatternData data = entry.data();
 
-        // 概率产出：在槽位下方画几率（槽位行从 y=52 起，按需下移）
-        int ox = 108;
+        // 概率产出：槽位下方标几率（位置与 setRecipe 保持一致）
+        int ox = 106;
         int oy = 52;
         for (QianJiPatternData.Chanced chanced : data.chanced()) {
             String pct = chanced.chance() > 0f ? Math.round(chanced.chance() * 100) + "%" : "?";
             graphics.drawString(font, "§d" + pct, ox, oy + 17, 0xFFFFFF, false);
             ox += 18;
-            if (ox > 160) {
-                ox = 108;
+            if (ox > 142) {
+                ox = 106;
                 oy += 18;
             }
         }
@@ -168,9 +173,9 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         graphics.fill(BTN_X, BTN_Y, BTN_X + BTN_W, BTN_Y + BTN_H, hover ? 0x8040FF40 : 0x60207020);
         graphics.drawString(font, "§a编码", BTN_X - 2, BTN_Y + 4, 0xFFFFFF, false);
 
-        graphics.drawString(font, "§7主产物 §a●§7 / 概率产出 §d●", 6, 76, 0xFFFFFF, false);
+        graphics.drawString(font, "§7主产 §a●§7 / 概率 §d●", 6, 78, 0xFFFFFF, false);
         if (entry.recipeId() != null && !entry.recipeId().isEmpty()) {
-            graphics.drawString(font, "§8" + trim(entry.recipeId(), 34), 6, 60, 0xFFFFFF, false);
+            graphics.drawString(font, "§8" + trim(entry.recipeId(), 30), 6, 62, 0xFFFFFF, false);
         }
     }
 
