@@ -597,6 +597,23 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                 : List.<RecipeByproducts.Chanced> of();
         double bonus = catalystByproductBonus();
 
+        // 诊断：把「命中的配方 + 读取到的概率产出表」写清楚（聊天栏+日志），
+        // 方便一眼看出是「几率没读到」还是「配方匹配错了」
+        if (recipe != null) {
+            var summary = new StringBuilder();
+            for (var c : chanced) {
+                if (!summary.isEmpty()) summary.append("、");
+                summary.append(c.stack().getHoverName().getString()).append(' ')
+                        .append(c.chance() > 0f ? Math.round(c.chance() * 100) + "%" : "几率未知");
+            }
+            ChatLog.info(level, worldPosition, "配方命中 " + recipe.getClass().getSimpleName()
+                    + " · 概率产出[" + (summary.isEmpty() ? "无" : summary) + "]");
+            AE2Addon.LOGGER.info("QianJi craft: recipe={} chanced={}",
+                    recipe.getClass().getName(), summary);
+        } else {
+            ChatLog.warn(level, worldPosition, "未匹配到真实配方 → 产出按样板声明直接给（不掷骰）");
+        }
+
         // ── ① 先算这次「真正产出了什么」（含掷骰）──
         var produced = new ArrayList<GenericStack>();
         var declaredItems = new HashSet<Item>();
@@ -691,7 +708,14 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return -1f;
     }
 
-    /** 样板 → 真实配方：与校验同规则（样板输入覆盖配方全部输入） */
+    /**
+     * 样板 → 真实配方。
+     * <p>
+     * 2026-09-15 修：原来取「第一条输入覆盖的配方」——但 GT 一个产物常有多条配方
+     * （不同机器/等级），取错那一条就会让该配方的概率副产读不出来，
+     * 样板声明的副产就被当成「必出」→ 100%（sensei 实测 15% 副产 5 中 5 的嫌犯之一）。
+     * 现在在候选里按**能解释样板声明产出的条数**打分，取最高分。
+     */
     @Nullable
     private Recipe<?> findRecipeFor(IPatternDetails details) {
         if (level == null) return null;
@@ -699,13 +723,41 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         if (recipeObjects == null) return null;
 
         var patternInputs = collectPatternInputs(details);
+        var declared = new HashSet<Item>();
+        for (var out : details.getOutputs()) {
+            if (out != null && out.what() instanceof AEItemKey k) declared.add(k.getItem());
+        }
+
+        Recipe<?> best = null;
+        int bestScore = -1;
         for (var out : details.getOutputs()) {
             if (out == null || out.amount() <= 0) continue;
-            if (!(out.what() instanceof AEItemKey itemKey)) continue;
-            var matched = matchRecipe(itemKey.getItem(), patternInputs);
-            if (matched != null) return matched;
+            if (!(out.what() instanceof AEItemKey key)) continue;
+            var candidates = recipeObjects.get(key.getItem());
+            if (candidates == null) continue;
+            for (var candidate : candidates) {
+                if (!coversRecipeInputs(candidate, patternInputs)) continue;
+                int score = explainedOutputs(candidate, declared);
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = candidate;
+                }
+            }
         }
-        return null;
+        return best;
+    }
+
+    /** 这条配方能解释样板声明产出里的几个物品（自身产出 ∪ 概率产出） */
+    private int explainedOutputs(Recipe<?> recipe, Set<Item> declared) {
+        int score = 0;
+        var produced = outputItemsOf(recipe, level);
+        for (var item : declared) {
+            if (produced.contains(item)) { score++; continue; }
+            for (var bp : RecipeByproducts.extract(recipe, level)) {
+                if (!bp.stack().isEmpty() && bp.stack().getItem() == item) { score++; break; }
+            }
+        }
+        return score;
     }
 
     private String describeOutputs(IPatternDetails pattern) {
