@@ -191,5 +191,6 @@
   "item.ae2addon.integrated_cpu_formed": "Integrated CPU (Pre-formed)",
   "item.ae2addon.infinite_drive_formed": "Infinite Drive (Pre-formed)",
   "tooltip.ae2addon.formed_variant": "Places already formed — no multiblock needed",
-  "item.ae2addon.qianji_pattern": "Qianji Recipe Pattern"
+  "item.ae2addon.qianji_pattern": "Qianji Recipe Pattern",
+  "gui.ae2addon.jei.qianji.title": "Qianji · Recipes"
 }

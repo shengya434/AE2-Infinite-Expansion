@@ -33,12 +33,46 @@ public class AE2AddonJEIPlugin implements IModPlugin {
     @Override
     public void registerCategories(IRecipeCategoryRegistration registration) {
         registration.addRecipeCategories(
-                new IntegratedCPURecipeCategory(registration.getJeiHelpers().getGuiHelper())
+                new IntegratedCPURecipeCategory(registration.getJeiHelpers().getGuiHelper()),
+                new QianJiRecipeCategory(registration.getJeiHelpers().getGuiHelper())
         );
+    }
+
+    /** JEI 页「千机·自用配方」一次最多注册多少条（GT 配方动辄上万，这里限量并记日志） */
+    private static final int MAX_QIANJI_RECIPES = 1000;
+
+    private void registerQianJiRecipes(IRecipeRegistration registration) {
+        var level = net.minecraft.client.Minecraft.getInstance().level;
+        if (level == null) {
+            AE2Addon.LOGGER.warn("[ae2addon] JEI: 客户端世界未就绪，跳过千机配方页");
+            return;
+        }
+        var entries = new java.util.ArrayList<QianJiRecipeCategory.Entry>();
+        int considered = 0;
+        for (var recipe : level.getRecipeManager().getRecipes()) {
+            if (entries.size() >= MAX_QIANJI_RECIPES) break;
+            considered++;
+            var data = com.ae2addon.recipe.QianJiRecipeModel.fromRecipe(recipe, level);
+            if (data == null || data.primary().isEmpty() || data.inputs().isEmpty()) continue;
+            entries.add(QianJiRecipeCategory.of(recipe, data));
+        }
+        registration.addRecipes(QianJiRecipeCategory.TYPE, entries);
+        AE2Addon.LOGGER.info("[ae2addon] JEI 千机配方页：注册 {} 条（扫描 {} 条配方）",
+                entries.size(), considered);
+    }
+
+    @Override
+    public void registerRecipeCatalysts(mezz.jei.api.registration.IRecipeCatalystRegistration registration) {
+        // 千机就是这些配方的『工作台』
+        registration.addRecipeCatalyst(new ItemStack(com.ae2addon.init.ModBlocks.QIAN_JI.get()),
+                QianJiRecipeCategory.TYPE);
     }
 
     @Override
     public void registerRecipes(IRecipeRegistration registration) {
+        // 千机自用配方页（自有样板体系的浏览+编码入口）
+        registerQianJiRecipes(registration);
+
         // 集成 CPU 结构预览页
         registration.addRecipes(
                 IntegratedCPURecipeCategory.TYPE,

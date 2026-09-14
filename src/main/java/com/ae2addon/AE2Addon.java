@@ -161,6 +161,12 @@ public class AE2Addon {
                 com.ae2addon.network.FeederReturnPacket::handle
         );
 
+        NETWORK.registerMessage(11, com.ae2addon.network.QianJiPatternPacket.class,
+                com.ae2addon.network.QianJiPatternPacket::encode,
+                com.ae2addon.network.QianJiPatternPacket::decode,
+                com.ae2addon.network.QianJiPatternPacket::handle
+        );
+
         MinecraftForge.EVENT_BUS.register(this);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.QianJiPatternCommand.class);
