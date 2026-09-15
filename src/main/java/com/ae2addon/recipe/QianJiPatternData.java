@@ -30,8 +30,19 @@ public final class QianJiPatternData {
     /** 样板物品上的 NBT 键 */
     public static final String TAG_KEY = "***";
 
-    /** 一个输入槽：options = 可接受的输入（物品/流体，各自带数量；标签类原料会有多个） */
-    public record Slot(List<GenericStack> options) {}
+    /**
+     * 一个输入槽。
+     *
+     * @param options 可接受的输入（物品/流体/化学物，各自带数量；标签类原料会有多个）
+     * @param catalyst {@code true} = **非消耗输入**（GT 的 notConsumable / 模具 / 只损耐久的工具）：
+     *                 千机不向 AE2 索取、不消耗它（否则会把模具当耗材吞掉）
+     */
+    public record Slot(List<GenericStack> options, boolean catalyst) {
+        /** 普通消耗型输入槽 */
+        public Slot(List<GenericStack> options) {
+            this(options, false);
+        }
+    }
 
     /** 确定产出 */
     public record Out(GenericStack stack) {}
@@ -77,6 +88,7 @@ public final class QianJiPatternData {
                 options.add(GenericStack.writeTag(option));
             }
             slotTag.put("options", options);
+            if (slot.catalyst()) slotTag.putBoolean("catalyst", true);
             inputsTag.add(slotTag);
         }
         tag.put("inputs", inputsTag);
@@ -111,7 +123,11 @@ public final class QianJiPatternData {
                 GenericStack stack = GenericStack.readTag(optionsTag.getCompound(j));
                 if (stack != null && stack.amount() > 0) options.add(stack);
             }
-            if (!options.isEmpty()) inputs.add(new Slot(List.copyOf(options)));
+            if (!options.isEmpty()) {
+                var slotTag = inputsTag.getCompound(i);
+                inputs.add(new Slot(List.copyOf(options),
+                        slotTag.contains("catalyst") && slotTag.getBoolean("catalyst")));
+            }
         }
 
         var primaryTag = tag.getList("primary", Tag.TAG_COMPOUND);
@@ -159,6 +175,7 @@ public final class QianJiPatternData {
             if (!in.isEmpty()) in.append(" §7+ ");
             in.append(label(slot.options().get(0)));
             if (slot.options().size() > 1) in.append("§8(任一)");
+            if (slot.catalyst()) in.append("§e(不消耗)");
         }
         lines.add("§7输入: §f" + (in.isEmpty() ? "—" : in));
 

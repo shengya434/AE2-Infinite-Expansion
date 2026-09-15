@@ -52,9 +52,29 @@ public final class GregTechCompat {
     /** GT 的输入槽（每个 Content 一个槽；物品保留 Ingredient 语义，流体取 FluidIngredient.getStacks()） */
     public static List<List<appeng.api.stacks.GenericStack>> inputSlots(@Nullable Recipe<?> recipe) {
         var slots = new ArrayList<List<appeng.api.stacks.GenericStack>>();
+        for (var info : inputSlotInfos(recipe)) {
+            slots.add(info.options());
+        }
+        return slots;
+    }
+
+    /**
+     * 一条输入槽：候选 + 是否被消耗。
+     *
+     * @param consumed {@code false} = GT 的 {@code notConsumable()} —— **催化剂/模具/工具**，
+     *                 机器不会消耗它（GT 内部的实现就是“把这条输入的 chance 置 0”）
+     */
+    public record InputSlot(List<appeng.api.stacks.GenericStack> options, boolean consumed) {}
+
+    /** 带「是否消耗」信息的输入槽（2026-09-15：识别 notConsumable 输入，见 {@link InputSlot}） */
+    public static List<InputSlot> inputSlotInfos(@Nullable Recipe<?> recipe) {
+        var slots = new ArrayList<InputSlot>();
         for (var entry : entries(recipe, "inputs")) {
             var options = toStacks(entry.typed(), false);
-            if (!options.isEmpty()) slots.add(List.copyOf(options));
+            if (options.isEmpty()) continue;
+            // 输入的 chance：正常输入 = maxChance（全部），notConsumable 输入 = 0
+            boolean consumed = chanceOf(entry.content()) != 0f;
+            slots.add(new InputSlot(List.copyOf(options), consumed));
         }
         return slots;
     }

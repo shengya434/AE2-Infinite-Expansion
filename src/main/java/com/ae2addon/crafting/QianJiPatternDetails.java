@@ -33,6 +33,8 @@ public final class QianJiPatternDetails implements IPatternDetails {
 
         var in = new ArrayList<IInput>();
         for (var slot : data.inputs()) {
+            // 非消耗输入（催化剂/模具/只损耐久的工具）**不向 AE2 声明** → CPU 不会抽取、不会吞掉它
+            if (slot.catalyst()) continue;
             // 选项数量统一为 1，槽位数量交给 multiplier（与 AE2 样板解码约定一致）
             var options = new GenericStack[slot.options().size()];
             long multiplier = 1;

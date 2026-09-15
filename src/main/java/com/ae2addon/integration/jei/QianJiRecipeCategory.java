@@ -119,14 +119,14 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         return points;
     }
 
-    /** 输入槽按「物品 / 非物品（流体等）」分类；非物品一律进流体槽 */
-    private static List<List<GenericStack>>[] splitInputs(QianJiPatternData data) {
-        var items = new ArrayList<List<GenericStack>>();
-        var fluids = new ArrayList<List<GenericStack>>();
+    /** 输入槽按「物品 / 非物品（流体/化学物等）」分类；非物品一律进流体槽（并带非消耗标记） */
+    private static List<QianJiPatternData.Slot>[] splitInputs(QianJiPatternData data) {
+        var items = new ArrayList<QianJiPatternData.Slot>();
+        var fluids = new ArrayList<QianJiPatternData.Slot>();
         for (QianJiPatternData.Slot slot : data.inputs()) {
             if (slot.options().isEmpty()) continue;
             boolean isItem = slot.options().get(0).what() instanceof AEItemKey;
-            (isItem ? items : fluids).add(slot.options());
+            (isItem ? items : fluids).add(slot);
         }
         return new List[]{items, fluids};
     }
@@ -170,14 +170,14 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         var itemInPoints = grid(layout.itemInCells(), ITEMS_PER_ROW, EDGE, Y_ITEM_IN);
         for (int i = 0; i < Math.min(itemIn.size(), itemInPoints.size()); i++) {
             var point = itemInPoints.get(i);
-            addOptions(builder.addInputSlot(point[0], point[1]), itemIn.get(i));
+            addOptions(builder.addInputSlot(point[0], point[1]), itemIn.get(i).options());
         }
 
         // 流体（非物品）输入
         var fluidInPoints = grid(layout.fluidInCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_IN);
         for (int i = 0; i < Math.min(fluidIn.size(), fluidInPoints.size()); i++) {
             var point = fluidInPoints.get(i);
-            addOptions(builder.addInputSlot(point[0], point[1]), fluidIn.get(i));
+            addOptions(builder.addInputSlot(point[0], point[1]), fluidIn.get(i).options());
         }
 
         var outSplit = splitOutputs(data);
@@ -241,6 +241,18 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         graphics.drawString(font, "§7产出 §8(◀ 输入 → 输出；绿=主产物 §d紫=概率产出)", EDGE, 104, 0xFFFFFF, false);
         arrow.draw(graphics, EDGE + 4, 106);
 
+        // 非物品输入槽：下方标数量（与产出槽的 % 同一套坐标风格）+ 非消耗输入标记
+        var inSlots = splitInputs(data)[1];
+        var fluidInLabelPoints = grid(layout.fluidInCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_IN);
+        for (int i = 0; i < Math.min(inSlots.size(), fluidInLabelPoints.size()); i++) {
+            var slot = inSlots.get(i);
+            if (slot.options().isEmpty()) continue;
+            var point = fluidInLabelPoints.get(i);
+            String text = "§b" + amountLabel(slot.options().get(0));
+            if (slot.catalyst()) text += " §e不消耗";
+            graphics.drawString(font, text, point[0], point[1] + 17, 0xFFFFFF, false);
+        }
+
         // 概率产出：在对应槽位下方标 %
         var outSplit = splitOutputs(data);
         var itemOut = outSplit[0];
@@ -256,11 +268,12 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         }
         var fluidOutPoints = grid(layout.fluidOutCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_OUT);
         for (int i = 0; i < Math.min(fluidOut.size(), fluidOutPoints.size()); i++) {
-            float chance = chanceOf(data, fluidOut.get(i));
-            if (chance < 0f) continue;
-            String pct = chance > 0f ? Math.round(chance * 100) + "%" : "?";
+            var stack = fluidOut.get(i);
+            float chance = chanceOf(data, stack);
+            String text = "§b" + amountLabel(stack);
+            if (chance >= 0f) text += " §d" + (chance > 0f ? Math.round(chance * 100) + "%" : "?");
             var point = fluidOutPoints.get(i);
-            graphics.drawString(font, "§d" + pct, point[0], point[1] + 17, 0xFFFFFF, false);
+            graphics.drawString(font, text, point[0], point[1] + 17, 0xFFFFFF, false);
         }
 
         // 化学物：正常情况已进流体槽渲染（MEK 的 JEI ingredient）；
@@ -310,6 +323,18 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
     private static String label(GenericStack stack) {
         String name = stack.what().getDisplayName().getString();
         return stack.amount() > 1 ? name + "×" + stack.amount() : name;
+    }
+
+    /** 非物品槽的数量文案：500mB / 1000（单位取自 AEKey 的 unit symbol） */
+    private static String amountLabel(GenericStack stack) {
+        long amount = Math.max(1, stack.amount());
+        String unit = "";
+        try {
+            unit = stack.what().getUnitSymbol();
+        } catch (Throwable ignored) {
+            // 没有单位符号就只显示数字
+        }
+        return unit == null || unit.isEmpty() ? String.valueOf(amount) : amount + unit;
     }
 
     /** 该产出在数据里是概率产出吗（是则返回其几率，否则 -1） */

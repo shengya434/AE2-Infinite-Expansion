@@ -174,8 +174,9 @@ public final class QianJiRecipeModel {
 
         if (GregTechCompat.isGtRecipe(recipe)) {
             // GT：走 inputs/outputs 映射，**物品与流体都读**（如矿石清洗机要耗水/产流体）
-            for (var slot : GregTechCompat.inputSlots(recipe)) {
-                inputs.add(new QianJiPatternData.Slot(slot));
+            // notConsumable 输入（催化剂/模具，GT 内部就是把 chance 置 0）→ 标记「不消耗」
+            for (var slot : GregTechCompat.inputSlotInfos(recipe)) {
+                inputs.add(new QianJiPatternData.Slot(slot.options(), !slot.consumed()));
             }
             for (var stat : GregTechCompat.outputs(recipe)) {
                 var stack = stat.stack();
@@ -190,7 +191,7 @@ public final class QianJiRecipeModel {
         } else if (MekanismCompat.isMekanismRecipe(recipe)) {
             // MEK：统一走「Ingredient 方法 + getOutputDefinition」——所有机器共用（含气体/流体/化学物）
             for (var slot : MekanismCompat.inputSlots(recipe)) {
-                inputs.add(new QianJiPatternData.Slot(slot));
+                inputs.add(new QianJiPatternData.Slot(slot, isToolInput(slot)));
             }
             for (var stat : MekanismCompat.outputs(recipe)) {
                 var stack = stat.stack();
@@ -211,7 +212,10 @@ public final class QianJiRecipeModel {
                     options.add(appeng.api.stacks.GenericStack.fromItemStack(stack));
                     if (options.size() >= MAX_OPTIONS_PER_SLOT) break;
                 }
-                if (!options.isEmpty()) inputs.add(new QianJiPatternData.Slot(List.copyOf(options)));
+                if (!options.isEmpty()) {
+                    var frozen = List.copyOf(options);
+                    inputs.add(new QianJiPatternData.Slot(frozen, isToolInput(frozen)));
+                }
             }
             ItemStack standard = recipe.getResultItem(access);
             if (!standard.isEmpty()) {
@@ -229,6 +233,22 @@ public final class QianJiRecipeModel {
         ResourceLocation id = recipe.getId();
         return new QianJiPatternData(String.valueOf(recipe.getType()),
                 id == null ? "" : id.toString(), inputs, primary, chanced);
+    }
+
+    /**
+     * 「工具/模具」类输入判定：候选里只要有一个**带耐久的物品**，就当作**非消耗**输入。
+     * <p>
+     * 2026-09-15 sensei 问「输入物有催化剂 / 只消耗耐久的怎么处理」：
+     * 真实机器里这类输入是反复使用的（磨损/不消耗），而千机是瞬间合成、不碰耐久 ——
+     * 若当成消耗品向 AE2 索取，就会把模具/工具**整件吞掉**。所以一律标记为不消耗（不索取、不注入）。
+     */
+    private static boolean isToolInput(List<appeng.api.stacks.GenericStack> options) {
+        for (var option : options) {
+            if (option.what() instanceof appeng.api.stacks.AEItemKey key && key.getItem().getMaxDamage() > 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 配方的输入 Ingredient 列表（GT 走 inputs 映射并保留标签语义） */
