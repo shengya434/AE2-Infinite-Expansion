@@ -266,19 +266,32 @@ public final class QianJiRecipeModel {
     }
 
     /**
-     * 「工具/模具」类输入判定：候选里只要有一个**带耐久的物品**，就当作**非消耗**输入。
+     * 「工具/模具」类输入判定：候选里只要有一个**带耐久的物品**，或**AE2 压印模板（*_press）**，
+     * 就当作**非消耗**输入。
      * <p>
      * 2026-09-15 sensei 问「输入物有催化剂 / 只消耗耐久的怎么处理」：
      * 真实机器里这类输入是反复使用的（磨损/不消耗），而千机是瞬间合成、不碰耐久 ——
      * 若当成消耗品向 AE2 索取，就会把模具/工具**整件吞掉**。所以一律标记为不消耗（不索取、不注入）。
+     * <p>
+     * 2026-09-15 补：AE2 **压印器**的压印模板（`ae2:*_press`，如硅压印/工程压印）也是
+     * 「放着不消耗」的工具 —— 而物品本身没耐久（上面的耐久规则抓不到），所以单独按注册名判。
+     * 压印器配方里其余输入（如红石）照旧消耗。
      */
     private static boolean isToolInput(List<appeng.api.stacks.GenericStack> options) {
         for (var option : options) {
-            if (option.what() instanceof appeng.api.stacks.AEItemKey key && key.getItem().getMaxDamage() > 0) {
-                return true;
+            if (option.what() instanceof appeng.api.stacks.AEItemKey key) {
+                var item = key.getItem();
+                if (item.getMaxDamage() > 0) return true;
+                if (isAe2Press(item)) return true;
             }
         }
         return false;
+    }
+
+    /** AE2 压印模板（{@code ae2:*_press}）：压印器里不消耗 */
+    private static boolean isAe2Press(net.minecraft.world.item.Item item) {
+        var id = net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(item);
+        return id != null && "ae2".equals(id.getNamespace()) && id.getPath().endsWith("_press");
     }
 
     /**
