@@ -735,8 +735,9 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      * 做法：把样板当「配方查询钥匙」——用真实配方（含各 mod 兼容层）自己推产出，
      * 并逐条对**概率产出**掷骰：
      * <ul>
-     *   <li>样板声明的输出：配方标为概率产（GT chanced / Create rollable / 序列装配结果池）→ 掷骰；否则必出</li>
-     *   <li>配方里有、样板没声明的概率产出 → 同样掷骰，掷中就作为机器的真实副产注入</li>
+     *   <li>样板声明的输出：**照给**（配方标为概率产也不掷骰 —— 让 CPU 的期望一定被满足，
+     *       否则巨型订单会因「差 N」永不完成、产物被 CPU 囤着不进网络）</li>
+     *   <li>配方里有、样板没声明的概率产出 → 掷骰，掷中就作为机器的真实副产注入</li>
      * </ul>
      * 几率模型：{@code min(100%, 配方自带几率)} —— 概率**只认配方自带值**，催化剂不改几率。
      * 催化剂改为**产出数量倍数**（每次合成掷一次：基础 1~2 / 高级 2 / 终极 3~4）：
@@ -815,18 +816,19 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                     declaredItems.add(key.getItem());
                     chance = recipeChanceFor(key.getItem(), chanced);
                 }
-                long amount = out.amount();
-                if (chance >= 0f) {
-                    float effective = chance;
-                    if (level.random.nextFloat() >= effective) {
-                        ChatLog.info(level, worldPosition, "概率产出未触发: " + out.what().getDisplayName()
-                                + " ×" + out.amount() + "（概率 " + Math.round(effective * 100) + "%）");
-                        continue;
-                    }
-                }
-                // 主产物 / 命中概率的副产：都吃催化剂产出倍数
-                amount = multipliedAmount(amount, outputMult);
+                // ⚠ 2026-09-15 修「巨型订单成品不到网」：**样板声明的产出一律照给**。
+                //
+                // 旧行为：声明产出若被配方标为概率产 → 也掷骰，未中就 continue。
+                // 后果：CPU 已在 waitingFor 里登记了该产出 → 永远差 N → 任务永不完成，
+                // 已产出的部分被 CPU 认领进它自己的库存（巨量订单时大量积压、网络里查不到）。
+                // 现在只对「配方里有、样板**没声明**」的额外副产掷骰 —— 任务永不会为副产等待。
+                long amount = multipliedAmount(out.amount(), outputMult);
                 produced.add(new GenericStack(out.what(), amount));
+                if (chance >= 0f && craftDiagnostics()) {
+                    ChatLog.info(level, worldPosition, "声明产出 " + out.what().getDisplayName()
+                            + " ×" + amount + "（配方自带几率 " + Math.round(chance * 100)
+                            + "%，按「声明照给」直接交付）");
+                }
             }
 
             for (var bp : chanced) {
@@ -891,6 +893,11 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     private static long multipliedAmount(long amount, int multiplier) {
         if (multiplier <= 1 || amount <= 0) return amount;
         return amount * multiplier;
+    }
+
+    /** 合成细节日志开关（跟全局 debug 开关走；默认关，避免巨型订单刷屏） */
+    private static boolean craftDiagnostics() {
+        return com.ae2addon.crafting.CraftingCompat.debugLogs;
     }
 
     /**
