@@ -159,12 +159,15 @@ public class ModItems {
                         // 单个物品失败不影响其余（ForgeHooks 对 count≠1 会硬抛）
                         acceptTabItem(output, ETERNAL_HEART.get());
                         acceptTabItem(output, UNIVERSAL_STORAGE_CELL.get());
-                        acceptTabItem(output, ModBlocks.INFINITE_CRAFTING_STORAGE.get());
-                        acceptTabItem(output, ModBlocks.INFINITE_CO_PROCESSING.get());
-                        acceptTabItem(output, ModBlocks.INTEGRATED_CPU.get());
+                        acceptTabItem(output, INFINITE_CRAFTING_STORAGE_ITEM.get());
+                        acceptTabItem(output, INFINITE_CO_PROCESSING_ITEM.get());
+                        // 集成型CPU：**两个物品共用同一方块 id**，Block.asItem() 解析到的是
+                        // **后注册的已成型变体** → 旧写法（传 ModBlocks.INTEGRATED_CPU）
+                        // 实际放的是已成型，本体（未成型）漏了（2026-09-15 sensei 发现）
+                        acceptTabItem(output, INTEGRATED_CPU_ITEM.get());
                         acceptTabItem(output, INTEGRATED_CPU_FORMED_ITEM.get());
-                        acceptTabItem(output, ModBlocks.ASSEMBLER_CORE.get());
-                        acceptTabItem(output, ModBlocks.INFINITE_INTERFACE.get());
+                        acceptTabItem(output, ASSEMBLER_CORE_ITEM.get());
+                        acceptTabItem(output, INFINITE_INTERFACE_ITEM.get());
                         acceptTabItem(output, INFINITE_INTERFACE_PANEL_ITEM.get());
                         // 方块物品显式传 Item：两个物品共用同一方块 id，
                         // Block.asItem() 的结果由注册顺序决定，不能依赖
