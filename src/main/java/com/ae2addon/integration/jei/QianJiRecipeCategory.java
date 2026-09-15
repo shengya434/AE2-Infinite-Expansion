@@ -260,6 +260,13 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             graphics.drawString(font, "§d" + pct, point[0], point[1] + 17, 0xFFFFFF, false);
         }
 
+        // 化学物（气体/浆液/灌注/颜料）在 JEI 里没有可用槽类型 → 用文字列出，数据与编码不受影响
+        String chems = chemicalSummary(data);
+        if (!chems.isEmpty()) {
+            graphics.drawString(font, "§b化学物 §8(JEI 无槽·数据/编码仍有效): " + trim(chems, 52),
+                    EDGE, 178, 0xFFFFFF, false);
+        }
+
         // 来源配方 id
         if (entry.recipeId() != null && !entry.recipeId().isEmpty()) {
             graphics.drawString(font, "§8" + trim(entry.recipeId(), 40), EDGE, HEIGHT - 10, 0xFFFFFF, false);
@@ -270,6 +277,33 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
                 && mouseY >= BTN_Y && mouseY <= BTN_Y + BTN_H;
         graphics.fill(BTN_X, BTN_Y, BTN_X + BTN_W, BTN_Y + BTN_H, hover ? 0x8040FF40 : 0x60207020);
         graphics.drawString(font, "§a编码", BTN_X + 2, BTN_Y + 4, 0xFFFFFF, false);
+    }
+
+    /** 非物品非流体（化学物）的简要文字摘要（输入 → 输出） */
+    private static String chemicalSummary(QianJiPatternData data) {
+        var parts = new ArrayList<String>();
+        for (QianJiPatternData.Slot slot : data.inputs()) {
+            for (GenericStack option : slot.options()) {
+                if (isChemical(option)) { parts.add("§e" + label(option)); break; }
+            }
+        }
+        for (QianJiPatternData.Out out : data.primary()) {
+            if (isChemical(out.stack())) parts.add("§a" + label(out.stack()));
+        }
+        for (QianJiPatternData.Chanced chanced : data.chanced()) {
+            if (isChemical(chanced.stack())) parts.add("§d" + label(chanced.stack()));
+        }
+        return String.join("§7、", parts);
+    }
+
+    private static boolean isChemical(GenericStack stack) {
+        return stack != null && stack.what() != null
+                && !(stack.what() instanceof AEItemKey) && !(stack.what() instanceof AEFluidKey);
+    }
+
+    private static String label(GenericStack stack) {
+        String name = stack.what().getDisplayName().getString();
+        return stack.amount() > 1 ? name + "×" + stack.amount() : name;
     }
 
     /** 该产出在数据里是概率产出吗（是则返回其几率，否则 -1） */

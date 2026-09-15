@@ -1,6 +1,7 @@
 package com.ae2addon.recipe;
 
 import com.ae2addon.compat.GregTechCompat;
+import com.ae2addon.compat.MekanismCompat;
 import com.ae2addon.util.RecipeByproducts;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
@@ -107,7 +108,7 @@ public final class QianJiRecipeModel {
         return map;
     }
 
-    /** 粗略键：物品/流体只看注册名（忽略 NBT），用于跨来源匹配 */
+    /** 粗略键：物品/流体看注册名，其余（如 MEK 化学物）用 AEKeyType + 注册名（忽略 NBT），用于跨来源匹配 */
     private static String coarseKey(appeng.api.stacks.AEKey key) {
         if (key instanceof appeng.api.stacks.AEItemKey itemKey) {
             return "i:" + net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(itemKey.getItem());
@@ -115,7 +116,11 @@ public final class QianJiRecipeModel {
         if (key instanceof appeng.api.stacks.AEFluidKey fluidKey) {
             return "f:" + net.minecraftforge.registries.ForgeRegistries.FLUIDS.getKey(fluidKey.getFluid());
         }
-        return "x:" + key;
+        try {
+            return "x:" + key.getType().getClass().getName() + "/" + key.getId();
+        } catch (Throwable ignored) {
+            return "x:" + key;
+        }
     }
 
     /** 一条配方的全部产出键（物品 + 流体；标准 API + GT） */
@@ -129,6 +134,12 @@ public final class QianJiRecipeModel {
         }
         if (GregTechCompat.isGtRecipe(recipe)) {
             for (var stat : GregTechCompat.outputs(recipe)) {
+                if (stat.stack() != null && stat.stack().what() != null) keys.add(stat.stack().what());
+            }
+        }
+        // Mekanism：物品/流体/化学物产出都要进索引（否则 ME 编码器匹配不到）
+        if (MekanismCompat.isMekanismRecipe(recipe)) {
+            for (var stat : MekanismCompat.outputs(recipe)) {
                 if (stat.stack() != null && stat.stack().what() != null) keys.add(stat.stack().what());
             }
         }
@@ -176,6 +187,21 @@ public final class QianJiRecipeModel {
                             stat.chance() > 0f ? stat.chance() : -1f));
                 }
             }
+        } else if (MekanismCompat.isMekanismRecipe(recipe)) {
+            // MEK：统一走「Ingredient 方法 + getOutputDefinition」——所有机器共用（含气体/流体/化学物）
+            for (var slot : MekanismCompat.inputSlots(recipe)) {
+                inputs.add(new QianJiPatternData.Slot(slot));
+            }
+            for (var stat : MekanismCompat.outputs(recipe)) {
+                var stack = stat.stack();
+                if (stack == null || stack.amount() <= 0) continue;
+                if (stat.chance() >= 1f) {
+                    primary.add(new QianJiPatternData.Out(stack));
+                } else {
+                    chanced.add(new QianJiPatternData.Chanced(stack,
+                            stat.chance() > 0f ? stat.chance() : -1f));
+                }
+            }
         } else {
             // 标准路径（物品）：输入 Ingredient → 选项；主产物 = getResultItem；概率产出 = RecipeByproducts
             for (var ingredient : rawInputIngredients(recipe)) {
@@ -214,13 +240,18 @@ public final class QianJiRecipeModel {
         return recipe.getIngredients();
     }
 
-    /** 产出物品集合（标准 + GT，含流体） */
+    /** 产出物品集合（标准 + GT + MEK，含流体/化学物） */
     private static Set<Object> outputsOf(Recipe<?> recipe, Level level) {
         var items = new HashSet<Object>();
         ItemStack standard = recipe.getResultItem(level.registryAccess());
         if (!standard.isEmpty()) items.add(standard.getItem());
         for (var c : GregTechCompat.outputs(recipe)) {
             if (c.stack() != null) items.add(c.stack().what());
+        }
+        if (MekanismCompat.isMekanismRecipe(recipe)) {
+            for (var c : MekanismCompat.outputs(recipe)) {
+                if (c.stack() != null) items.add(c.stack().what());
+            }
         }
         return items;
     }

@@ -50,16 +50,18 @@ public class AE2AddonJEIPlugin implements IModPlugin {
         long started = System.currentTimeMillis();
         var entries = new java.util.ArrayList<QianJiRecipeCategory.Entry>();
         int considered = 0;
+        int mek = 0;
         for (var recipe : level.getRecipeManager().getRecipes()) {
             if (entries.size() >= MAX_QIANJI_RECIPES) break;
             considered++;
             var data = com.ae2addon.recipe.QianJiRecipeModel.fromRecipe(recipe, level);
             if (data == null || data.primary().isEmpty() || data.inputs().isEmpty()) continue;
+            if (data.machine() != null && data.machine().startsWith("mekanism")) mek++;
             entries.add(QianJiRecipeCategory.of(recipe, data));
         }
         registration.addRecipes(QianJiRecipeCategory.TYPE, entries);
-        AE2Addon.LOGGER.info("[ae2addon] JEI 千机配方页：注册 {} 条（扫描 {} 条，耗时 {} ms）",
-                entries.size(), considered, System.currentTimeMillis() - started);
+        AE2Addon.LOGGER.info("[ae2addon] JEI 千机配方页：注册 {} 条（扫描 {} 条，其中 MEK {} 条，耗时 {} ms）",
+                entries.size(), considered, mek, System.currentTimeMillis() - started);
     }
 
     @Override
