@@ -121,6 +121,16 @@ public final class BatchedCraftingOrder {
      */
     private long busySinceTick = Long.MIN_VALUE;
 
+    /**
+     * 批次 link 被取消后的重试记账（2026-09-15）。
+     * <p>
+     * sensei 实测：「取消一次千机合成后，**所有**针对千机的合成任务都自动取消」——
+     * 根因就是这个分支原来无条件 `cancelAll()`：单个批次被取消（用户取消一次足够）连坐整单。
+     * 现在只把**该批**重新排队；只有用户主动取消、或反复被取消超上限才终止。
+     */
+    private int linkCancelRetries = 0;
+    private static final int MAX_LINK_CANCEL_RETRIES = 5;
+
     /** 单个批次的运行状态 */
     private static final class BatchProgress {
         final long amount;
@@ -485,12 +495,15 @@ public final class BatchedCraftingOrder {
                                             what, completedCount, batchAmounts.size(),
                                             busyTicks / 20);
                                 }
-                                if (busyTicks > 6000) {
+                                if (busyTicks > 24000) {
+                                    // 2026-09-15：阈值 5min→20min，且「有批完成」会重置计时（见下）。
+                                    // 巨型订单 + 慢机器时 CPU 长时间忙导致提交拿不到 CPU 是正常的，
+                                    // 5 分钟就整单取消 = sensei 看到的「巨型订单没收到产物」。
                                     com.ae2addon.AE2Addon.LOGGER.warn(
-                                            "[ae2addon] 批次提交 CPU 持续忙超过 5 分钟，订单取消 what={}",
-                                            what);
+                                            "[ae2addon] 批次提交 CPU 持续忙超过 20 分钟且零进展，订单取消 what={} 进度={}/{}",
+                                            what, completedCount, batchAmounts.size());
                                     ChatLog.err(level, null,
-                                            "CPU 持续忙超过 5 分钟，巨型订单已取消");
+                                            "CPU 持续忙且无进展超过 20 分钟，巨型订单已取消");
                                     failAll();
                                     return false;
                                 }
@@ -520,6 +533,7 @@ public final class BatchedCraftingOrder {
                 }
 
                 // 2. 清理完成的批次；检查取消
+                List<BatchProgress> requeued = null;
                 Iterator<BatchProgress> iterator = running.iterator();
                 while (iterator.hasNext()) {
                     BatchProgress batch = iterator.next();
@@ -527,21 +541,49 @@ public final class BatchedCraftingOrder {
                         continue;
                     }
                     if (batch.link.isCanceled()) {
-                        com.ae2addon.AE2Addon.LOGGER.warn(
-                                "[ae2addon][debug] 批次link被取消触发订单取消 craftId={} what={}",
-                                batch.link.getCraftingID(), what);
-                        cancelAll();
-                        return false;
+                        // 用户主动取消才终止；否则**只把这一批重新排队**（不连坐整单）。
+                        // 2026-09-15 sensei：「取消一次千机合成 → 所有千机任务都被取消」就是这个分支。
+                        if (status == Status.CANCELLED) {
+                            return false;
+                        }
+                        iterator.remove();
+                        linkCancelRetries++;
+                        if (linkCancelRetries > MAX_LINK_CANCEL_RETRIES) {
+                            com.ae2addon.AE2Addon.LOGGER.warn(
+                                    "[ae2addon] 批次被反复取消 {} 次，巨型订单终止 what={} 进度={}/{}",
+                                    linkCancelRetries, what, completedCount, batchAmounts.size());
+                            ChatLog.err(level, null, "批次反复被取消，巨型订单终止（已产出的部分留在网络）");
+                            cancelAll();
+                            return false;
+                        }
+                        BatchProgress retried = new BatchProgress(batch.amount);
+                        if (startSimulation(retried)) {
+                            if (requeued == null) {
+                                requeued = new ArrayList<>();
+                            }
+                            requeued.add(retried);
+                        }
+                        com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ae2addon] 批次 link 被取消 → 该批重新排队（不连坐整单）what={} 进度={}/{} 重试={}/{}",
+                                what, completedCount, batchAmounts.size(),
+                                linkCancelRetries, MAX_LINK_CANCEL_RETRIES);
+                        continue;
                     }
                     if (batch.link.isDone()) {
                         completedCount++;
                         iterator.remove();
+                        // 有批完成 = 有进展 → 重置「CPU 持续忙」判死计时（否则巨型订单必被误杀）
+                        busySinceTick = Long.MIN_VALUE;
                         if (CraftingCompat.debugLogs) {
                             com.ae2addon.AE2Addon.LOGGER.info(
                                     "[ae2addon] 批次完成 what={} 进度={}/{}",
                                     what, completedCount, batchAmounts.size());
                         }
                     }
+                }
+
+                if (requeued != null) {
+                    running.addAll(requeued);   // 迭代后才加，避免 ConcurrentModificationException
                 }
 
                 // 3. 补新批，保持并行度
