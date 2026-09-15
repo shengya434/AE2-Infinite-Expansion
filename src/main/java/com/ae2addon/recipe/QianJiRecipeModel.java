@@ -1,5 +1,6 @@
 package com.ae2addon.recipe;
 
+import com.ae2addon.compat.CreateCompat;
 import com.ae2addon.compat.GregTechCompat;
 import com.ae2addon.compat.MekanismCompat;
 import com.ae2addon.util.RecipeByproducts;
@@ -143,6 +144,12 @@ public final class QianJiRecipeModel {
                 if (stat.stack() != null && stat.stack().what() != null) keys.add(stat.stack().what());
             }
         }
+        // Create：流体产出也不在标准 API 里
+        if (CreateCompat.isCreateRecipe(recipe)) {
+            for (var stack : CreateCompat.fluidOutputs(recipe)) {
+                if (stack != null && stack.what() != null) keys.add(stack.what());
+            }
+        }
         return keys;
     }
 
@@ -226,6 +233,15 @@ public final class QianJiRecipeModel {
                 chanced.add(new QianJiPatternData.Chanced(appeng.api.stacks.GenericStack.fromItemStack(bp.stack()),
                         bp.chance() > 0f ? bp.chance() : -1f));
             }
+            // Create 加工机：**流体**输入/产出不在标准 API 里（getFluidIngredients / getFluidResults）
+            if (CreateCompat.isCreateRecipe(recipe)) {
+                for (var slot : CreateCompat.fluidInputSlots(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(slot));
+                }
+                for (var fluidOut : CreateCompat.fluidOutputs(recipe)) {
+                    primary.add(new QianJiPatternData.Out(fluidOut));
+                }
+            }
         }
 
         if (inputs.isEmpty() && primary.isEmpty() && chanced.isEmpty()) return null;
@@ -271,6 +287,11 @@ public final class QianJiRecipeModel {
         if (MekanismCompat.isMekanismRecipe(recipe)) {
             for (var c : MekanismCompat.outputs(recipe)) {
                 if (c.stack() != null) items.add(c.stack().what());
+            }
+        }
+        if (CreateCompat.isCreateRecipe(recipe)) {
+            for (var c : CreateCompat.fluidOutputs(recipe)) {
+                if (c != null) items.add(c.what());
             }
         }
         return items;
