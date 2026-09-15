@@ -121,7 +121,11 @@ public final class RecipeByproducts {
         }
 
         List<Chanced> result = List.copyOf(out);
-        PROBE_CACHE.put(recipe.getClass(), result);
+        // ⚠ 序列装配的结果池**每个配方各不相同** → 不能按类缓存（否则几条装配互相串台：
+        // 副产消失/冒出别的配方的东西，2026-09-15 sensei 实测）
+        if (!com.ae2addon.compat.CreateSequencedCompat.isSequencedAssembly(recipe)) {
+            PROBE_CACHE.put(recipe.getClass(), result);
+        }
         return result;
     }
 

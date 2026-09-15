@@ -290,14 +290,8 @@ public final class QianJiRecipeModel {
         primary.add(new QianJiPatternData.Out(new appeng.api.stacks.GenericStack(
                 best.stack().what(), Math.max(1, best.stack().amount()) * outAmount)));
         chanced.remove(best);
-        // 其余副产：数量按同一整数比缩放（概率保持不变）
-        if (k > 1) {
-            for (int i = 0; i < chanced.size(); i++) {
-                var c = chanced.get(i);
-                chanced.set(i, new QianJiPatternData.Chanced(new appeng.api.stacks.GenericStack(
-                        c.stack().what(), Math.max(1, c.stack().amount()) * outAmount), c.chance()));
-            }
-        }
+        // 其余副产：**保持原样**（每次执行掷一次骰 —— 概率是「每次执行」的，
+        // 数量不跟着整数比放大，否则会把副产也放大 4 倍）
     }
 
     /** 真实配方 → 我们的样板数据（**物品 + 流体**一起抽）（= 变体 0） */
@@ -358,9 +352,13 @@ public final class QianJiRecipeModel {
             } else {
                 addIngredientSlots(inputs, rawInputIngredients(recipe), 1);
             }
-            ItemStack standard = recipe.getResultItem(access);
-            if (!standard.isEmpty()) {
-                primary.add(new QianJiPatternData.Out(appeng.api.stacks.GenericStack.fromItemStack(standard)));
+            // ⚠ 序列装配：**结果池才是权威**（getResultItem 会把 80% 的主产物当成必出，
+            // 副产也因此丢失）→ 不取 getResultItem，交给下面的配平把权重最大项当主产物
+            if (chain == null) {
+                ItemStack standard = recipe.getResultItem(access);
+                if (!standard.isEmpty()) {
+                    primary.add(new QianJiPatternData.Out(appeng.api.stacks.GenericStack.fromItemStack(standard)));
+                }
             }
             for (var bp : RecipeByproducts.extract(recipe, access)) {
                 if (bp.stack().isEmpty()) continue;

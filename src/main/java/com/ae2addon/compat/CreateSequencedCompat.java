@@ -62,23 +62,41 @@ public final class CreateSequencedCompat {
     public record Chain(List<Ingredient> baseIngredients, List<List<Ingredient>> stepIngredients, int loops) {}
 
     /**
-     * 取「全链」输入：基础原料 + 各步原料（调用方按 loops 放大数量）。
+     * 取「全链」输入：基础原料 + 各步**机器施加的原料**（调用方按 loops 放大数量）。
      * <p>
      * 语义：千机是「无视流程的瞬间机」→ 把整条装配链的**全部材料**当输入、
      * 结果池（{@code resultPool}，带权重几率）当概率产出，一次搞定（不用逐步走）。
+     * <p>
+     * ⚠ 2026-09-15 sensei：「不管中间步骤，只在意**装配次数**与**装配原料（机械手上的）**」——
+     * 所以各步原料里要**剔除过渡物品**（{@code incomplete_*} 那类半成品）：它是流程中间产物、
+     * 且实例带 NBT，当样板输入既无意义又匹配不上。
      */
     @Nullable
     public static Chain chain(@Nullable Recipe<?> recipe) {
         if (!isSequencedAssembly(recipe)) return null;
         try {
-            var base = new ArrayList<Ingredient>(recipe.getIngredients());
+            // ⚠ 基础原料取**字段 ingredient**，不能用 getIngredients() ——
+            // Create 的 getIngredients() = 基础 + addAdditionalIngredientsAndMachines(各步原料)，
+            // 用它会把各步原料算两遍（2026-09-15 sensei 实测：金板/齿轮数量对不上）
+            var base = new ArrayList<Ingredient>();
+            Object baseIngredient = readField(recipe, "ingredient");
+            if (baseIngredient instanceof Ingredient ing) {
+                base.add(ing);
+            } else {
+                base.addAll(recipe.getIngredients());
+            }
             var stepIngredients = new ArrayList<List<Ingredient>>();
             Object sequence = readField(recipe, "sequence");
             if (sequence instanceof List<?> steps) {
                 for (var step : steps) {
                     Object inner = invokeNoArg(step, "getRecipe");
                     if (!(inner instanceof Recipe<?> stepRecipe)) continue;
-                    var raw = new ArrayList<Ingredient>(stepRecipe.getIngredients());
+                    var raw = new ArrayList<Ingredient>();
+                    for (var ingredient : stepRecipe.getIngredients()) {
+                        // 剔除过渡物品（半成品）：它不是玩家要供的料（2026-09-15 sensei）
+                        if (isTransitionalOnly(ingredient, recipe)) continue;
+                        raw.add(ingredient);
+                    }
                     if (!raw.isEmpty()) stepIngredients.add(List.copyOf(raw));
                 }
             }
@@ -169,6 +187,22 @@ public final class CreateSequencedCompat {
         } catch (Throwable ignored) {
         }
         return null;
+    }
+
+    /**
+     * 这个 Ingredient 是否只匹配「本装配的过渡物品」（半成品）——是则它不是玩家要供的原料。
+     * 过渡物品由序列自己产生，且实例带 NBT，样例被当成输入既无意义也匹配不上。
+     */
+    private static boolean isTransitionalOnly(@Nullable Ingredient ingredient, Recipe<?> recipe) {
+        if (ingredient == null) return false;
+        Item transitional = transitionalItem(recipe);
+        if (transitional == null) return false;
+        ItemStack[] items = ingredient.getItems();
+        if (items.length == 0) return false;
+        for (ItemStack stack : items) {
+            if (stack.isEmpty() || stack.getItem() != transitional) return false;
+        }
+        return true;
     }
 
     @Nullable
