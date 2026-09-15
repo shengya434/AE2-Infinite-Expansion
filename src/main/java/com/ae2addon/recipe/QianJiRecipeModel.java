@@ -435,11 +435,23 @@ public final class QianJiRecipeModel {
                                            List<Ingredient> ingredients, long amount,
                                            java.util.Set<Item> excludeItems) {
         for (var ingredient : ingredients) {
+            // ⚠ 2026-09-15 sensei 日志定位：「半成品槽」是个多候选 Ingredient
+            // （#1 步的首候选 = 精密构件（半成品），另两个候选却是**金板**）。
+            // 逐候选过滤会把金板候选留下 → 多出一个「金板 ×25」输入槽。
+            // 结论：**该槽只要含中间产物候选，就整槽跳过**（半成品在 Create 里独占一个槽；
+            // 真原料槽不会混进半成品）。
+            boolean intermediate = false;
+            for (ItemStack stack : ingredient.getItems()) {
+                if (!stack.isEmpty() && excludeItems != null && excludeItems.contains(stack.getItem())) {
+                    intermediate = true;
+                    break;
+                }
+            }
+            if (intermediate) continue;
+
             var options = new ArrayList<appeng.api.stacks.GenericStack>();
             for (ItemStack stack : ingredient.getItems()) {
                 if (stack.isEmpty()) continue;
-                if (excludeItems != null && !excludeItems.isEmpty()
-                        && excludeItems.contains(stack.getItem())) continue;   // 过滤中间产物（半成品）
                 long count = Math.max(amount, stack.getCount());
                 options.add(new appeng.api.stacks.GenericStack(
                         appeng.api.stacks.AEItemKey.of(stack), count));
