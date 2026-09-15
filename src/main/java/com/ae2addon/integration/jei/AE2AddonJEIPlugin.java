@@ -89,18 +89,32 @@ public class AE2AddonJEIPlugin implements IModPlugin {
                         var first = slot.options().get(0);
                         sb.append(first.what().getDisplayName().getString())
                                 .append('×').append(first.amount())
-                                .append(slot.catalyst() ? "(不消耗)" : "")
-                                .append(slot.options().size() > 1
-                                        ? "(候选" + slot.options().size() + "项)" : "")
-                                .append(" | ");
+                                .append(slot.catalyst() ? "(不消耗)" : "");
+                        if (slot.options().size() > 1) {
+                            sb.append("(候选");
+                            int shown = 0;
+                            for (var option : slot.options()) {
+                                if (shown++ > 0) sb.append(',');
+                                sb.append(option.what().getDisplayName().getString());
+                                if (shown >= 6) { sb.append("…"); break; }
+                            }
+                            sb.append(')');
+                        }
+                        sb.append(" | ");
                     }
                     var out = new StringBuilder();
                     for (var p : data.primary()) {
                         out.append(p.stack().what().getDisplayName().getString())
                                 .append('×').append(p.stack().amount()).append(" | ");
                     }
-                    AE2Addon.LOGGER.info("[ae2addon][装配] {} 输入=[{}] 主产物=[{}] 概率产出={}种",
-                            data.recipeId(), sb, out, data.chanced().size());
+                    var red = new StringBuilder();
+                    for (var item : com.ae2addon.compat.CreateSequencedCompat.chain(recipe, level.registryAccess()) == null
+                            ? java.util.Set.<net.minecraft.world.item.Item>of()
+                            : com.ae2addon.compat.CreateSequencedCompat.chain(recipe, level.registryAccess()).redundantItems()) {
+                        red.append(item.getDescription().getString()).append(',');
+                    }
+                    AE2Addon.LOGGER.info("[ae2addon][装配] {} 输入=[{}] 主产物=[{}] 概率产出={}种 已剔除中间产物=[{}]",
+                            data.recipeId(), sb, out, data.chanced().size(), red);
                 }
                 if (!counted) {
                     counted = true;
