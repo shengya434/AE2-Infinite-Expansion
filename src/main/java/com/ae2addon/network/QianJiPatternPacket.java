@@ -21,17 +21,25 @@ import java.util.function.Supplier;
 public class QianJiPatternPacket {
 
     private final String recipeId;
+    /** 变体序（序列装配的步骤样板：0=全链，1..N=步骤，N+1=收尾；其他配方恒为 0） */
+    private final int variant;
 
     public QianJiPatternPacket(String recipeId) {
+        this(recipeId, 0);
+    }
+
+    public QianJiPatternPacket(String recipeId, int variant) {
         this.recipeId = recipeId;
+        this.variant = Math.max(0, variant);
     }
 
     public static void encode(QianJiPatternPacket msg, FriendlyByteBuf buf) {
         buf.writeUtf(msg.recipeId);
+        buf.writeVarInt(msg.variant);
     }
 
     public static QianJiPatternPacket decode(FriendlyByteBuf buf) {
-        return new QianJiPatternPacket(buf.readUtf());
+        return new QianJiPatternPacket(buf.readUtf(), buf.readVarInt());
     }
 
     public static void handle(QianJiPatternPacket msg, Supplier<NetworkEvent.Context> ctx) {
@@ -52,8 +60,15 @@ public class QianJiPatternPacket {
                     player.displayClientMessage(Component.literal("§c找不到配方: " + msg.recipeId), false);
                     return;
                 }
-                QianJiPatternData data = QianJiRecipeModel.fromRecipe(recipe, level);
-                if (data == null || data.primary().isEmpty()) {
+                QianJiPatternData data;
+                var variants = QianJiRecipeModel.fromRecipeAll(recipe, level.registryAccess());
+                if (variants.isEmpty()) {
+                    data = QianJiRecipeModel.fromRecipe(recipe, level);
+                } else {
+                    int idx = Math.min(msg.variant, variants.size() - 1);
+                    data = variants.get(idx).data();
+                }
+                if (data == null || (data.primary().isEmpty() && data.chanced().isEmpty())) {
                     player.displayClientMessage(Component.literal("§c该配方提取不出主产物，无法编码"), false);
                     return;
                 }

@@ -89,6 +89,27 @@ public final class CreateSequencedCompat {
         }
     }
 
+    /**
+     * 步骤样板素材（2026-09-15 sensei 选：序列装配要出手「步骤样板」）。
+     *
+     * @param transitionalItem 过渡物品（未完成品）
+     * @param stepIngredients  各步原料
+     * @param loops            装配圈数
+     */
+    public record StepPlan(@Nullable Item transitionalItem, List<List<Ingredient>> stepIngredients, int loops) {}
+
+    /**
+     * 取步骤样板素材（无过渡物品时返回 null —— 那就只能出「全链」一种样板）。
+     */
+    @Nullable
+    public static StepPlan stepPlan(@Nullable Recipe<?> recipe) {
+        var chain = chain(recipe);
+        if (chain == null) return null;
+        Item transitional = transitionalItem(recipe);
+        if (transitional == null) return null;
+        return new StepPlan(transitional, chain.stepIngredients(), chain.loops());
+    }
+
     @Nullable
     public static Requirement requirement(@Nullable Recipe<?> recipe) {
         if (!isSequencedAssembly(recipe)) return null;

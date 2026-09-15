@@ -69,8 +69,8 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
     /** 槽位底板（空槽也要看得见 → 我们自己画） */
     private final IDrawable slotDrawable;
 
-    /** 一条配方：来源 id + 我们提取出的数据 */
-    public record Entry(String recipeId, QianJiPatternData data) {}
+    /** 一条配方：来源 id + **变体序**（同一配方可能出多张：序列装配的步骤样板）+ 数据 */
+    public record Entry(String recipeId, int variant, String label, QianJiPatternData data) {}
 
     public QianJiRecipeCategory(IGuiHelper guiHelper) {
         this.icon = guiHelper.createDrawableItemStack(new ItemStack(ModItems.QIAN_JI_PATTERN.get()));
@@ -79,8 +79,13 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
     }
 
     public static Entry of(Recipe<?> recipe, QianJiPatternData data) {
+        return of(recipe, 0, "", data);
+    }
+
+    public static Entry of(Recipe<?> recipe, int variant, String label, QianJiPatternData data) {
         // id 可能为空（GT 的运行时配方）→ 走稳定 id 兜底（与「编码」按钮的解析口径一致）
-        return new Entry(com.ae2addon.compat.GregTechRuntimeCompat.stableId(recipe), data);
+        return new Entry(com.ae2addon.compat.GregTechRuntimeCompat.stableId(recipe),
+                variant, label == null ? "" : label, data);
     }
 
     @Override
@@ -291,9 +296,13 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             }
         }
 
-        // 来源配方 id
-        if (entry.recipeId() != null && !entry.recipeId().isEmpty()) {
-            graphics.drawString(font, "§8" + trim(entry.recipeId(), 40), EDGE, HEIGHT - 10, 0xFFFFFF, false);
+        // 来源配方 id（带变体标签：序列装配的「步骤 i/N」等）
+        String idLine = entry.recipeId() == null ? "" : entry.recipeId();
+        if (entry.label() != null && !entry.label().isEmpty()) {
+            idLine = entry.label() + "  §8" + idLine;
+        }
+        if (!idLine.isEmpty()) {
+            graphics.drawString(font, "§8" + trim(idLine, 46), EDGE, HEIGHT - 10, 0xFFFFFF, false);
         }
 
         // 编码按钮
@@ -405,7 +414,7 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         if (key.getType() != com.mojang.blaze3d.platform.InputConstants.Type.MOUSE) {
             return false;
         }
-        AE2Addon.NETWORK.sendToServer(new com.ae2addon.network.QianJiPatternPacket(entry.recipeId()));
+        AE2Addon.NETWORK.sendToServer(new com.ae2addon.network.QianJiPatternPacket(entry.recipeId(), entry.variant()));
         return true;
     }
 

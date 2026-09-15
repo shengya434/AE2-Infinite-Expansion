@@ -180,7 +180,96 @@ public final class QianJiRecipeModel {
         return out;
     }
 
-    /** 真实配方 → 我们的样板数据（**物品 + 流体**一起抽） */
+    /**
+     * 一张样板的变体（同一配方可能拆出多张：Create 序列装配 = 全链 + 每步 + 收尾）。
+     *
+     * @param index 变体序（稳定、可序列化：JEI 页与编码包都按它定位）
+     * @param label JEI 页/聊天栏显示的人话标签（空 = 单一变体）
+     */
+    public record Variant(int index, String label, QianJiPatternData data) {}
+
+    /**
+     * 一条配方的**全部样板变体**（2026-09-15；默认单元素，Create 序列装配会出多张）。
+     * <ul>
+     *   <li>变体 0 = 「全链」（一次吃完整条链 → 结果池）—— 与原行为一致</li>
+     *   <li>变体 1..N = 「步骤 i/N」（过渡物品 + 该步原料 → 过渡物品）—— 逐步自动化用</li>
+     *   <li>变体 N+1 = 「收尾」（过渡物品 + 末步原料 → 结果池）—— 把链结束成成品</li>
+     * </ul>
+     */
+    public static List<Variant> fromRecipeAll(Recipe<?> recipe, net.minecraft.core.RegistryAccess access) {
+        var out = new ArrayList<Variant>();
+        if (recipe == null) return List.of();
+        var full = fromRecipe(recipe, access);
+
+        var stepPlan = CreateSequencedCompat.stepPlan(recipe);
+        if (stepPlan == null) {
+            if (full != null) out.add(new Variant(0, "", full));
+            return List.copyOf(out);
+        }
+        if (full != null) out.add(new Variant(0, "全链（一次吃完整条链）", full));
+
+        int stepCount = stepPlan.stepIngredients().size();
+        for (int i = 0; i < stepCount; i++) {
+            var data = buildStepVariant(recipe, access, stepPlan, i, false);
+            if (data != null) {
+                out.add(new Variant(i + 1, "步骤 " + (i + 1) + "/" + stepCount + "（过渡物品 + 该步原料）", data));
+            }
+        }
+        var finish = buildStepVariant(recipe, access, stepPlan, stepCount - 1, true);
+        if (finish != null) {
+            out.add(new Variant(stepCount + 1, "收尾（过渡物品 + 末步原料 → 成品）", finish));
+        }
+        if (out.isEmpty() && full != null) out.add(new Variant(0, "", full));
+        return List.copyOf(out);
+    }
+
+    /**
+     * 构建一个步骤变体：输入 = 过渡物品 + 该步原料；产出 = 过渡物品（或收尾时的结果池）。
+     *
+     * @param stepIndex 步骤下标
+     * @param finish    true = 收尾样板（产出改为该装配的结果池，带几率）
+     */
+    @Nullable
+    private static QianJiPatternData buildStepVariant(Recipe<?> recipe, net.minecraft.core.RegistryAccess access,
+                                                       CreateSequencedCompat.StepPlan stepPlan, int stepIndex,
+                                                       boolean finish) {
+        if (stepIndex < 0 || stepIndex >= stepPlan.stepIngredients().size()) return null;
+        var inputs = new ArrayList<QianJiPatternData.Slot>();
+        var transitional = stepPlan.transitionalItem();
+        if (transitional != null) {
+            var options = new ArrayList<appeng.api.stacks.GenericStack>();
+            options.add(new appeng.api.stacks.GenericStack(
+                    appeng.api.stacks.AEItemKey.of(new ItemStack(transitional)), 1));
+            inputs.add(new QianJiPatternData.Slot(List.copyOf(options), false));
+        }
+        addIngredientSlots(inputs, stepPlan.stepIngredients().get(stepIndex), 1);
+        if (inputs.isEmpty()) return null;
+
+        var primary = new ArrayList<QianJiPatternData.Out>();
+        var chanced = new ArrayList<QianJiPatternData.Chanced>();
+        ResourceLocation id = recipe.getId();
+        if (finish) {
+            for (var bp : RecipeByproducts.extract(recipe, access)) {
+                if (bp.stack().isEmpty()) continue;
+                chanced.add(new QianJiPatternData.Chanced(
+                        appeng.api.stacks.GenericStack.fromItemStack(bp.stack()),
+                        bp.chance() > 0f ? bp.chance() : -1f));
+            }
+            if (chanced.isEmpty() && transitional != null) {
+                // 结果池读不到时至少把过渡物品还回去（不至于“空样板”）
+                primary.add(new QianJiPatternData.Out(new appeng.api.stacks.GenericStack(
+                        appeng.api.stacks.AEItemKey.of(new ItemStack(transitional)), 1)));
+            }
+        } else if (transitional != null) {
+            primary.add(new QianJiPatternData.Out(new appeng.api.stacks.GenericStack(
+                    appeng.api.stacks.AEItemKey.of(new ItemStack(transitional)), 1)));
+        }
+        if (primary.isEmpty() && chanced.isEmpty()) return null;
+        return new QianJiPatternData(String.valueOf(recipe.getType()),
+                id == null ? "" : id.toString(), inputs, primary, chanced);
+    }
+
+    /** 真实配方 → 我们的样板数据（**物品 + 流体**一起抽）（= 变体 0） */
     @Nullable
     public static QianJiPatternData fromRecipe(Recipe<?> recipe, Level level) {
         return level == null ? null : fromRecipe(recipe, level.registryAccess());

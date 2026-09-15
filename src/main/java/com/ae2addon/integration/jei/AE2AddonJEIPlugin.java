@@ -67,17 +67,29 @@ public class AE2AddonJEIPlugin implements IModPlugin {
         var entries = new java.util.ArrayList<QianJiRecipeCategory.Entry>();
         int considered = 0;
         int mek = 0;
+        int variantCount = 0;
         for (var recipe : sources.values()) {
             if (entries.size() >= MAX_QIANJI_RECIPES) break;
             considered++;
-            var data = com.ae2addon.recipe.QianJiRecipeModel.fromRecipe(recipe, level);
-            if (data == null || data.primary().isEmpty() || data.inputs().isEmpty()) continue;
-            if (data.machine() != null && data.machine().startsWith("mekanism")) mek++;
-            entries.add(QianJiRecipeCategory.of(recipe, data));
+            // 2026-09-15：一条配方可能出多张样板（Create 序列装配 = 全链 + 每步 + 收尾）
+            var all = com.ae2addon.recipe.QianJiRecipeModel.fromRecipeAll(recipe, level.registryAccess());
+            if (all.isEmpty()) continue;
+            boolean counted = false;
+            for (var variant : all) {
+                var data = variant.data();
+                if (data == null) continue;
+                if ((data.primary().isEmpty() && data.chanced().isEmpty()) || data.inputs().isEmpty()) continue;
+                entries.add(QianJiRecipeCategory.of(recipe, variant.index(), variant.label(), data));
+                variantCount++;
+                if (!counted) {
+                    counted = true;
+                    if (data.machine() != null && data.machine().startsWith("mekanism")) mek++;
+                }
+            }
         }
         registration.addRecipes(QianJiRecipeCategory.TYPE, entries);
-        AE2Addon.LOGGER.info("[ae2addon] JEI 千机配方页：注册 {} 条（扫描 {} 条，其中 MEK {} 条、GT 运行时额外 {} 条，耗时 {} ms）",
-                entries.size(), considered, mek, extra, System.currentTimeMillis() - started);
+        AE2Addon.LOGGER.info("[ae2addon] JEI 千机配方页：注册 {} 条（变体 {} 张；扫描 {} 条，其中 MEK {} 条、GT 运行时额外 {} 条，耗时 {} ms）",
+                entries.size(), variantCount, considered, mek, extra, System.currentTimeMillis() - started);
     }
 
     @Override
