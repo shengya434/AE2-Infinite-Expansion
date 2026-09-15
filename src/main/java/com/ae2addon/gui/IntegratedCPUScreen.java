@@ -266,7 +266,12 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
                 if (isInOrderPanel(lx, ly) && hasShiftDown()) {
                     for (int r = 0; r < VISIBLE_ORDERS; r++) {
                         if (ly >= orderRowY[r] - 1 && ly < orderRowY[r] + ROW_HEIGHT - 1) {
-                            menu.cancelOrder(orderScrollOffset + r);
+                            // 2026-09-15：按**订单 id** 取消（行索引在多网络下会错位取消到别人的订单）
+                            int rowIndex = orderScrollOffset + r;
+                            var ids = menu.fullOrderIds;
+                            if (ids != null && rowIndex >= 0 && rowIndex < ids.size()) {
+                                menu.cancelOrderById(ids.get(rowIndex));
+                            }
                             return true;
                         }
                     }

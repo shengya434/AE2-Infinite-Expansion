@@ -58,6 +58,9 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
     /** 客户端：巨型订单列表（OrderListPacket 同步） */
     public volatile java.util.List<String> fullOrders = java.util.List.of();
 
+    /** 客户端：订单 id 列表（与 fullOrders 同序同长；取消时回传 id 而不是行索引，见 2026-09-15 修复） */
+    public volatile java.util.List<Integer> fullOrderIds = java.util.List.of();
+
     /** 服务端：上次发送的 lane 列表指纹（变化检测，防高频刷包） */
     private String lastLanesKey = "";
 
@@ -125,11 +128,15 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
     }
 
     /**
-     * 客户端请求：取消指定索引的巨型订单（整个订单，含所有批次）。
+     * 客户端请求：取消指定 **id** 的巨型订单（整个订单，含所有批次）。
+     * <p>
+     * 2026-09-15 修复：此前传的是面板**行索引**，而面板列表是按网格过滤的、
+     * 服务端却按全局列表取索引 → 多网络/多玩家时索引错位，会取消到别人的订单。
+     * 现在传订单 id（{@code fullOrderIds} 与 {@code fullOrders} 同序下发）。
      */
-    public void cancelOrder(int index) {
+    public void cancelOrderById(int orderId) {
         if (isClientSide()) {
-            sendClientAction(ACTION_CANCEL_ORDER, index);
+            sendClientAction(ACTION_CANCEL_ORDER, orderId);
         }
     }
 
@@ -149,10 +156,14 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
     }
 
     /**
-     * 服务端处理：取消巨型订单（按订单面板索引）。
+     * 服务端处理：按**订单 id** 取消巨型订单（2026-09-15：不再按行索引，防跨网络错位）。
      */
-    private void cancelOrderServer(int index) {
-        com.ae2addon.crafting.BatchedCraftingQueue.cancelOrder(index);
+    private void cancelOrderServer(int orderId) {
+        boolean hit = com.ae2addon.crafting.BatchedCraftingQueue.cancelOrderById(orderId);
+        if (!hit) {
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon] 订单取消请求未命中（可能已完成/已移除）id={}", orderId);
+        }
     }
 
     @Override
@@ -223,8 +234,11 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
         }
         var orderList = com.ae2addon.crafting.BatchedCraftingQueue.getOrders(myGrid);
         var descs = new java.util.ArrayList<String>(orderList.size());
+        // 与描述**同序同长**地下发订单 id（客户端取消时回传 id，避免行索引在多网络下错位）
+        var ids = new java.util.ArrayList<Integer>(orderList.size());
         for (var order : orderList) {
             descs.add(describeOrder(order));
+            ids.add(order.getOrderId());
         }
         String key = String.join("\u0000", descs);
         if (!key.equals(lastOrdersKey)) {
@@ -232,7 +246,7 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
             if (getPlayer() instanceof net.minecraft.server.level.ServerPlayer sp) {
                 com.ae2addon.AE2Addon.NETWORK.send(
                         net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> sp),
-                        new com.ae2addon.network.OrderListPacket(descs));
+                        new com.ae2addon.network.OrderListPacket(ids, descs));
             }
         }
     }

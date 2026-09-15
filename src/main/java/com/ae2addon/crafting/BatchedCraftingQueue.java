@@ -286,7 +286,29 @@ public final class BatchedCraftingQueue {
         }
     }
 
-    /** 订单面板用：按索引取消订单（越界安全）。 */
+    /**
+     * 订单面板用：按**订单 id** 取消（2026-09-15 修复）。
+     * <p>
+     * 面板显示的是 {@link #getOrders(appeng.api.networking.IGrid)} 过滤后的列表；
+     * 若再拿行索引到**全局** orders 里取，多网络/多玩家时会错位 → 取消掉别人的订单。
+     * 按 id 精确定位即可彻底避免。
+     *
+     * @return 是否命中并已下发取消
+     */
+    public static boolean cancelOrderById(int orderId) {
+        synchronized (orders) {
+            for (var order : orders) {
+                if (order.getOrderId() == orderId) {
+                    order.cancelOrder();
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /** 订单面板用：按索引取消订单（越界安全）。⚠ 索引口径是**全局** orders 列表，
+     *  面板请勿使用（见 {@link #cancelOrderById(int)}）。 */
     public static void cancelOrder(int index) {
         synchronized (orders) {
             if (index >= 0 && index < orders.size()) {

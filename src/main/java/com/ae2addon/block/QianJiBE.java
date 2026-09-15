@@ -283,12 +283,36 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return items;
     }
 
-    /** 样板输入物品集合（展开所有可能输入） */
+    /**
+     * 样板输入物品集合（展开所有可能输入）。
+     * <p>
+     * 2026-09-15 sensei 实测修复：**输入含「催化剂类（不消耗）」的千机自用配方，下单报
+     * 「输出「X」既无匹配配方，也不是该配方的次级产出」**。
+     * <p>
+     * 根因：自有样板里的非消耗输入（GT notConsumable / 模具 / AE2 压印模板）**刻意不向 AE2 声明**
+     * （见 {@code QianJiPatternDetails} 构造里的 {@code if (slot.catalyst()) continue;} ——
+     * 免得 CPU 抽取并吞掉模具），但它在**真实配方里确实是要求的输入**；
+     * 这里若只按 {@code details.getInputs()} 收集，覆盖判定就会认为「配方要的东西样板没有」→ 直接拒绝。
+     * <p>
+     * 修法：自有样板把**全部槽（含 catalyst）**并进来 —— 它们本来就是样板声明过的输入，
+     * 只是「不消耗」而已（消耗语义由执行层按 catalyst 标记处理，与校验无关）。
+     */
     private static Set<Item> collectPatternInputs(IPatternDetails details) {
+        // 批量推送会用 ScaledPattern(N×) 包住自有样板 → 先拆包再判类型（技能书 §2c-7 同类坑）
+        if (details instanceof com.ae2addon.crafting.ScaledPattern scaled && scaled.base() != null) {
+            details = scaled.base();
+        }
         var patternInputs = new HashSet<Item>();
         for (var input : details.getInputs()) {
             for (var option : input.getPossibleInputs()) {
                 if (option != null && option.what() instanceof AEItemKey k) patternInputs.add(k.getItem());
+            }
+        }
+        if (details instanceof com.ae2addon.crafting.QianJiPatternDetails own) {
+            for (var slot : own.data().inputs()) {
+                for (var option : slot.options()) {
+                    if (option != null && option.what() instanceof AEItemKey k) patternInputs.add(k.getItem());
+                }
             }
         }
         return patternInputs;

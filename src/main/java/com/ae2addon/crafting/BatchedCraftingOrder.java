@@ -110,6 +110,22 @@ public final class BatchedCraftingOrder {
         cancelRunning();
     }
 
+    /**
+     * 订单稳定 id（2026-09-15 面板取消修复）。
+     * <p>
+     * 集成 CPU 订单面板先前按**列表行索引**取消：客户端看到的是「按网格过滤」的列表，
+     * 服务端却按**全局** orders 列表取索引 → 多网络/多玩家时索引错位，
+     * 会取消到别人的订单。现在每个订单带唯一 id，面板按 id 取消。
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger NEXT_ORDER_ID =
+            new java.util.concurrent.atomic.AtomicInteger(1);
+    private final int orderId = NEXT_ORDER_ID.getAndIncrement();
+
+    /** 订单 id（面板取消用；同一服务端会话内唯一，重启后重新分配、面板同步刷新）。 */
+    public int getOrderId() {
+        return orderId;
+    }
+
     private int nextBatchIndex = 0;
     private int completedCount = 0;
     private Status status = Status.QUEUED;
