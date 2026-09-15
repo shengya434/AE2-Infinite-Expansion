@@ -66,7 +66,8 @@ import java.util.Set;
  * - ICraftingProvider — AE2 合成提供商，直接响应合成 CPU 请求
  * - 处理流程：CPU 请求 → 瞬间处理 → 产物（+副产物）注入 ME 网络
  */
-public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICraftingProvider, ICraftingMachine, Formable {
+public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICraftingProvider, ICraftingMachine, Formable,
+        appeng.helpers.patternprovider.PatternContainer {
 
     private static final int PATTERN_SLOTS = 1280;
     private static final int CATALYST_SLOTS = 1;
@@ -1012,6 +1013,62 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             sb.append(out.what().getDisplayName().getString()).append(" ×").append(out.amount());
         }
         return sb.length() == 0 ? "无输出" : sb.toString();
+    }
+
+    /**
+     * 样板管理终端适配（2026-09-15 sensei：千机样板槽并未向样板管理终端暴露）。
+     * <p>
+     * 直接读写全部样板槽（与 GUI 同源），校验沿用 {@link PatternHandler#isItemValid}；
+     * 终端分组用**我们自己的物品 + 名称**，不再让 AE2 根据方块反推（千机有两个共用方块 id 的物品，
+     * 反推会拿到已成型变体甚至空气）。
+     */
+    private final appeng.api.inventories.InternalInventory terminalPatternInv =
+            new appeng.api.inventories.InternalInventory() {
+                @Override
+                public int size() {
+                    return PATTERN_SLOTS;
+                }
+
+                @Override
+                public ItemStack getStackInSlot(int slot) {
+                    return patternHandler.getStackInSlot(slot);
+                }
+
+                @Override
+                public void setItemDirect(int slot, ItemStack stack) {
+                    patternHandler.setStackInSlot(slot, stack);
+                    invalidatePatternCache();
+                    setChanged();
+                }
+
+                @Override
+                public int getSlotLimit(int slot) {
+                    return 1;
+                }
+
+                @Override
+                public boolean isItemValid(int slot, ItemStack stack) {
+                    return patternHandler.isItemValid(slot, stack);
+                }
+            };
+
+    @Override
+    public appeng.api.networking.IGrid getGrid() {
+        return getMainNode().getGrid();
+    }
+
+    @Override
+    public appeng.api.inventories.InternalInventory getTerminalPatternInventory() {
+        return terminalPatternInv;
+    }
+
+    @Override
+    public appeng.api.implementations.blockentities.PatternContainerGroup getTerminalGroup() {
+        if (!formed) return PatternContainerGroup.nothing();
+        return new PatternContainerGroup(
+                appeng.api.stacks.AEItemKey.of(new ItemStack(com.ae2addon.init.ModItems.QIAN_JI_ITEM.get())),
+                Component.translatable("block.ae2addon.qianji"),
+                java.util.List.of());
     }
 
     @Override
