@@ -380,4 +380,18 @@ public class IntegratedCPUBE extends CraftingBlockEntity implements Formable {
         formed = tag.getBoolean("formed");
         hasCoProcessing = tag.getBoolean("hasCo");
     }
+
+    /**
+     * 网络工具 / ME 控制器里机器的**图标与身份**（2026-09-15 sensei 陈年问题）。
+     * <p>
+     * AE2 的 `AENetworkBlockEntity`/`CraftingBlockEntity` 用本方法给网格节点设
+     * `visualRepresentation`；默认实现取「方块对应的物品」——我们有几个方块是
+     * **两个物品共用一个方块 id**（本体 + 已成型变体）→ `asItem()` 会拿到已成型变体甚至空气；
+     * 继承 CraftingUnitBlock 的（集成CPU/装配处理器）还会被 type 名带成「256k 合成存储器」。
+     * 这里显式返回**本方块的物品本体**。
+     */
+    @Override
+    protected net.minecraft.world.item.Item getItemFromBlockEntity() {
+        return com.ae2addon.init.ModItems.INTEGRATED_CPU_ITEM.get();
+    }
 }
