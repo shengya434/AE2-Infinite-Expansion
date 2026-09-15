@@ -198,9 +198,47 @@ public final class QianJiRecipeModel {
      */
     public static List<Variant> fromRecipeAll(Recipe<?> recipe, net.minecraft.core.RegistryAccess access) {
         if (recipe == null) return List.of();
+        // 旋转机（罗盘转换机）：一个配方对象含两个方向 → **每个方向一张样板**
+        if (MekanismCompat.isMekanismRecipe(recipe)) {
+            var directions = MekanismCompat.rotaryDirections(recipe);
+            if (directions.size() > 1) {
+                var out = new ArrayList<Variant>();
+                int idx = 0;
+                for (int dir : directions) {
+                    var data = buildMekVariant(recipe, dir);
+                    if (data == null) continue;
+                    out.add(new Variant(idx++, dir == 1 ? "气→液" : "液→气", data));
+                }
+                if (!out.isEmpty()) return List.copyOf(out);
+            }
+        }
         var full = fromRecipe(recipe, access);
         if (full == null) return List.of();
         return List.of(new Variant(0, "", full));
+    }
+
+    /** MEK 指定方向（旋转机）→ 样板数据 */
+    @Nullable
+    private static QianJiPatternData buildMekVariant(Recipe<?> recipe, int rotary) {
+        var inputs = new ArrayList<QianJiPatternData.Slot>();
+        for (var slot : MekanismCompat.inputSlots(recipe, rotary)) {
+            inputs.add(new QianJiPatternData.Slot(slot, isToolInput(slot)));
+        }
+        var primary = new ArrayList<QianJiPatternData.Out>();
+        var chanced = new ArrayList<QianJiPatternData.Chanced>();
+        for (var stat : MekanismCompat.outputs(recipe, rotary)) {
+            var stack = stat.stack();
+            if (stack == null || stack.amount() <= 0) continue;
+            if (stat.chance() >= 1f) {
+                primary.add(new QianJiPatternData.Out(stack));
+            } else {
+                chanced.add(new QianJiPatternData.Chanced(stack, stat.chance() > 0f ? stat.chance() : -1f));
+            }
+        }
+        if (inputs.isEmpty() || (primary.isEmpty() && chanced.isEmpty())) return null;
+        ResourceLocation id = recipe.getId();
+        return new QianJiPatternData(String.valueOf(recipe.getType()),
+                id == null ? "" : id.toString(), inputs, primary, chanced);
     }
 
     /**

@@ -77,11 +77,19 @@ public final class MekanismCompat {
     //  输入
     // ════════════════════════════════════════════════════════
 
-    /** 输入槽（物品/流体/化学物都是 GenericStack；标签类原料一槽多候选） */
+    /** 输入槽（默认方向） */
     public static List<List<GenericStack>> inputSlots(Recipe<?> recipe) {
+        return inputSlots(recipe, rotaryDirection(recipe));
+    }
+
+    /**
+     * 输入槽（物品/流体/化学物都是 GenericStack；标签类原料一槽多候选）。
+     *
+     * @param rotary 旋转机方向（0=非旋转机；1=气→液；2=液→气）——由 {@link #rotaryDirections} 给出
+     */
+    public static List<List<GenericStack>> inputSlots(Recipe<?> recipe, int rotary) {
         var slots = new ArrayList<List<GenericStack>>();
         var seen = new java.util.HashSet<String>();
-        int rotary = rotaryDirection(recipe);
         for (Method m : ingredientMethods(recipe.getClass())) {
             // 旋转机（罗盘转换机）一个配方对象里含**两个方向**：只取一个方向（见 rotaryDirection）
             if (rotary == 1 && "getFluidInput".equals(m.getName())) continue;
@@ -105,6 +113,24 @@ public final class MekanismCompat {
      *         <p>旋转机一个配方对象同时含两个方向，而我们的样板一层只有一份输入/产出 →
      *         单向取值（两个方向都在时先取气→液；要双向的话后续加“样板变体”）
      */
+    /**
+     * 旋转机可用的方向列表（2026-09-15 sensei：旋转机要出**双向**样板）。
+     *
+     * @return 0=非旋转机（空列表）；1=气→液；2=液→气；两个方向都可用时返回 [1, 2]
+     */
+    public static List<Integer> rotaryDirections(Recipe<?> recipe) {
+        if (!hasMethod(recipe.getClass(), "hasGasToFluid") || !hasMethod(recipe.getClass(), "hasFluidToGas")) {
+            return List.of();
+        }
+        boolean gasToFluid = truthy(invoke(recipe, "hasGasToFluid"));
+        boolean fluidToGas = truthy(invoke(recipe, "hasFluidToGas"));
+        var out = new ArrayList<Integer>();
+        if (gasToFluid) out.add(1);
+        if (fluidToGas) out.add(2);
+        if (out.isEmpty()) out.add(1);
+        return List.copyOf(out);
+    }
+
     private static int rotaryDirection(Recipe<?> recipe) {
         if (!hasMethod(recipe.getClass(), "hasGasToFluid") || !hasMethod(recipe.getClass(), "hasFluidToGas")) {
             return 0;
@@ -178,8 +204,13 @@ public final class MekanismCompat {
     //  产出
     // ════════════════════════════════════════════════════════
 
-    /** 产出（物品/流体/化学物，含几率） */
+    /** 产出（默认方向） */
     public static List<Stat> outputs(Recipe<?> recipe) {
+        return outputs(recipe, rotaryDirection(recipe));
+    }
+
+    /** 产出（物品/流体/化学物，含几率） */
+    public static List<Stat> outputs(Recipe<?> recipe, int rotary) {
         var out = new ArrayList<Stat>();
         // 主产出：不同配方族的命名不同
         for (String name : new String[]{"getOutputDefinition", "getMainOutputDefinition", "getMainOutput"}) {
@@ -188,7 +219,6 @@ public final class MekanismCompat {
             }
         }
         // 旋转机：取与输入方向对应的那侧产出
-        int rotary = rotaryDirection(recipe);
         if (rotary == 1) {
             for (Object element : asList(invoke(recipe, "getFluidOutputDefinition"))) collect(out, element, 1f);
         } else if (rotary == 2) {
