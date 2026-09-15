@@ -29,6 +29,10 @@ public final class CraftingCompat {
     public static volatile long sharedExpCap =
             com.ae2addon.config.AE2AddonConfig.sharedExpCap();
 
+    /** CPU 调度时间片目标（毫秒）：预算 = clamp(目标 − MSPT, 1ms, 48ms)。 */
+    public static volatile int cpuTimeSliceTargetMs =
+            com.ae2addon.config.AE2AddonConfig.cpuTimeSliceTargetMs();
+
     /** 全网格每 tick 成功 push 共享预算（0 = 不限制；2026-09-08 学 ae2lt 双预算思想）。 */
     public static volatile int dispatchBudgetPerTick =
             com.ae2addon.config.AE2AddonConfig.dispatchBudgetPerTick();
@@ -76,6 +80,7 @@ public final class CraftingCompat {
         debugLogs = com.ae2addon.config.AE2AddonConfig.debugLogs();
         batchMaxMultiplier = com.ae2addon.config.AE2AddonConfig.batchMaxMultiplier();
         sharedExpCap = com.ae2addon.config.AE2AddonConfig.sharedExpCap();
+        cpuTimeSliceTargetMs = com.ae2addon.config.AE2AddonConfig.cpuTimeSliceTargetMs();
         dispatchBudgetPerTick = com.ae2addon.config.AE2AddonConfig.dispatchBudgetPerTick();
         cheapOrderAmount = com.ae2addon.config.AE2AddonConfig.cheapOrderAmount();
     }

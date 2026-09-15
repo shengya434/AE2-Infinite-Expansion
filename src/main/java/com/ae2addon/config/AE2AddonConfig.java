@@ -53,9 +53,19 @@ public final class AE2AddonConfig {
 
     /** 批量经验共享继承上限（新 lane 起步 N，防单次巨量 push）。 */
     public static final ForgeConfigSpec.LongValue SHARED_EXP_CAP = BUILDER
-            .comment("批量经验共享继承上限（新 lane 从该 N 起步，0=不共享经验）",
+            .comment("批量经验共享继承上限（新 lane/新任务从该 N 起步，0=不共享经验）",
+                    "**巨型订单提速关键**：拆成 N 批时，每批从该 N 起步就不用每批重新翻倍（原来默认 65536，",
+                    "500 批订单 = 500 次重新爬坡 → 这就是“9.2E 要几分钟”。千机这类无上限接收方可以直接拉高",
+                    "（它会按 taskRemaining 夹住，不会超发）；保守接收方（真实机器）拉太高会因拒收而锁 1×",
                     "Shared batch-experience inheritance cap (0 = disable sharing)")
-            .defineInRange("sharedExpCap", 65536L, 0L, Long.MAX_VALUE);
+            .defineInRange("sharedExpCap", 1L << 50, 0L, Long.MAX_VALUE);
+
+    /** CPU 调度时间片目标（毫秒）：巨型订单期间允许 CPU 每 tick 多嘸一点。 */
+    public static final ForgeConfigSpec.IntValue CPU_TIME_SLICE_TARGET_MS = BUILDER
+            .comment("CPU 调度时间片目标（毫秒）：预算 = clamp(目标 − 服务器MSPT, 1ms, 48ms)",
+                    "调大 → 巨型订单更快，代价是那几秒 MSPT 变高（5=极度保守，45=默认，100=激进）",
+                    "Target MSPT headroom for the crafting-CPU time slice")
+            .defineInRange("cpuTimeSliceTargetMs", 45, 1, 500);
 
     // ── 模拟拦截 ──
 
@@ -259,6 +269,11 @@ public final class AE2AddonConfig {
     /** 共享经验继承上限（0 = 关闭共享，新 lane 从 1× 起步）。 */
     public static long sharedExpCap() {
         return Math.max(0L, SHARED_EXP_CAP.get());
+    }
+
+    /** CPU 调度时间片目标（毫秒；巨型订单提速旋钮）。 */
+    public static int cpuTimeSliceTargetMs() {
+        return Math.max(1, CPU_TIME_SLICE_TARGET_MS.get());
     }
 
     public static long cheapOrderAmount() {

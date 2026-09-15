@@ -367,8 +367,12 @@ public abstract class CraftingCpuLogicMixin {
                 float averageTickMillis = serverLevel.getServer().getAverageTickTime();
                 if (Float.isFinite(averageTickMillis) && averageTickMillis > 0.0F) {
                     long averageTickNanos = (long) (averageTickMillis * 1_000_000.0F);
+                    // 时间片目标可配（config cpuTimeSliceTargetMs，热加载）：巨型订单提速旋钮
+                    long targetNanos = com.ae2addon.crafting.CraftingCompat.cpuTimeSliceTargetMs > 0
+                            ? com.ae2addon.crafting.CraftingCompat.cpuTimeSliceTargetMs * 1_000_000L
+                            : AE2ADDON_DISPATCH_TARGET_TICK_NANOS;
                     long headroom = Math.max(
-                            0L, AE2ADDON_DISPATCH_TARGET_TICK_NANOS - averageTickNanos);
+                            0L, targetNanos - averageTickNanos);
                     return Math.min(AE2ADDON_DISPATCH_MAX_BUDGET_NANOS,
                             Math.max(AE2ADDON_DISPATCH_MIN_BUDGET_NANOS, headroom));
                 }
