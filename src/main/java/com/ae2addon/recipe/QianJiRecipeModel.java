@@ -358,6 +358,17 @@ public final class QianJiRecipeModel {
                 for (var step : chain.stepIngredients()) {
                     addIngredientSlots(inputs, step, chain.loops(), chain.redundantItems());
                 }
+                // 步骤**流体**（如加固板 filling 步要液体）：数量与物品原料同口径 ×loops
+                for (var fluidSlot : CreateSequencedCompat.stepFluidSlots(recipe)) {
+                    var scaled = new ArrayList<appeng.api.stacks.GenericStack>();
+                    for (var option : fluidSlot) {
+                        scaled.add(new appeng.api.stacks.GenericStack(option.what(),
+                                Math.max(1, option.amount()) * chain.loops()));
+                    }
+                    if (!scaled.isEmpty()) {
+                        inputs.add(new QianJiPatternData.Slot(List.copyOf(scaled), false));
+                    }
+                }
             } else {
                 addIngredientSlots(inputs, rawInputIngredients(recipe), 1, java.util.Set.of());
             }

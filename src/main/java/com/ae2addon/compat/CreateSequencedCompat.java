@@ -295,6 +295,56 @@ public final class CreateSequencedCompat {
         return sb.toString();
     }
 
+    /**
+     * 序列装配各步要耗的**流体**（2026-09-15 sensei：步骤流体还没提取，如加固板的 filling 步要液体）。
+     * <p>
+     * 来源：{@code addAdditionalFluidIngredients(List<FluidIngredient>)}（公开方法，往传入列表里补）。
+     * 每个 FluidIngredient → 候选流体（{@code getMatchingFluidStacks()}）+ 数量（{@code getRequiredAmount()}）。
+     * 调用方负责按 loops 放大数量（与物品原料同口径）。
+     */
+    public static List<List<appeng.api.stacks.GenericStack>> stepFluidSlots(@Nullable Recipe<?> recipe) {
+        var out = new ArrayList<List<appeng.api.stacks.GenericStack>>();
+        if (!isSequencedAssembly(recipe)) return out;
+        try {
+            var list = new ArrayList<Object>();
+            recipe.getClass().getMethod("addAdditionalFluidIngredients", List.class).invoke(recipe, list);
+            for (var entry : list) {
+                if (entry == null) continue;
+                long amount = -1L;
+                Object required = invokeNoArg(entry, "getRequiredAmount");
+                if (required instanceof Number n) amount = n.longValue();
+                Object stacks = invokeNoArg(entry, "getMatchingFluidStacks");
+                var options = new ArrayList<appeng.api.stacks.GenericStack>();
+                if (stacks instanceof Iterable<?> it) {
+                    for (var fluid : it) {
+                        appeng.api.stacks.GenericStack gs = fluidGeneric(fluid, amount);
+                        if (gs == null) continue;
+                        boolean dup = false;
+                        for (var existing : options) {
+                            if (existing.what().equals(gs.what())) { dup = true; break; }
+                        }
+                        if (!dup) options.add(gs);
+                    }
+                }
+                if (!options.isEmpty()) out.add(List.copyOf(options));
+            }
+        } catch (Throwable ignored) {
+            // 没有步骤流体（或反射失败）→ 返回空
+        }
+        return out;
+    }
+
+    /** FluidStack / ItemStack → GenericStack（数量为 -1 时用栈自带数量） */
+    @Nullable
+    private static appeng.api.stacks.GenericStack fluidGeneric(@Nullable Object value, long amount) {
+        if (value instanceof net.minecraftforge.fluids.FluidStack fluid && !fluid.isEmpty()) {
+            long use = amount > 0 ? amount : Math.max(1, fluid.getAmount());
+            return new appeng.api.stacks.GenericStack(
+                    appeng.api.stacks.AEFluidKey.of(fluid.getFluid()), use);
+        }
+        return null;
+    }
+
     private static String simpleName(Class<?> c) {
         String n = c.getName();
         int dot = n.lastIndexOf('.');
