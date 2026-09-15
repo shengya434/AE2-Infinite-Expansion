@@ -350,7 +350,7 @@ public final class QianJiRecipeModel {
         } else {
             // 标准路径（物品）：输入 Ingredient → 选项；主产物 = getResultItem；概率产出 = RecipeByproducts
             // Create 序列装配**单独走**（getIngredients() 只报基础原料，装配链全靠反射拿）
-            var chain = CreateSequencedCompat.chain(recipe);
+            var chain = CreateSequencedCompat.chain(recipe, access);
             if (chain != null) {
                 addIngredientSlots(inputs, chain.baseIngredients(), 1);
                 for (var step : chain.stepIngredients()) {

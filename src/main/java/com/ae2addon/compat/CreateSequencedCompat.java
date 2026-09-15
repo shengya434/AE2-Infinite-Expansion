@@ -73,6 +73,15 @@ public final class CreateSequencedCompat {
      */
     @Nullable
     public static Chain chain(@Nullable Recipe<?> recipe) {
+        return chain(recipe, null);
+    }
+
+    /**
+     * 同上，但能拿到 {@link net.minecraft.core.RegistryAccess}：用它取**每一步自己的产出物品**
+     * （过渡物品/半成品）—— 这是剔除中间产物最可靠的一条依据。
+     */
+    @Nullable
+    public static Chain chain(@Nullable Recipe<?> recipe, @Nullable net.minecraft.core.RegistryAccess access) {
         if (!isSequencedAssembly(recipe)) return null;
         try {
             // ⚠ 基础原料取**字段 ingredient**，不能用 getIngredients() ——
@@ -95,13 +104,21 @@ public final class CreateSequencedCompat {
                     rawSteps.add(new ArrayList<Ingredient>(stepRecipe.getIngredients()));
                 }
             }
-            // 过渡物品（半成品）判定：先看字段；字段拿不到（序列化后常为空）时，
-            // 用「**每步都出现的原料**」当过渡物品 —— 它由序列自己产生，不属玩家要供的料。
-            // （2026-09-15 sensei 实测：半成品 ×25 仍在输入里 → 字段那条路拿不到）
+            // 过渡物品（半成品）集合：① 字段 ② **每步自己的产出物品**（最可靠） ③ 每步都出现的原料交集
             var redundant = new java.util.HashSet<Item>();
             Item fieldTransitional = transitionalItem(recipe);
-            if (fieldTransitional != null) {
-                redundant.add(fieldTransitional);
+            if (fieldTransitional != null) redundant.add(fieldTransitional);
+            if (access != null && sequence instanceof List<?> steps2) {
+                for (var step : steps2) {
+                    Object inner = invokeNoArg(step, "getRecipe");
+                    if (!(inner instanceof Recipe<?> stepRecipe)) continue;
+                    try {
+                        ItemStack stepOut = stepRecipe.getResultItem(access);
+                        if (stepOut != null && !stepOut.isEmpty()) redundant.add(stepOut.getItem());
+                    } catch (Throwable ignored) {
+                        // 取不到就算，靠另两条依据
+                    }
+                }
             }
             if (rawSteps.size() >= 2) {
                 java.util.Set<Item> common = null;
