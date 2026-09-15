@@ -432,11 +432,13 @@ public final class QianJiRecipeModel {
                     primary.add(new QianJiPatternData.Out(fluidOut));
                 }
             }
-            // 2026-09-15 sensei 规则：**没有主产物**（如序列装配只给结果池）→
-            // 用概率最大的副产按整数比配平（80% → 5 原料产 4 件），否则 AE2 样板无法表达概率
-            if (primary.isEmpty() && !chanced.isEmpty()) {
-                balanceByMaxByproduct(inputs, primary, chanced);
-            }
+        }
+
+        // 2026-09-15 sensei 规则（**所有来源统一生效**：GT / MEK / 标准 / 序列装配）：
+        // 没有主产物（纯概率配方、只给概率产出）→ 用概率最大的那条按整数比配平
+        // （80% → 5 份原料产 4 件），否则 AE2 样板无法表达概率、JEI 页也会显示成“无主产物”
+        if (primary.isEmpty() && !chanced.isEmpty()) {
+            balanceByMaxByproduct(inputs, primary, chanced);
         }
 
         if (inputs.isEmpty() && primary.isEmpty() && chanced.isEmpty()) return null;
