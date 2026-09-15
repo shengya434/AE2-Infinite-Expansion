@@ -86,19 +86,47 @@ public final class CreateSequencedCompat {
                 base.addAll(recipe.getIngredients());
             }
             var stepIngredients = new ArrayList<List<Ingredient>>();
+            var rawSteps = new ArrayList<List<Ingredient>>();
             Object sequence = readField(recipe, "sequence");
             if (sequence instanceof List<?> steps) {
                 for (var step : steps) {
                     Object inner = invokeNoArg(step, "getRecipe");
                     if (!(inner instanceof Recipe<?> stepRecipe)) continue;
-                    var raw = new ArrayList<Ingredient>();
-                    for (var ingredient : stepRecipe.getIngredients()) {
-                        // 剔除过渡物品（半成品）：它不是玩家要供的料（2026-09-15 sensei）
-                        if (isTransitionalOnly(ingredient, recipe)) continue;
-                        raw.add(ingredient);
-                    }
-                    if (!raw.isEmpty()) stepIngredients.add(List.copyOf(raw));
+                    rawSteps.add(new ArrayList<Ingredient>(stepRecipe.getIngredients()));
                 }
+            }
+            // 过渡物品（半成品）判定：先看字段；字段拿不到（序列化后常为空）时，
+            // 用「**每步都出现的原料**」当过渡物品 —— 它由序列自己产生，不属玩家要供的料。
+            // （2026-09-15 sensei 实测：半成品 ×25 仍在输入里 → 字段那条路拿不到）
+            var redundant = new java.util.HashSet<Item>();
+            Item fieldTransitional = transitionalItem(recipe);
+            if (fieldTransitional != null) {
+                redundant.add(fieldTransitional);
+            }
+            if (rawSteps.size() >= 2) {
+                java.util.Set<Item> common = null;
+                for (var stepIngredientsRaw : rawSteps) {
+                    var items = new java.util.HashSet<Item>();
+                    for (var ingredient : stepIngredientsRaw) {
+                        for (ItemStack stack : ingredient.getItems()) {
+                            if (!stack.isEmpty()) items.add(stack.getItem());
+                        }
+                    }
+                    if (common == null) {
+                        common = items;
+                    } else {
+                        common.retainAll(items);
+                    }
+                }
+                if (common != null) redundant.addAll(common);
+            }
+            for (var stepIngredientsRaw : rawSteps) {
+                var raw = new ArrayList<Ingredient>();
+                for (var ingredient : stepIngredientsRaw) {
+                    if (isRedundant(ingredient, redundant)) continue;
+                    raw.add(ingredient);
+                }
+                if (!raw.isEmpty()) stepIngredients.add(List.copyOf(raw));
             }
             int loops = (int) recipe.getClass().getMethod("getLoops").invoke(recipe);
             return new Chain(List.copyOf(base), List.copyOf(stepIngredients), Math.max(1, loops));
@@ -190,17 +218,15 @@ public final class CreateSequencedCompat {
     }
 
     /**
-     * 这个 Ingredient 是否只匹配「本装配的过渡物品」（半成品）——是则它不是玩家要供的原料。
-     * 过渡物品由序列自己产生，且实例带 NBT，样例被当成输入既无意义也匹配不上。
+     * 这个 Ingredient 是否整个落在「过渡物品集合」里——是则它不是玩家要供的原料。
+     * 过渡物品由序列自己产生，实例带 NBT，当样板输入既无意义也匹配不上。
      */
-    private static boolean isTransitionalOnly(@Nullable Ingredient ingredient, Recipe<?> recipe) {
-        if (ingredient == null) return false;
-        Item transitional = transitionalItem(recipe);
-        if (transitional == null) return false;
+    private static boolean isRedundant(Ingredient ingredient, java.util.Set<Item> redundant) {
+        if (ingredient == null || redundant.isEmpty()) return false;
         ItemStack[] items = ingredient.getItems();
         if (items.length == 0) return false;
         for (ItemStack stack : items) {
-            if (stack.isEmpty() || stack.getItem() != transitional) return false;
+            if (stack.isEmpty() || !redundant.contains(stack.getItem())) return false;
         }
         return true;
     }

@@ -81,6 +81,27 @@ public class AE2AddonJEIPlugin implements IModPlugin {
                 if ((data.primary().isEmpty() && data.chanced().isEmpty()) || data.inputs().isEmpty()) continue;
                 entries.add(QianJiRecipeCategory.of(recipe, variant.index(), variant.label(), data));
                 variantCount++;
+                // 序列装配诊断（只有 3 条，量小）：把提取出的输入/产出打出来，便于核对
+                if (String.valueOf(data.machine()).contains("sequenced_assembly")) {
+                    var sb = new StringBuilder();
+                    for (var slot : data.inputs()) {
+                        if (slot.options().isEmpty()) continue;
+                        var first = slot.options().get(0);
+                        sb.append(first.what().getDisplayName().getString())
+                                .append('×').append(first.amount())
+                                .append(slot.catalyst() ? "(不消耗)" : "")
+                                .append(slot.options().size() > 1
+                                        ? "(候选" + slot.options().size() + "项)" : "")
+                                .append(" | ");
+                    }
+                    var out = new StringBuilder();
+                    for (var p : data.primary()) {
+                        out.append(p.stack().what().getDisplayName().getString())
+                                .append('×').append(p.stack().amount()).append(" | ");
+                    }
+                    AE2Addon.LOGGER.info("[ae2addon][装配] {} 输入=[{}] 主产物=[{}] 概率产出={}种",
+                            data.recipeId(), sb, out, data.chanced().size());
+                }
                 if (!counted) {
                     counted = true;
                     if (data.machine() != null && data.machine().startsWith("mekanism")) mek++;

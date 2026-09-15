@@ -290,8 +290,15 @@ public final class QianJiRecipeModel {
         primary.add(new QianJiPatternData.Out(new appeng.api.stacks.GenericStack(
                 best.stack().what(), Math.max(1, best.stack().amount()) * outAmount)));
         chanced.remove(best);
-        // 其余副产：**保持原样**（每次执行掷一次骰 —— 概率是「每次执行」的，
-        // 数量不跟着整数比放大，否则会把副产也放大 4 倍）
+        // 其余副产：**概率同步倍增**（sensei 2026-09-15：样板现在代表的是一批 k 次合成，
+        // 所以每次执行的期望副产数 = 单次概率 × k → 概率也 ×k、上限 100%）；数量保持 1
+        if (k > 1) {
+            for (int i = 0; i < chanced.size(); i++) {
+                var c = chanced.get(i);
+                float scaled = c.chance() > 0f ? Math.min(1f, c.chance() * k) : c.chance();
+                chanced.set(i, new QianJiPatternData.Chanced(c.stack(), scaled));
+            }
+        }
     }
 
     /** 真实配方 → 我们的样板数据（**物品 + 流体**一起抽）（= 变体 0） */
