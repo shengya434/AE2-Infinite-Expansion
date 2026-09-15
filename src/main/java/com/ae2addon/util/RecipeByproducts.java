@@ -165,7 +165,10 @@ public final class RecipeByproducts {
             for (int i = 0; i < rawStacks.size(); i++) {
                 float weight = rawWeights.get(i);
                 float chance = weighted ? (total > 0f ? weight / total : 1f) : weight;
-                add(out, rawStacks.get(i), chance, primary);
+                // ⚠ 传 EMPTY 当 primary：结果池里的「主产物」也只是池内一条，绝不能被
+                // 「同物品且几率≥1」规则剔掉 —— 否则单池配方（加固板/轨道那种池里只有一条）
+                // 会被整条丢掉，千机页里根本没这条配方（sensei 2026-09-15 实测：3 条序列装配只出了 1 条）
+                add(out, rawStacks.get(i), chance, ItemStack.EMPTY);
             }
         } catch (Throwable ignored) {
             // 反射失败 → 当作没有结果池
