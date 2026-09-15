@@ -255,6 +255,52 @@ public final class CreateSequencedCompat {
         return true;
     }
 
+    /**
+     * 诊断：逐步打印「步骤类型 + 该步原料候选名」——排查中间产物/原料提取偏差用。
+     * 只给 JEI 页与日志调用，不参与业务逻辑。
+     */
+    public static String describeSteps(@Nullable Recipe<?> recipe) {
+        if (!isSequencedAssembly(recipe)) return "";
+        var sb = new StringBuilder();
+        Object sequence = readField(recipe, "sequence");
+        if (sequence instanceof List<?> steps) {
+            int i = 0;
+            for (var step : steps) {
+                i++;
+                Object inner = invokeNoArg(step, "getRecipe");
+                sb.append("#").append(i).append(' ');
+                if (inner == null) {
+                    sb.append("<getRecipe()=null> ");
+                    continue;
+                }
+                sb.append(simpleName(inner.getClass())).append(' ');
+                if (inner instanceof Recipe<?> stepRecipe) {
+                    sb.append('[');
+                    int j = 0;
+                    for (var ingredient : stepRecipe.getIngredients()) {
+                        if (j++ > 0) sb.append('+');
+                        ItemStack[] items = ingredient.getItems();
+                        if (items.length == 0) {
+                            sb.append("?");
+                            continue;
+                        }
+                        sb.append(items[0].getHoverName().getString());
+                        if (items.length > 1) sb.append('(').append(items.length).append("候选)");
+                    }
+                    sb.append(']');
+                }
+                sb.append(' ');
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String simpleName(Class<?> c) {
+        String n = c.getName();
+        int dot = n.lastIndexOf('.');
+        return dot < 0 ? n : n.substring(dot + 1);
+    }
+
     @Nullable
     private static Object readField(Object target, String name) {
         for (Class<?> c = target.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {

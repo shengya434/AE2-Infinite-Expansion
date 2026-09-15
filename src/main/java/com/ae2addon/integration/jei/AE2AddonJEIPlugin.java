@@ -115,6 +115,9 @@ public class AE2AddonJEIPlugin implements IModPlugin {
                     }
                     AE2Addon.LOGGER.info("[ae2addon][装配] {} 输入=[{}] 主产物=[{}] 概率产出={}种 已剔除中间产物=[{}]",
                             data.recipeId(), sb, out, data.chanced().size(), red);
+                    AE2Addon.LOGGER.info("[ae2addon][装配·步骤] {} 原始步骤={}",
+                            data.recipeId(),
+                            com.ae2addon.compat.CreateSequencedCompat.describeSteps(recipe));
                 }
                 if (!counted) {
                     counted = true;
