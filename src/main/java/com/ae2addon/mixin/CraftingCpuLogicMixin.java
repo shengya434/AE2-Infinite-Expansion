@@ -373,7 +373,9 @@ public abstract class CraftingCpuLogicMixin {
                             : AE2ADDON_DISPATCH_TARGET_TICK_NANOS;
                     long headroom = Math.max(
                             0L, targetNanos - averageTickNanos);
-                    return Math.min(AE2ADDON_DISPATCH_MAX_BUDGET_NANOS,
+                    // 上限跟随可配目标（原来硬夹 48ms —— 巨型订单提速时目标调大也被削回来）
+                    long maxBudget = Math.max(AE2ADDON_DISPATCH_MAX_BUDGET_NANOS, targetNanos);
+                    return Math.min(maxBudget,
                             Math.max(AE2ADDON_DISPATCH_MIN_BUDGET_NANOS, headroom));
                 }
             }
