@@ -4,6 +4,7 @@ import com.ae2addon.init.ModBlockEntities;
 import com.ae2addon.item.UniversalStorageCell;
 import com.ae2addon.util.ChatLog;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
@@ -53,9 +54,11 @@ public class InfiniteDriveBlock extends BaseEntityBlock {
 
         if (player.getItemInHand(hand).getItem() == Items.STICK && !driveBE.isFormed()) {
             if (tryForm((ServerLevel) level, pos, driveBE, player)) {
-                ChatLog.ok(level, pos, "驱动器成型成功，已接入 AE 网络");
+                ChatLog.ok(level, pos, "驱动器成型成功，已接入 AE 网络（朝向："
+                        + com.ae2addon.block.multiblock.StructureMatcher.describe(driveBE.getFacing()) + "）");
                 return InteractionResult.SUCCESS;
             }
+            ChatLog.err(level, pos, "驱动器结构不匹配，无法成型");
             return InteractionResult.FAIL;
         }
 
@@ -69,61 +72,60 @@ public class InfiniteDriveBlock extends BaseEntityBlock {
     }
 
     private boolean tryForm(ServerLevel level, BlockPos corePos, InfiniteDriveBE be, Player player) {
-        List<BlockPos> toConsume = checkStructure(level, corePos, player);
-        if (toConsume == null) return false;
+        var match = checkStructure(level, corePos, player);
+        if (match == null) return false;
 
         // 生存模式消耗结构材料，防止刷材料
         if (!player.isCreative()) {
-            for (BlockPos p : toConsume) level.destroyBlock(p, false);
+            for (BlockPos p : match.toConsume()) level.destroyBlock(p, false);
         }
+        be.setFacing(match.front());
         be.setFormed(true);
         return true;
     }
 
+    /**
+     * 结构检测（5×5×5，**四个水平朝向都认** —— 2026-09-15 sensei：完善方向检测）。
+     * <p>
+     * 旧硬编码布局 = 朝向 NORTH（核心在局部 (2,0,4)）；现在绕 Y 四个朝向依次试，取第一个全中的。
+     */
     @Nullable
-    private List<BlockPos> checkStructure(ServerLevel level, BlockPos pos, Player player) {
+    private com.ae2addon.block.multiblock.StructureMatcher.Match checkStructure(ServerLevel level, BlockPos pos, Player player) {
         Block gray = Blocks.GRAY_CONCRETE;
         Block lightGray = Blocks.LIGHT_GRAY_CONCRETE;
         Block meDrive = getMeDriveBlock();
         if (meDrive == null) return null;
 
-        BlockPos origin = pos.offset(-2, 0, -4);
-        List<BlockPos> toConsume = new ArrayList<>();
+        BlockPos coreOffset = new BlockPos(2, 0, 4);
+        com.ae2addon.block.multiblock.StructureMatcher.Expector expector =
+                (x, y, z) -> getExpectBlock(x, y, z, gray, lightGray, meDrive);
 
-        // 在结构八个角刷粒子帮助定位
-        spawnCornerParticles(level, origin);
+        var match = com.ae2addon.block.multiblock.StructureMatcher.match(
+                level, pos, Direction.SOUTH, 5, 5, 5, coreOffset, expector);
+        // 在结构八个角刷粒子帮助定位（朝向按检测结果；全不中时用默认朝向）
+        spawnCornerParticles(level, com.ae2addon.block.multiblock.StructureMatcher.originFor(
+                pos, match != null ? match.body() : Direction.SOUTH, coreOffset));
+        if (match != null) return match;
 
-        for (int y = 0; y < 5; y++) {
-            for (int z = 0; z < 5; z++) {
-                for (int x = 0; x < 5; x++) {
-                    BlockPos checkPos = origin.offset(x, y, z);
-                    if (checkPos.equals(pos)) continue;
-
-                    BlockState stateAt = level.getBlockState(checkPos);
-                    Block expected = getExpectBlock(x, y, z, gray, lightGray, meDrive);
-                    if (expected == null) {
-                        if (!stateAt.isAir()) {
-                            // 应为空气但有方块 → 粒子标记
-                            spawnParticles(level, checkPos, 0.0, 1.0, 1.0); // 青色：错误
-                            player.sendSystemMessage(Component.literal("§b✗ 位置 " + formatPos(checkPos) + " 应该是空气，但找到了 " + blockName(stateAt)));
-                            return null;
-                        }
-                        continue;
-                    }
-                    if (stateAt.getBlock() != expected) {
-                        // 方块不匹配 → 粒子标记
-                        spawnParticles(level, checkPos, 1.0, 0.2, 0.2); // 红色：错误
-                        player.sendSystemMessage(Component.literal("§c✗ 位置 " + formatPos(checkPos) + " 应该是 §f" + expected.getName().getString() + "§c，但找到了 " + blockName(stateAt)));
-                        return null;
-                    }
-                    // 正确 → 绿色粒子闪烁
-                    spawnParticles(level, checkPos, 0.2, 1.0, 0.2); // 绿色：正确
-                    toConsume.add(checkPos);
-                }
+        // 全不中 → 按默认朝向给出逐条诊断（部署/排查体验不变）
+        var problems = new ArrayList<com.ae2addon.block.multiblock.StructureMatcher.Problem>();
+        com.ae2addon.block.multiblock.StructureMatcher.check(
+                level, pos, Direction.SOUTH, 5, 5, 5, coreOffset, expector, problems);
+        for (var problem : problems) {
+            spawnParticles(level, problem.pos(), 0.0, 1.0, 1.0); // 青色：错误
+            if (problem.expected() == null) {
+                player.sendSystemMessage(Component.literal("§b✗ 位置 " + formatPos(problem.pos())
+                        + " 应该是空气，但找到了 " + blockName(problem.found())));
+                continue;
             }
+            spawnParticles(level, problem.pos(), 1.0, 0.2, 0.2);
+            player.sendSystemMessage(Component.literal("§c✗ 位置 " + formatPos(problem.pos())
+                    + " 应该是 §f" + problem.expected().getName().getString()
+                    + "§c，但找到了 " + blockName(problem.found())));
         }
-        return toConsume;
+        return null;
     }
+
 
     private static String formatPos(BlockPos p) {
         return "§e" + p.getX() + " " + p.getY() + " " + p.getZ() + "§r";

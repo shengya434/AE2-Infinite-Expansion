@@ -50,7 +50,7 @@ public class FormedBlockItem extends BlockItem {
         boolean handled = super.updateCustomBlockEntityTag(pos, level, player, stack, state);
         BlockEntity be = level.getBlockEntity(pos);
         if (be instanceof Formable formable && !formable.isFormed()) {
-            formable.applyCreativeFormed();
+            formable.applyCreativeFormed(player);
             handled = true;
         }
         syncFormedBlockState(level, pos, state);

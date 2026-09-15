@@ -1,5 +1,8 @@
 package com.ae2addon.block;
 
+import net.minecraft.world.entity.player.Player;
+import org.jetbrains.annotations.Nullable;
+
 /**
  * 「可成型」多方块控制器方块实体的统一接口。
  * <p>
@@ -20,7 +23,17 @@ public interface Formable {
 
     /**
      * 创造模式「已成型」变体放置时调用：默认等价于 {@link #setFormed(boolean)}，
-     * 实现方可在此补足「完整成型」所需的附加状态（如集成型CPU 的并行处理器标志）。
+     * 实现方可在此补足「完整成型」所需的附加状态（如集成型CPU 的并行处理器标志、
+     * 多方块朝向按玩家放置方向置位）。
+     *
+     * @param player 放置者（可能为 null，如存档回放/指令放置）
+     */
+    default void applyCreativeFormed(@Nullable Player player) {
+        applyCreativeFormed();
+    }
+
+    /**
+     * 创造模式「已成型」变体放置时调用：默认等价于 {@link #setFormed(boolean)}。
      */
     default void applyCreativeFormed() {
         setFormed(true);

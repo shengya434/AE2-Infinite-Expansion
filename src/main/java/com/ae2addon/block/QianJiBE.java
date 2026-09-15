@@ -72,6 +72,8 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     private static final int CATALYST_SLOTS = 1;
 
     private boolean formed = false;
+    /** 多方块朝向（成型时方向检测得出；见 {@link #getFacing()}） */
+    private Direction facing = Direction.NORTH;
     /** 副产物（真实配方的次级产出）开关，默认开；留给后续 GUI 开关 */
     private boolean byproductEnabled = true;
 
@@ -428,6 +430,27 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     // ── 成型状态 ──
 
     public boolean isFormed() { return formed; }
+
+    /**
+     * 多方块**朝向**（成型时由方向检测得出；创造变体按放置时玩家的水平朝向）。
+     * <p>
+     * 2026-09-15 sensei「完善多方块方向检测」：结构四个水平朝向都认识，
+     * 识别出的朝向存在这里（供后续 IO/渲染/条件判断使用），并随 NBT 持久化。
+     */
+    public Direction getFacing() { return facing; }
+
+    public void setFacing(@Nullable Direction facing) {
+        if (facing == null || !facing.getAxis().isHorizontal()) return;
+        if (this.facing == facing) return;
+        this.facing = facing;
+        setChanged();
+    }
+
+    @Override
+    public void applyCreativeFormed(@Nullable Player player) {
+        if (player != null) setFacing(player.getDirection().getOpposite());
+        setFormed(true);
+    }
 
     public void setFormed(boolean formed) {
         if (this.formed == formed) return;
@@ -893,6 +916,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     public void saveAdditional(CompoundTag tag) {
         super.saveAdditional(tag);
         tag.putBoolean("formed", formed);
+        tag.putString("facing", facing.getName());
         tag.putBoolean("byproduct", byproductEnabled);
         tag.put("patterns", patternHandler.serializeNBT());
         tag.put("catalyst", catalystHandler.serializeNBT());
@@ -902,6 +926,8 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     public void loadTag(CompoundTag tag) {
         super.loadTag(tag);
         formed = tag.getBoolean("formed");
+        facing = Direction.byName(tag.getString("facing"));
+        if (facing == null || !facing.getAxis().isHorizontal()) facing = Direction.NORTH;
         byproductEnabled = !tag.contains("byproduct") || tag.getBoolean("byproduct");
         if (tag.contains("patterns")) patternHandler.deserializeNBT(tag.getCompound("patterns"));
         if (tag.contains("catalyst")) catalystHandler.deserializeNBT(tag.getCompound("catalyst"));

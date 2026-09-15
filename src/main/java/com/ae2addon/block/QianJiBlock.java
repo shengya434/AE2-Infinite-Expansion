@@ -3,6 +3,7 @@ package com.ae2addon.block;
 import com.ae2addon.init.ModBlockEntities;
 import com.ae2addon.util.ChatLog;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
@@ -53,7 +54,8 @@ public class QianJiBlock extends BaseEntityBlock {
         // 木棍右键 && 未成型 → 尝试成型
         if (player.getItemInHand(hand).getItem() == Items.STICK && !qianji.isFormed()) {
             if (tryForm((ServerLevel) level, pos, qianji, player)) {
-                ChatLog.ok(level, pos, "千机成型成功！");
+                ChatLog.ok(level, pos, "千机成型成功！（朝向："
+                        + com.ae2addon.block.multiblock.StructureMatcher.describe(qianji.getFacing()) + "）");
                 return InteractionResult.SUCCESS;
             }
             ChatLog.err(level, pos, "千机结构不匹配，无法成型");
@@ -72,57 +74,52 @@ public class QianJiBlock extends BaseEntityBlock {
     }
 
     /**
-     * 检测并成型 3×3×3 多方块
+     * 检测并成型 3×3×3 多方块（**四个水平朝向都认** —— 2026-09-15 sensei：完善方向检测）
      */
     private boolean tryForm(ServerLevel level, BlockPos corePos, QianJiBE be, Player player) {
-        List<BlockPos> toConsume = checkStructure(level, corePos, player);
-        if (toConsume == null) return false;
+        var match = checkStructure(level, corePos, player);
+        if (match == null) return false;
 
         // 生存模式消耗结构材料，防止刷材料
         if (!player.isCreative()) {
-            for (BlockPos p : toConsume) level.destroyBlock(p, false);
+            for (BlockPos p : match.toConsume()) level.destroyBlock(p, false);
         }
+        be.setFacing(match.front());
         be.setFormed(true);
         return true;
     }
 
+    /** 结构检测：先试 4 个水平朝向；全不中再按默认朝向给出逐条诊断 */
     @Nullable
-    private List<BlockPos> checkStructure(ServerLevel level, BlockPos pos, Player player) {
+    private com.ae2addon.block.multiblock.StructureMatcher.Match checkStructure(ServerLevel level, BlockPos pos, Player player) {
         Block netherite = Blocks.NETHERITE_BLOCK;
         Block dragonEgg = Blocks.DRAGON_EGG;
+        BlockPos coreOffset = new BlockPos(1, 1, 0);
+        com.ae2addon.block.multiblock.StructureMatcher.Expector expector =
+                (x, y, z) -> getExpectQianJiBlock(x, y, z, netherite, dragonEgg);
 
-        // 核心在 (x=1, y=1, z=1)：结构在核心周围居中
-        BlockPos origin = pos.offset(-1, -1, 0);
-        spawnCornerParticles(level, origin, 3, 3, 3);
-        List<BlockPos> toConsume = new ArrayList<>();
+        // 四个水平朝向先扫一遍（顺带用检测到的朝向刷边界粒子）
+        var match = com.ae2addon.block.multiblock.StructureMatcher.match(
+                level, pos, Direction.SOUTH, 3, 3, 3, coreOffset, expector);
+        spawnCornerParticles(level, com.ae2addon.block.multiblock.StructureMatcher.originFor(
+                pos, match != null ? match.body() : Direction.SOUTH, coreOffset), 3, 3, 3);
+        if (match != null) return match;
 
-        for (int y = 0; y < 3; y++) {
-            for (int z = 0; z < 3; z++) {
-                for (int x = 0; x < 3; x++) {
-                    BlockPos checkPos = origin.offset(x, y, z);
-                    if (checkPos.equals(pos)) continue;
-
-                    BlockState stateAt = level.getBlockState(checkPos);
-                    Block expected = getExpectQianJiBlock(x, y, z, netherite, dragonEgg);
-                    if (expected == null) {
-                        if (!stateAt.isAir()) {
-                            spawnParticles(level, checkPos);
-                            player.sendSystemMessage(Component.literal("§b✗ " + formatPos(checkPos) + " 应为空气，但找到了 " + blockName(stateAt)));
-                            return null;
-                        }
-                        continue;
-                    }
-                    if (stateAt.getBlock() != expected) {
-                        spawnParticles(level, checkPos);
-                        ChatLog.err(level, checkPos, "应为 " + expected.getName().getString() + "，但找到了 " + blockName(stateAt));
-                        return null;
-                    }
-                    spawnParticles(level, checkPos);
-                    toConsume.add(checkPos);
-                }
+        // 全不中 → 按默认朝向跑一遍，把具体错位告诉玩家（部署/排查体验不变）
+        var problems = new ArrayList<com.ae2addon.block.multiblock.StructureMatcher.Problem>();
+        com.ae2addon.block.multiblock.StructureMatcher.check(
+                level, pos, Direction.SOUTH, 3, 3, 3, coreOffset, expector, problems);
+        for (var problem : problems) {
+            spawnParticles(level, problem.pos());
+            if (problem.expected() == null) {
+                player.sendSystemMessage(Component.literal("§b✗ " + formatPos(problem.pos())
+                        + " 应为空气，但找到了 " + blockName(problem.found())));
+            } else {
+                ChatLog.err(level, problem.pos(), "应为 " + problem.expected().getName().getString()
+                        + "，但找到了 " + blockName(problem.found()));
             }
         }
-        return toConsume;
+        return null;
     }
 
     /**

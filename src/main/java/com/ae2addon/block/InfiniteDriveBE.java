@@ -54,6 +54,8 @@ public class InfiniteDriveBE extends DriveBlockEntity implements Formable, MenuP
     public static final int CELL_SLOTS = 512;
 
     private boolean formed = false;
+    /** 多方块朝向（成型时方向检测得出；见 {@link #getFacing()}） */
+    private Direction facing = Direction.NORTH;
 
     public InfiniteDriveBE(BlockPos pos, BlockState state) {
         super(ModBlockEntities.INFINITE_DRIVE.get(), pos, state);
@@ -87,6 +89,22 @@ public class InfiniteDriveBE extends DriveBlockEntity implements Formable, MenuP
     private void updateSideExposure() {
         getMainNode().setExposedOnSides(
                 formed ? EnumSet.allOf(Direction.class) : EnumSet.noneOf(Direction.class));
+    }
+
+    /** 多方块朝向（成型时方向检测得出；创造变体按放置时玩家的水平朝向） */
+    public Direction getFacing() { return facing; }
+
+    public void setFacing(@Nullable Direction facing) {
+        if (facing == null || !facing.getAxis().isHorizontal()) return;
+        if (this.facing == facing) return;
+        this.facing = facing;
+        setChanged();
+    }
+
+    @Override
+    public void applyCreativeFormed(@Nullable Player player) {
+        if (player != null) setFacing(player.getDirection().getOpposite());
+        setFormed(true);
     }
 
     @Nullable
@@ -144,12 +162,15 @@ public class InfiniteDriveBE extends DriveBlockEntity implements Formable, MenuP
     public void saveAdditional(CompoundTag tag) {
         super.saveAdditional(tag);
         tag.putBoolean("formed", formed);
+        tag.putString("facing", facing.getName());
     }
 
     @Override
     public void loadTag(CompoundTag tag) {
         super.loadTag(tag);
         formed = tag.getBoolean("formed");
+        facing = Direction.byName(tag.getString("facing"));
+        if (facing == null || !facing.getAxis().isHorizontal()) facing = Direction.NORTH;
         if (level != null && !level.isClientSide) {
             updateSideExposure();
         }
