@@ -189,38 +189,18 @@ public final class QianJiRecipeModel {
     public record Variant(int index, String label, QianJiPatternData data) {}
 
     /**
-     * 一条配方的**全部样板变体**（2026-09-15；默认单元素，Create 序列装配会出多张）。
-     * <ul>
-     *   <li>变体 0 = 「全链」（一次吃完整条链 → 结果池）—— 与原行为一致</li>
-     *   <li>变体 1..N = 「步骤 i/N」（过渡物品 + 该步原料 → 过渡物品）—— 逐步自动化用</li>
-     *   <li>变体 N+1 = 「收尾」（过渡物品 + 末步原料 → 结果池）—— 把链结束成成品</li>
-     * </ul>
+     * 一条配方的**全部样板变体**（2026-09-15）。
+     * <p>
+     * ⚠ 2026-09-15 sensei 定调：「**不管中间步骤**，只在意装配次数与装配原料」——
+     * 所以 Create 序列装配**不再出步骤样板**（过渡物品带 NBT、且逐步链式没必要），
+     * 只出一张「全链」样板（基础原料 + 各步原料 ×loops → 结果池）。
+     * 变体机制保留：旋转机双向这类「一条配方真有两套输入/产出」的场景还要用它。
      */
     public static List<Variant> fromRecipeAll(Recipe<?> recipe, net.minecraft.core.RegistryAccess access) {
-        var out = new ArrayList<Variant>();
         if (recipe == null) return List.of();
         var full = fromRecipe(recipe, access);
-
-        var stepPlan = CreateSequencedCompat.stepPlan(recipe);
-        if (stepPlan == null) {
-            if (full != null) out.add(new Variant(0, "", full));
-            return List.copyOf(out);
-        }
-        if (full != null) out.add(new Variant(0, "全链（一次吃完整条链）", full));
-
-        int stepCount = stepPlan.stepIngredients().size();
-        for (int i = 0; i < stepCount; i++) {
-            var data = buildStepVariant(recipe, access, stepPlan, i, false);
-            if (data != null) {
-                out.add(new Variant(i + 1, "步骤 " + (i + 1) + "/" + stepCount + "（过渡物品 + 该步原料）", data));
-            }
-        }
-        var finish = buildStepVariant(recipe, access, stepPlan, stepCount - 1, true);
-        if (finish != null) {
-            out.add(new Variant(stepCount + 1, "收尾（过渡物品 + 末步原料 → 成品）", finish));
-        }
-        if (out.isEmpty() && full != null) out.add(new Variant(0, "", full));
-        return List.copyOf(out);
+        if (full == null) return List.of();
+        return List.of(new Variant(0, "", full));
     }
 
     /**
@@ -267,6 +247,57 @@ public final class QianJiRecipeModel {
         if (primary.isEmpty() && chanced.isEmpty()) return null;
         return new QianJiPatternData(String.valueOf(recipe.getType()),
                 id == null ? "" : id.toString(), inputs, primary, chanced);
+    }
+
+    /**
+     * 无主产物时的**配方配平**（sensei 2026-09-15 规则）。
+     * <p>
+     * 取概率最大的副产，换算成整数比：例如 80% 产出 → 「5 份原料产 4 件」，
+     * 于是**输入 ×5、主产物 = 该副产 ×4**；其余副产保留为概率产出（数量同比例缩放）。
+     * 好处：AE2 样板必须是确定量 —— 用整数比表达概率，千机也不会“欠 N”。
+     */
+    private static void balanceByMaxByproduct(List<QianJiPatternData.Slot> inputs,
+                                             List<QianJiPatternData.Out> primary,
+                                             List<QianJiPatternData.Chanced> chanced) {
+        QianJiPatternData.Chanced best = null;
+        for (var c : chanced) {
+            if (c.stack() == null || c.stack().what() == null) continue;
+            if (best == null || c.chance() > best.chance()) best = c;
+        }
+        if (best == null) return;
+        float p = best.chance();
+        if (p <= 0f || p > 1f) p = p <= 0f ? 1f : 1f;   // 未归一化/未知 → 当作必出
+        int k = 1;
+        while (k <= 100) {
+            float m = p * k;
+            if (Math.round(m) >= 1 && Math.abs(m - Math.round(m)) < 0.02f) break;
+            k++;
+        }
+        if (k > 100) k = 1;   // 找不到整数比 → 不做配平（退化为必出一次）
+        long outAmount = Math.max(1, Math.round(p * k));
+
+        if (k > 1) {
+            for (int i = 0; i < inputs.size(); i++) {
+                var slot = inputs.get(i);
+                var options = new ArrayList<appeng.api.stacks.GenericStack>();
+                for (var option : slot.options()) {
+                    options.add(new appeng.api.stacks.GenericStack(option.what(),
+                            Math.max(1, option.amount()) * k));
+                }
+                inputs.set(i, new QianJiPatternData.Slot(List.copyOf(options), slot.catalyst()));
+            }
+        }
+        primary.add(new QianJiPatternData.Out(new appeng.api.stacks.GenericStack(
+                best.stack().what(), Math.max(1, best.stack().amount()) * outAmount)));
+        chanced.remove(best);
+        // 其余副产：数量按同一整数比缩放（概率保持不变）
+        if (k > 1) {
+            for (int i = 0; i < chanced.size(); i++) {
+                var c = chanced.get(i);
+                chanced.set(i, new QianJiPatternData.Chanced(new appeng.api.stacks.GenericStack(
+                        c.stack().what(), Math.max(1, c.stack().amount()) * outAmount), c.chance()));
+            }
+        }
     }
 
     /** 真实配方 → 我们的样板数据（**物品 + 流体**一起抽）（= 变体 0） */
@@ -344,6 +375,11 @@ public final class QianJiRecipeModel {
                 for (var fluidOut : CreateCompat.fluidOutputs(recipe)) {
                     primary.add(new QianJiPatternData.Out(fluidOut));
                 }
+            }
+            // 2026-09-15 sensei 规则：**没有主产物**（如序列装配只给结果池）→
+            // 用概率最大的副产按整数比配平（80% → 5 原料产 4 件），否则 AE2 样板无法表达概率
+            if (primary.isEmpty() && !chanced.isEmpty()) {
+                balanceByMaxByproduct(inputs, primary, chanced);
             }
         }
 

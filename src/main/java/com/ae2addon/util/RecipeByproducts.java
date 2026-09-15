@@ -127,17 +127,38 @@ public final class RecipeByproducts {
 
     // ── 内部 ──
 
-    /** Create 序列装配的结果池（resultPool）：概率产出的另一种表达 */
+    /**
+     * Create 序列装配的结果池（resultPool）：字段里的值实际是**权重**，必须归一化。
+     * <p>
+     * 2026-09-15 sensei 实测：「权重 8 被当成 800%」。判法：池里有任一项 >1 → 按总和归一；
+     * 全 ≤1 → 已经是概率，原样用。（与 {@code getRollableResults()} 的 chance 语义不同，别合并）
+     */
     private static void collectResultPool(Recipe<?> recipe, ItemStack primary, List<Chanced> out) {
         if (!com.ae2addon.compat.CreateSequencedCompat.isSequencedAssembly(recipe)) return;
         try {
             Object pool = recipe.getClass().getField("resultPool").get(recipe);
             if (!(pool instanceof Iterable<?> entries)) return;
+            var rawStacks = new ArrayList<ItemStack>();
+            var rawWeights = new ArrayList<Float>();
+            float total = 0f;
+            float max = 0f;
             for (Object entry : entries) {
                 ItemStack stack = stackOf(entry);
                 if (stack == null || stack.isEmpty()) continue;
                 if (!primary.isEmpty() && stack.getItem() == primary.getItem()) continue; // 主产物不重复发
-                add(out, stack, chanceOf(entry), primary);
+                float weight = chanceOf(entry);
+                if (weight <= 0f) weight = 1f;
+                rawStacks.add(stack);
+                rawWeights.add(weight);
+                total += weight;
+                if (weight > max) max = weight;
+            }
+            if (rawStacks.isEmpty()) return;
+            boolean weighted = max > 1.0f;
+            for (int i = 0; i < rawStacks.size(); i++) {
+                float weight = rawWeights.get(i);
+                float chance = weighted ? (total > 0f ? weight / total : 1f) : weight;
+                add(out, rawStacks.get(i), chance, primary);
             }
         } catch (Throwable ignored) {
             // 反射失败 → 当作没有结果池
