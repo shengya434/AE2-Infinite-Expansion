@@ -81,6 +81,20 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     private final CatalystHandler catalystHandler = new CatalystHandler();
     private final Set<AEKey> emitableItems = new HashSet<>();
 
+    // ── 推送账：CPU 把材料推给我们后、我们**还没合成**的部分（2026-09-15 sensei：取消后材料没返还）──
+    //
+    // 千机不像无限接口那样有蓄水池（材料一到手就当成本吃掉）→ 只记「已推送、尚未合成」的账：
+    //   合成成功 → 销账（材料确实变成了产物）
+    //   任务取消 / 新任务开始 → 把剩下的退回网络，并把簇标为已取消，
+    //   避免延迟到下一 tick 的 callable 又合成一次（那等于复制）
+
+    /** 活跃千机（取消回退时遍历） */
+    private static final Set<QianJiBE> ACTIVE = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /** 簇 → 已推送未合成的材料（key → 量） */
+    private final Map<Object, Map<AEKey, Long>> pushedByCluster = new HashMap<>();
+    /** 刚被取消的簇 → 取消时的 tick（防延迟 callable 继续合成） */
+    private static final Map<Object, Long> CANCELLED = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Nullable
     private List<IPatternDetails> cachedPatterns = null;
 
@@ -417,8 +431,21 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     @Override
     public void onReady() {
         super.onReady();
+        ACTIVE.add(this);
         updateSideExposure();
         syncPowerUsage();
+    }
+
+    @Override
+    public void onChunkUnloaded() {
+        ACTIVE.remove(this);
+        super.onChunkUnloaded();
+    }
+
+    @Override
+    public void setRemoved() {
+        ACTIVE.remove(this);
+        super.setRemoved();
     }
 
     @Override
@@ -547,7 +574,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      */
     @Override
     public boolean pushPattern(IPatternDetails pattern, KeyCounter[] inputCounts) {
-        return handlePush("CPU", pattern);
+        return handlePush("CPU", pattern, inputCounts);
     }
 
     /**
@@ -555,10 +582,10 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      */
     @Override
     public boolean pushPattern(IPatternDetails pattern, KeyCounter[] patternDetails, Direction direction) {
-        return handlePush("PatternProvider", pattern);
+        return handlePush("PatternProvider", pattern, patternDetails);
     }
 
-    private boolean handlePush(String source, IPatternDetails pattern) {
+    private boolean handlePush(String source, IPatternDetails pattern, @Nullable KeyCounter[] inputCounts) {
         if (!formed) {
             ChatLog.warn(level, worldPosition, "千机未成型，拒绝任务(" + source + ")");
             return false;
@@ -579,16 +606,127 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         final var p = pattern;
         final var src = source;
         final QianJiPatternData ownData = pattern instanceof QianJiPatternDetails qp ? qp.data() : null;
+        // 推送账：记到当前推送的 CPU 簇上（mixin 在 dispatch 期间设了 currentPushingCluster）
+        final Object cluster = com.ae2addon.crafting.CraftingCompat.currentPushingCluster;
+        recordPushed(cluster, inputCounts);
         TickHandler.instance().addCallable(lvl, () -> {
             if (lvl == null || lvl.isClientSide || !formed) return;
+            if (cluster != null && CANCELLED.containsKey(cluster)) {
+                // 任务已取消：材料已随取消回退，这里再合成 = 复制
+                ChatLog.info(lvl, worldPosition, "任务已取消，跳过本次合成（材料已退回网络）");
+                return;
+            }
             boolean ok = instantCraft(p, ownData);
             if (ok) {
+                clearPushed(cluster, inputCounts);
                 ChatLog.ok(lvl, worldPosition, "千机完成合成: " + describeOutputs(p));
             } else {
-                ChatLog.err(lvl, worldPosition, "千机拒绝任务(" + src + "): 未接入网络或输出空间不足");
+                // 失败不吞料：账保留，任务取消/新任务时会退回网络
+                ChatLog.err(lvl, worldPosition, "千机拒绝任务(" + src
+                        + "): 未接入网络或输出空间不足（材料保留，取消任务可退回）");
             }
         });
         return true;
+    }
+
+    // ── 推送账 ──
+
+    /** 记下「CPU 推来、还没合成」的材料 */
+    private void recordPushed(@Nullable Object cluster, @Nullable KeyCounter[] inputs) {
+        if (cluster == null || inputs == null) return;
+        var per = pushedByCluster.computeIfAbsent(cluster, k -> new HashMap<>());
+        for (var counter : inputs) {
+            if (counter == null) continue;
+            for (var entry : counter) {
+                AEKey key = entry.getKey();
+                long amount = entry.getLongValue();
+                if (key == null || amount <= 0) continue;
+                per.merge(key, amount, Long::sum);
+            }
+        }
+    }
+
+    /** 合成成功：这批材料确实变成了产物，销账 */
+    private void clearPushed(@Nullable Object cluster, @Nullable KeyCounter[] inputs) {
+        if (cluster == null || inputs == null) return;
+        var per = pushedByCluster.get(cluster);
+        if (per == null) return;
+        for (var counter : inputs) {
+            if (counter == null) continue;
+            for (var entry : counter) {
+                per.remove(entry.getKey());
+            }
+        }
+        if (per.isEmpty()) pushedByCluster.remove(cluster);
+    }
+
+    /** CPU 任务取消：所有千机把该簇「已推送未合成」的材料插回网络 */
+    public static void returnPushedFor(Object cluster) {
+        if (cluster == null) return;
+        CANCELLED.put(cluster, TickHandler.instance().getCurrentTick());
+        for (var be : ACTIVE) {
+            if (be.isRemoved()) continue;
+            try {
+                be.returnPushedForCluster(cluster);
+            } catch (RuntimeException ignored) {
+                // 单个千机异常不影响其余
+            }
+        }
+        purgeCancelled();
+    }
+
+    /** 新任务开始：把上一轮残留的推送账退回（材料不销毁） */
+    public static void resetPushedFor(Object cluster) {
+        if (cluster == null) return;
+        for (var be : ACTIVE) {
+            if (be.isRemoved()) continue;
+            try {
+                be.returnPushedForCluster(cluster);
+            } catch (RuntimeException ignored) {
+            }
+        }
+    }
+
+    /** 把该簇的推送账插回网络；网络拒收/断网的部分保留记账（下次取消/新任务再退，不丢料） */
+    private void returnPushedForCluster(Object cluster) {
+        Map<AEKey, Long> pushed = pushedByCluster.get(cluster);
+        if (pushed == null || pushed.isEmpty()) return;
+        var grid = getMainNode().getGrid();
+        var storage = grid == null ? null : grid.getStorageService().getInventory();
+        if (storage == null) return;
+        var actionSource = IActionSource.ofMachine(this);
+        long returned = 0;
+        var it = pushed.entrySet().iterator();
+        while (it.hasNext()) {
+            var entry = it.next();
+            long want = entry.getValue();
+            if (want <= 0) {
+                it.remove();
+                continue;
+            }
+            long inserted = storage.insert(entry.getKey(), want, Actionable.MODULATE, actionSource);
+            if (inserted >= want) {
+                returned += inserted;
+                it.remove();
+            } else if (inserted > 0) {
+                returned += inserted;
+                entry.setValue(want - inserted); // 余量留账，下次再退
+            }
+        }
+        if (pushed.isEmpty()) pushedByCluster.remove(cluster);
+        if (returned > 0) {
+            setChanged();
+            if (level != null && !level.isClientSide) {
+                ChatLog.ok(level, worldPosition, "任务取消：未合成的推送材料已退回网络");
+            }
+        }
+    }
+
+    /** 取消标记清理（只需挡住「取消后同一 tick 内排队的 callable」，不必久留） */
+    private static void purgeCancelled() {
+        if (CANCELLED.size() <= 64) return;
+        long now = TickHandler.instance().getCurrentTick();
+        CANCELLED.entrySet().removeIf(e -> now - e.getValue() > 100);
     }
 
     /**

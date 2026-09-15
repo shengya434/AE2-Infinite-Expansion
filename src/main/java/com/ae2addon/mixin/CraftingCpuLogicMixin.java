@@ -319,6 +319,8 @@ public abstract class CraftingCpuLogicMixin {
                 ae2addon$batchLocked.clear();
                 if (currentJob != null) {
                     com.ae2addon.block.InfiniteInterfaceBE.resetPushedFor(cluster);
+                    // 千机同样有「已推送未合成」的账：新任务开始前退回，不丢料（2026-09-15）
+                    com.ae2addon.block.QianJiBE.resetPushedFor(cluster);
                 }
             }
             ae2addon$budgetNanos = ae2addon$getAdaptiveBudgetNanos();
@@ -813,6 +815,9 @@ public abstract class CraftingCpuLogicMixin {
                     "[ae2addon][feeder][diag] CPU任务cancel触发: {}", sb);
         }
         com.ae2addon.block.InfiniteInterfaceBE.returnPushedFor(cluster);
+        // 千机：把该簇「已推送未合成」的材料也退回网络，并把簇标为已取消
+        // （挡掉延迟到下一 tick 的 callable，否则材料退回 + 产物照样产出 = 复制）
+        com.ae2addon.block.QianJiBE.returnPushedFor(cluster);
     }
 
     // ── 批量推送：push 阶段 ──
