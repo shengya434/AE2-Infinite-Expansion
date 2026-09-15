@@ -12,6 +12,7 @@ import mezz.jei.api.registration.IRecipeRegistration;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.Recipe;
 
 import java.util.List;
 
@@ -48,10 +49,25 @@ public class AE2AddonJEIPlugin implements IModPlugin {
             return;
         }
         long started = System.currentTimeMillis();
+
+        // 配方来源 = RecipeManager 全量 + 「额外配方来源」
+        // （GT 的运行时配方不在 RecipeManager 里，见 GregTechRuntimeCompat）
+        // 按稳定 id 去重：两个来源重叠时以 RecipeManager 为准
+        var sources = new java.util.LinkedHashMap<String, Recipe<?>>();
+        for (var recipe : level.getRecipeManager().getRecipes()) {
+            sources.putIfAbsent(com.ae2addon.compat.GregTechRuntimeCompat.stableId(recipe), recipe);
+        }
+        int extra = 0;
+        for (var recipe : com.ae2addon.recipe.QianJiRecipeModel.extraRecipes()) {
+            if (sources.putIfAbsent(com.ae2addon.compat.GregTechRuntimeCompat.stableId(recipe), recipe) == null) {
+                extra++;
+            }
+        }
+
         var entries = new java.util.ArrayList<QianJiRecipeCategory.Entry>();
         int considered = 0;
         int mek = 0;
-        for (var recipe : level.getRecipeManager().getRecipes()) {
+        for (var recipe : sources.values()) {
             if (entries.size() >= MAX_QIANJI_RECIPES) break;
             considered++;
             var data = com.ae2addon.recipe.QianJiRecipeModel.fromRecipe(recipe, level);
@@ -60,8 +76,8 @@ public class AE2AddonJEIPlugin implements IModPlugin {
             entries.add(QianJiRecipeCategory.of(recipe, data));
         }
         registration.addRecipes(QianJiRecipeCategory.TYPE, entries);
-        AE2Addon.LOGGER.info("[ae2addon] JEI 千机配方页：注册 {} 条（扫描 {} 条，其中 MEK {} 条，耗时 {} ms）",
-                entries.size(), considered, mek, System.currentTimeMillis() - started);
+        AE2Addon.LOGGER.info("[ae2addon] JEI 千机配方页：注册 {} 条（扫描 {} 条，其中 MEK {} 条、GT 运行时额外 {} 条，耗时 {} ms）",
+                entries.size(), considered, mek, extra, System.currentTimeMillis() - started);
     }
 
     @Override

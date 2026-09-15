@@ -79,8 +79,8 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
     }
 
     public static Entry of(Recipe<?> recipe, QianJiPatternData data) {
-        ResourceLocation id = recipe.getId();
-        return new Entry(id == null ? "" : id.toString(), data);
+        // id 可能为空（GT 的运行时配方）→ 走稳定 id 兜底（与「编码」按钮的解析口径一致）
+        return new Entry(com.ae2addon.compat.GregTechRuntimeCompat.stableId(recipe), data);
     }
 
     @Override
@@ -209,7 +209,9 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         if (stack.what() instanceof AEItemKey itemKey) {
             slotBuilder.addItemStack(itemKey.toStack((int) Math.max(1, stack.amount())));
         } else if (stack.what() instanceof AEFluidKey fluidKey) {
-            slotBuilder.addFluidStack(fluidKey.getFluid(), stack.amount());
+            // 带 NBT 的流体（GT 药水：药水种类就在 NBT 里）必须把 tag 一起交给 JEI，
+            // 否则页面上所有药水都长一个样（GT 注册了 PotionFluidSubtypeInterpreter 来做子类型区分）
+            slotBuilder.addFluidStack(fluidKey.getFluid(), stack.amount(), fluidKey.copyTag());
         } else {
             // 非物品非流体（MEK 气体/灌注/颜料/浆液）：按既定设计进流体槽，用 MEK 的 JEI ingredient 渲染
             MekanismJeiCompat.addChemical(slotBuilder, stack.what(), stack.amount());

@@ -7,6 +7,7 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.crafting.Recipe;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
@@ -43,11 +44,15 @@ public class QianJiPatternPacket {
                 ResourceLocation id = ResourceLocation.tryParse(msg.recipeId);
                 if (id == null) return;
                 var found = level.getRecipeManager().byKey(id);
-                if (found.isEmpty()) {
+                // GT 运行时配方（酿造/药水…）不在 RecipeManager 里 → 走额外配方来源解析
+                Recipe<?> recipe = found.isPresent()
+                        ? found.get()
+                        : com.ae2addon.compat.GregTechRuntimeCompat.findByStableId(msg.recipeId);
+                if (recipe == null) {
                     player.displayClientMessage(Component.literal("§c找不到配方: " + msg.recipeId), false);
                     return;
                 }
-                QianJiPatternData data = QianJiRecipeModel.fromRecipe(found.get(), level);
+                QianJiPatternData data = QianJiRecipeModel.fromRecipe(recipe, level);
                 if (data == null || data.primary().isEmpty()) {
                     player.displayClientMessage(Component.literal("§c该配方提取不出主产物，无法编码"), false);
                     return;

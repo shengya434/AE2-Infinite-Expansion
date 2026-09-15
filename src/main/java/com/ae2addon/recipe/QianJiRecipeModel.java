@@ -159,6 +159,16 @@ public final class QianJiRecipeModel {
         return keys;
     }
 
+    /**
+     * 「额外配方来源」：**不在 {@link net.minecraft.world.item.crafting.RecipeManager} 里**的配方。
+     * <p>
+     * 目前只有 GT 的运行时生成配方（酿造/药水、自动分解…），JEI 页扫描时与 RecipeManager 全量
+     * 合并（按稳定 id 去重）。以后接别的「运行时配方」来源也加在这里。
+     */
+    public static List<Recipe<?>> extraRecipes() {
+        return com.ae2addon.compat.GregTechRuntimeCompat.extraRecipes();
+    }
+
     /** 世界里的「可处理配方」（有产出即可；供 JEI 页与指令列举） */
     public static List<Recipe<?>> candidates(Level level) {
         var out = new ArrayList<Recipe<?>>();
