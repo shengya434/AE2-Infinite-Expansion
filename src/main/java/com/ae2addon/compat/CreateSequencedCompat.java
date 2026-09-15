@@ -52,6 +52,43 @@ public final class CreateSequencedCompat {
         return recipe != null && SEQUENCED_CLASS.equals(recipe.getClass().getName());
     }
 
+    /**
+     * 序列装配的「全链」归一化输入（2026-09-15 sensei：序列装配未适配）。
+     *
+     * @param baseIngredients 基础原料（{@code getIngredients()}）
+     * @param stepIngredients 各步的完整原料（每步一组 Ingredient）
+     * @param loops           装配圈数（每圈都会重跑一遍各步 → 各步原料要 ×loops）
+     */
+    public record Chain(List<Ingredient> baseIngredients, List<List<Ingredient>> stepIngredients, int loops) {}
+
+    /**
+     * 取「全链」输入：基础原料 + 各步原料（调用方按 loops 放大数量）。
+     * <p>
+     * 语义：千机是「无视流程的瞬间机」→ 把整条装配链的**全部材料**当输入、
+     * 结果池（{@code resultPool}，带权重几率）当概率产出，一次搞定（不用逐步走）。
+     */
+    @Nullable
+    public static Chain chain(@Nullable Recipe<?> recipe) {
+        if (!isSequencedAssembly(recipe)) return null;
+        try {
+            var base = new ArrayList<Ingredient>(recipe.getIngredients());
+            var stepIngredients = new ArrayList<List<Ingredient>>();
+            Object sequence = readField(recipe, "sequence");
+            if (sequence instanceof List<?> steps) {
+                for (var step : steps) {
+                    Object inner = invokeNoArg(step, "getRecipe");
+                    if (!(inner instanceof Recipe<?> stepRecipe)) continue;
+                    var raw = new ArrayList<Ingredient>(stepRecipe.getIngredients());
+                    if (!raw.isEmpty()) stepIngredients.add(List.copyOf(raw));
+                }
+            }
+            int loops = (int) recipe.getClass().getMethod("getLoops").invoke(recipe);
+            return new Chain(List.copyOf(base), List.copyOf(stepIngredients), Math.max(1, loops));
+        } catch (Throwable t) {
+            return null; // 反射失败 → 调用方回退到标准路径
+        }
+    }
+
     @Nullable
     public static Requirement requirement(@Nullable Recipe<?> recipe) {
         if (!isSequencedAssembly(recipe)) return null;

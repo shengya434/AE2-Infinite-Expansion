@@ -1,6 +1,7 @@
 package com.ae2addon.recipe;
 
 import com.ae2addon.compat.CreateCompat;
+import com.ae2addon.compat.CreateSequencedCompat;
 import com.ae2addon.compat.GregTechCompat;
 import com.ae2addon.compat.MekanismCompat;
 import com.ae2addon.util.RecipeByproducts;
@@ -150,6 +151,11 @@ public final class QianJiRecipeModel {
                 if (stack != null && stack.what() != null) keys.add(stack.what());
             }
         }
+        // 概率产出（Create 序列装配的结果池、粉碎机副产…）也要进索引，否则 ME 编码器匹配不到
+        for (var bp : RecipeByproducts.extract(recipe, access)) {
+            if (bp.stack() == null || bp.stack().isEmpty()) continue;
+            keys.add(appeng.api.stacks.AEItemKey.of(bp.stack()));
+        }
         return keys;
     }
 
@@ -212,17 +218,15 @@ public final class QianJiRecipeModel {
             }
         } else {
             // 标准路径（物品）：输入 Ingredient → 选项；主产物 = getResultItem；概率产出 = RecipeByproducts
-            for (var ingredient : rawInputIngredients(recipe)) {
-                var options = new ArrayList<appeng.api.stacks.GenericStack>();
-                for (ItemStack stack : ingredient.getItems()) {
-                    if (stack.isEmpty()) continue;
-                    options.add(appeng.api.stacks.GenericStack.fromItemStack(stack));
-                    if (options.size() >= MAX_OPTIONS_PER_SLOT) break;
+            // Create 序列装配**单独走**（getIngredients() 只报基础原料，装配链全靠反射拿）
+            var chain = CreateSequencedCompat.chain(recipe);
+            if (chain != null) {
+                addIngredientSlots(inputs, chain.baseIngredients(), 1);
+                for (var step : chain.stepIngredients()) {
+                    addIngredientSlots(inputs, step, chain.loops());
                 }
-                if (!options.isEmpty()) {
-                    var frozen = List.copyOf(options);
-                    inputs.add(new QianJiPatternData.Slot(frozen, isToolInput(frozen)));
-                }
+            } else {
+                addIngredientSlots(inputs, rawInputIngredients(recipe), 1);
             }
             ItemStack standard = recipe.getResultItem(access);
             if (!standard.isEmpty()) {
@@ -265,6 +269,29 @@ public final class QianJiRecipeModel {
             }
         }
         return false;
+    }
+
+    /**
+     * Ingredient 列表 → 输入槽（每槽多候选 = 标签语义）。
+     *
+     * @param amount 每个候选的最小数量（序列装配要用 loops 放大“每圈都要耗”的那部分）
+     */
+    private static void addIngredientSlots(List<QianJiPatternData.Slot> inputs,
+                                           List<Ingredient> ingredients, long amount) {
+        for (var ingredient : ingredients) {
+            var options = new ArrayList<appeng.api.stacks.GenericStack>();
+            for (ItemStack stack : ingredient.getItems()) {
+                if (stack.isEmpty()) continue;
+                long count = Math.max(amount, stack.getCount());
+                options.add(new appeng.api.stacks.GenericStack(
+                        appeng.api.stacks.AEItemKey.of(stack), count));
+                if (options.size() >= MAX_OPTIONS_PER_SLOT) break;
+            }
+            if (!options.isEmpty()) {
+                var frozen = List.copyOf(options);
+                inputs.add(new QianJiPatternData.Slot(frozen, isToolInput(frozen)));
+            }
+        }
     }
 
     /** 配方的输入 Ingredient 列表（GT 走 inputs 映射并保留标签语义） */
