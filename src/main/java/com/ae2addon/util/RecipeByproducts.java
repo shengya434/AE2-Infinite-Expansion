@@ -149,7 +149,10 @@ public final class RecipeByproducts {
             for (Object entry : entries) {
                 ItemStack stack = stackOf(entry);
                 if (stack == null || stack.isEmpty()) continue;
-                if (!primary.isEmpty() && stack.getItem() == primary.getItem()) continue; // 主产物不重复发
+                // ⚠ 2026-09-15 不再剔除「与 getResultItem 同物品」的条目：
+                // 序列装配的**结果池才是权威**（主产物本身就在池里，如精密构件 120/150）。
+                // 原来剔除它 → 池只剩副产（汇总 30）→ 归一化分母错、配平还会把“最大副产（金板 8/30）”
+                // 当成主产物（sensei 实测：输出金板 ×4、副产总和 74%）
                 float weight = chanceOf(entry);
                 if (weight <= 0f) weight = 1f;
                 rawStacks.add(stack);
