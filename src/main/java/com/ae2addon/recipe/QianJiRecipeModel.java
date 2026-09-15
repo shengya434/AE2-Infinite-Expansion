@@ -222,7 +222,7 @@ public final class QianJiRecipeModel {
                     appeng.api.stacks.AEItemKey.of(new ItemStack(transitional)), 1));
             inputs.add(new QianJiPatternData.Slot(List.copyOf(options), false));
         }
-        addIngredientSlots(inputs, stepPlan.stepIngredients().get(stepIndex), 1);
+        addIngredientSlots(inputs, stepPlan.stepIngredients().get(stepIndex), 1, java.util.Set.of());
         if (inputs.isEmpty()) return null;
 
         var primary = new ArrayList<QianJiPatternData.Out>();
@@ -352,12 +352,14 @@ public final class QianJiRecipeModel {
             // Create 序列装配**单独走**（getIngredients() 只报基础原料，装配链全靠反射拿）
             var chain = CreateSequencedCompat.chain(recipe, access);
             if (chain != null) {
-                addIngredientSlots(inputs, chain.baseIngredients(), 1);
+                // ⚠ 带「中间产物物品集合」过滤：跨 mod 的 tag 里可能混着半成品（如未完成品有 3 个候选）
+                // → 逐槽按候选过滤，而不是整槽丢弃（2026-09-15 sensei 日志实锤）
+                addIngredientSlots(inputs, chain.baseIngredients(), 1, chain.redundantItems());
                 for (var step : chain.stepIngredients()) {
-                    addIngredientSlots(inputs, step, chain.loops());
+                    addIngredientSlots(inputs, step, chain.loops(), chain.redundantItems());
                 }
             } else {
-                addIngredientSlots(inputs, rawInputIngredients(recipe), 1);
+                addIngredientSlots(inputs, rawInputIngredients(recipe), 1, java.util.Set.of());
             }
             // ⚠ 序列装配：**结果池才是权威**（getResultItem 会把 80% 的主产物当成必出，
             // 副产也因此丢失）→ 不取 getResultItem，交给下面的配平把权重最大项当主产物
@@ -430,11 +432,14 @@ public final class QianJiRecipeModel {
      * @param amount 每个候选的最小数量（序列装配要用 loops 放大“每圈都要耗”的那部分）
      */
     private static void addIngredientSlots(List<QianJiPatternData.Slot> inputs,
-                                           List<Ingredient> ingredients, long amount) {
+                                           List<Ingredient> ingredients, long amount,
+                                           java.util.Set<Item> excludeItems) {
         for (var ingredient : ingredients) {
             var options = new ArrayList<appeng.api.stacks.GenericStack>();
             for (ItemStack stack : ingredient.getItems()) {
                 if (stack.isEmpty()) continue;
+                if (excludeItems != null && !excludeItems.isEmpty()
+                        && excludeItems.contains(stack.getItem())) continue;   // 过滤中间产物（半成品）
                 long count = Math.max(amount, stack.getCount());
                 options.add(new appeng.api.stacks.GenericStack(
                         appeng.api.stacks.AEItemKey.of(stack), count));

@@ -59,7 +59,13 @@ public final class CreateSequencedCompat {
      * @param stepIngredients 各步的完整原料（每步一组 Ingredient）
      * @param loops           装配圈数（每圈都会重跑一遍各步 → 各步原料要 ×loops）
      */
-    public record Chain(List<Ingredient> baseIngredients, List<List<Ingredient>> stepIngredients, int loops) {}
+    public record Chain(List<Ingredient> baseIngredients, List<List<Ingredient>> stepIngredients, int loops,
+                        java.util.Set<Item> redundantItems) {
+        /** 兼容旧调用：不带「中间产物物品集合」 */
+        public Chain(List<Ingredient> baseIngredients, List<List<Ingredient>> stepIngredients, int loops) {
+            this(baseIngredients, stepIngredients, loops, java.util.Set.of());
+        }
+    }
 
     /**
      * 取「全链」输入：基础原料 + 各步**机器施加的原料**（调用方按 loops 放大数量）。
@@ -146,7 +152,8 @@ public final class CreateSequencedCompat {
                 if (!raw.isEmpty()) stepIngredients.add(List.copyOf(raw));
             }
             int loops = (int) recipe.getClass().getMethod("getLoops").invoke(recipe);
-            return new Chain(List.copyOf(base), List.copyOf(stepIngredients), Math.max(1, loops));
+            return new Chain(List.copyOf(base), List.copyOf(stepIngredients), Math.max(1, loops),
+                    java.util.Set.copyOf(redundant));
         } catch (Throwable t) {
             return null; // 反射失败 → 调用方回退到标准路径
         }
