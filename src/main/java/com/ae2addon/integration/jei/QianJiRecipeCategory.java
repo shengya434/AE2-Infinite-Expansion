@@ -241,16 +241,17 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         graphics.drawString(font, "§7产出 §8(◀ 输入 → 输出；绿=主产物 §d紫=概率产出)", EDGE, 104, 0xFFFFFF, false);
         arrow.draw(graphics, EDGE + 4, 106);
 
-        // 非物品输入槽：下方标数量（与产出槽的 % 同一套坐标风格）+ 非消耗输入标记
+        // 非物品输入槽：**格内右下角**小字号标数量（GT 风格：纯数字 / K·M·G）+ 非消耗标记
         var inSlots = splitInputs(data)[1];
         var fluidInLabelPoints = grid(layout.fluidInCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_IN);
         for (int i = 0; i < Math.min(inSlots.size(), fluidInLabelPoints.size()); i++) {
             var slot = inSlots.get(i);
             if (slot.options().isEmpty()) continue;
             var point = fluidInLabelPoints.get(i);
-            String text = "§b" + amountLabel(slot.options().get(0));
-            if (slot.catalyst()) text += " §e不消耗";
-            graphics.drawString(font, text, point[0], point[1] + 17, 0xFFFFFF, false);
+            drawSlotAmount(graphics, font, slot.options().get(0), point[0], point[1]);
+            if (slot.catalyst()) {
+                drawSmall(graphics, font, "§e不消耗", point[0], point[1] + 17);
+            }
         }
 
         // 概率产出：在对应槽位下方标 %
@@ -269,11 +270,13 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         var fluidOutPoints = grid(layout.fluidOutCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_OUT);
         for (int i = 0; i < Math.min(fluidOut.size(), fluidOutPoints.size()); i++) {
             var stack = fluidOut.get(i);
-            float chance = chanceOf(data, stack);
-            String text = "§b" + amountLabel(stack);
-            if (chance >= 0f) text += " §d" + (chance > 0f ? Math.round(chance * 100) + "%" : "?");
             var point = fluidOutPoints.get(i);
-            graphics.drawString(font, text, point[0], point[1] + 17, 0xFFFFFF, false);
+            drawSlotAmount(graphics, font, stack, point[0], point[1]);
+            float chance = chanceOf(data, stack);
+            if (chance >= 0f) {
+                String pct = chance > 0f ? Math.round(chance * 100) + "%" : "?";
+                graphics.drawString(font, "§d" + pct, point[0], point[1] + 17, 0xFFFFFF, false);
+            }
         }
 
         // 化学物：正常情况已进流体槽渲染（MEK 的 JEI ingredient）；
@@ -325,16 +328,62 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         return stack.amount() > 1 ? name + "×" + stack.amount() : name;
     }
 
-    /** 非物品槽的数量文案：500mB / 1000（单位取自 AEKey 的 unit symbol） */
+    /**
+     * 数量文案（GT 配方界面风格）：**取消单位**，按最小单位（mB / MEK 单位）纯数字记；
+     * 过大的数字改用 K / M / G / T / P 计数（1K = 1000）。
+     */
     private static String amountLabel(GenericStack stack) {
         long amount = Math.max(1, stack.amount());
-        String unit = "";
-        try {
-            unit = stack.what().getUnitSymbol();
-        } catch (Throwable ignored) {
-            // 没有单位符号就只显示数字
+        if (amount < 1000) return Long.toString(amount);
+        String[] units = {"K", "M", "G", "T", "P"};
+        double value = amount;
+        int unit = -1;
+        while (value >= 1000 && unit < units.length - 1) {
+            value /= 1000;
+            unit++;
         }
-        return unit == null || unit.isEmpty() ? String.valueOf(amount) : amount + unit;
+        String text = scaled(value);
+        // 四舍五入后可能又满了 1000（如 999999 → 1000K）→ 再进一位
+        if ("1000".equals(text) && unit < units.length - 1) {
+            value /= 1000;
+            unit++;
+            text = scaled(value);
+        }
+        return text + units[unit];
+    }
+
+    /** 三位有效数字、去尾零（1 → "1"，1.5 → "1.5"，12.5 → "12.5"，125 → "125"） */
+    private static String scaled(double value) {
+        String text = value >= 100
+                ? String.format(java.util.Locale.ROOT, "%.0f", value)
+                : value >= 10
+                ? String.format(java.util.Locale.ROOT, "%.1f", value)
+                : String.format(java.util.Locale.ROOT, "%.2f", value);
+        if (text.contains(".")) {
+            text = text.replaceAll("0+$", "").replaceAll("\\.$", "");
+        }
+        return text;
+    }
+
+    /** 数量画在**格内右下角**（小字号 0.5×，带阴影 — GT 页面的数量就是这个位置） */
+    private static void drawSlotAmount(GuiGraphics graphics, net.minecraft.client.gui.Font font,
+                                       GenericStack stack, int slotX, int slotY) {
+        String text = amountLabel(stack);
+        graphics.pose().pushPose();
+        graphics.pose().translate(slotX + 16f, slotY + 16f, 100f);
+        graphics.pose().scale(0.5f, 0.5f, 1f);
+        graphics.drawString(font, text, -font.width(text), -font.lineHeight, 0xFFFFFF, true);
+        graphics.pose().popPose();
+    }
+
+    /** 小字号（0.5×）文字，用于槽位下方的小标注 */
+    private static void drawSmall(GuiGraphics graphics, net.minecraft.client.gui.Font font,
+                                  String text, float x, float y) {
+        graphics.pose().pushPose();
+        graphics.pose().translate(x, y, 100f);
+        graphics.pose().scale(0.5f, 0.5f, 1f);
+        graphics.drawString(font, text, 0, 0, 0xFFFFFF, false);
+        graphics.pose().popPose();
     }
 
     /** 该产出在数据里是概率产出吗（是则返回其几率，否则 -1） */
