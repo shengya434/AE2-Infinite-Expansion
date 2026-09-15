@@ -92,8 +92,19 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     private static final Set<QianJiBE> ACTIVE = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** 簇 → 已推送未合成的材料（key → 量） */
     private final Map<Object, Map<AEKey, Long>> pushedByCluster = new HashMap<>();
-    /** 刚被取消的簇 → 取消时的 tick（防延迟 callable 继续合成） */
+    /** 刚被取消的簇 → 取消时的 tick（只挡「取消前已排队、尚未跑」的那批 callable） */
     private static final Map<Object, Long> CANCELLED = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 本次推送是否已被取消（**按 tick 判**，不做长期标记）：
+     * 只当「取消发生在本次 push 之后」才跳过 —— 否则一旦取消过，后续所有任务都会被误伤
+     * （2026-09-15 sensei 实测：「取消一次后所有千机合成任务都自动取消」，就是长期标记造成的）
+     */
+    private static boolean wasCancelled(@Nullable Object cluster, long pushTick) {
+        if (cluster == null) return false;
+        Long cancelledAt = CANCELLED.get(cluster);
+        return cancelledAt != null && cancelledAt >= pushTick;
+    }
 
     @Nullable
     private List<IPatternDetails> cachedPatterns = null;
@@ -603,20 +614,36 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         // 若在 pushPattern 内同步注入，insertIntoCpus 认领时 waitingFor 为空
         // → 产物直接进网络存储 → 任务永远"缺 N 个"卡死。
         final var lvl = level;
-        final var p = pattern;
+        // 批量推送（ScaledPattern N×）先**拆开**：不拆的话「自有样板」会被当成普通 AE2 样板
+        // → 退化成兼容通道（去查真实配方、把无关的概率副产也注入）——
+        // 巨型订单的症状：莫名往网络里塞样板里根本没有的物品。
+        final long scale;
+        final IPatternDetails basePattern;
+        if (pattern instanceof com.ae2addon.crafting.ScaledPattern scaled) {
+            scale = scaled.multiplier();
+            basePattern = scaled.base();
+        } else {
+            scale = 1;
+            basePattern = pattern;
+        }
+        final var p = basePattern;
         final var src = source;
-        final QianJiPatternData ownData = pattern instanceof QianJiPatternDetails qp ? qp.data() : null;
+        final QianJiPatternData ownData = basePattern instanceof QianJiPatternDetails qp ? qp.data() : null;
         // 推送账：记到当前推送的 CPU 簇上（mixin 在 dispatch 期间设了 currentPushingCluster）
         final Object cluster = com.ae2addon.crafting.CraftingCompat.currentPushingCluster;
         recordPushed(cluster, inputCounts);
+        final long pushTick = TickHandler.instance().getCurrentTick();
         TickHandler.instance().addCallable(lvl, () -> {
             if (lvl == null || lvl.isClientSide || !formed) return;
-            if (cluster != null && CANCELLED.containsKey(cluster)) {
+            if (wasCancelled(cluster, pushTick)) {
                 // 任务已取消：材料已随取消回退，这里再合成 = 复制
                 ChatLog.info(lvl, worldPosition, "任务已取消，跳过本次合成（材料已退回网络）");
                 return;
             }
-            boolean ok = instantCraft(p, ownData);
+            if (scale > 1 && craftDiagnostics()) {
+                ChatLog.info(lvl, worldPosition, "批量任务 ×" + scale + "（自有样板=" + (ownData != null) + "）");
+            }
+            boolean ok = instantCraft(p, ownData, scale);
             if (ok) {
                 clearPushed(cluster, inputCounts);
                 ChatLog.ok(lvl, worldPosition, "千机完成合成: " + describeOutputs(p));
@@ -675,9 +702,10 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         purgeCancelled();
     }
 
-    /** 新任务开始：把上一轮残留的推送账退回（材料不销毁） */
+    /** 新任务开始：把上一轮残留的推送账退回（材料不销毁），并清掉取消标记 */
     public static void resetPushedFor(Object cluster) {
         if (cluster == null) return;
+        CANCELLED.remove(cluster);
         for (var be : ACTIVE) {
             if (be.isRemoved()) continue;
             try {
@@ -722,11 +750,10 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         }
     }
 
-    /** 取消标记清理（只需挡住「取消后同一 tick 内排队的 callable」，不必久留） */
+    /** 取消标记清理：只服务于「取消后同一 tick 内已排队」的 callable，不长期留存 */
     private static void purgeCancelled() {
-        if (CANCELLED.size() <= 64) return;
         long now = TickHandler.instance().getCurrentTick();
-        CANCELLED.entrySet().removeIf(e -> now - e.getValue() > 100);
+        CANCELLED.entrySet().removeIf(e -> now - e.getValue() > 200);
     }
 
     /**
@@ -743,7 +770,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      * 催化剂改为**产出数量倍数**（每次合成掷一次：基础 1~2 / 高级 2 / 终极 3~4）：
      * **主产物与副产物都乘**（{@code 数量 × 倍数}）；配方没标几率的确定性产出照给。
      */
-    private boolean instantCraft(IPatternDetails pattern, @Nullable QianJiPatternData ownData) {
+    private boolean instantCraft(IPatternDetails pattern, @Nullable QianJiPatternData ownData, long scale) {
         var grid = getMainNode().getGrid();
         if (grid == null) {
             ChatLog.err(level, worldPosition, "instantCraft: 未接入网格");
@@ -762,7 +789,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         if (ownData != null) {
             // ══ 自有样板：精确执行（不猜配方）══
             for (var p : ownData.primary()) {
-                long amount = multipliedAmount(p.stack().amount(), outputMult);
+                long amount = multipliedAmount(scaledAmount(p.stack().amount(), scale), outputMult);
                 produced.add(new GenericStack(p.stack().what(), amount));
                 if (outputMult > 1) {
                     ChatLog.ok(level, worldPosition, "主产物: " + p.stack().what().getDisplayName().getString()
@@ -777,7 +804,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                             + " ×" + c.stack().amount() + "（概率 " + Math.round(effective * 100) + "%）");
                     continue;
                 }
-                long amount = multipliedAmount(c.stack().amount(), outputMult);
+                long amount = multipliedAmount(scaledAmount(c.stack().amount(), scale), outputMult);
                 produced.add(new GenericStack(key, amount));
                 ChatLog.ok(level, worldPosition, "概率产出: " + key.getDisplayName().getString()
                         + " ×" + amount + "（概率 " + Math.round(effective * 100) + "%"
@@ -822,7 +849,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                 // 后果：CPU 已在 waitingFor 里登记了该产出 → 永远差 N → 任务永不完成，
                 // 已产出的部分被 CPU 认领进它自己的库存（巨量订单时大量积压、网络里查不到）。
                 // 现在只对「配方里有、样板**没声明**」的额外副产掷骰 —— 任务永不会为副产等待。
-                long amount = multipliedAmount(out.amount(), outputMult);
+                long amount = multipliedAmount(scaledAmount(out.amount(), scale), outputMult);
                 produced.add(new GenericStack(out.what(), amount));
                 if (chance >= 0f && craftDiagnostics()) {
                     ChatLog.info(level, worldPosition, "声明产出 " + out.what().getDisplayName()
@@ -837,7 +864,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                 float effective = bp.chance() > 0f ? bp.chance() : 1.0f;
                 if (level.random.nextFloat() >= effective) continue;
                 var key = AEItemKey.of(bp.stack());
-                long amount = multipliedAmount(bp.stack().getCount(), outputMult);
+                long amount = multipliedAmount(scaledAmount(bp.stack().getCount(), scale), outputMult);
                 produced.add(new GenericStack(key, amount));
                 ChatLog.ok(level, worldPosition, "副产物: " + key.getDisplayName().getString()
                         + " ×" + amount + "（概率 " + Math.round(effective * 100) + "%"
@@ -887,6 +914,16 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             return catalyst.rollOutputMultiplier(level.random);
         }
         return 1;
+    }
+
+    /** 批量倍数（ScaledPattern 的 N）：溢出时保守回退为原值（AE2 侧构造时已验过溢） */
+    private static long scaledAmount(long amount, long scale) {
+        if (scale <= 1 || amount <= 0) return amount;
+        try {
+            return Math.multiplyExact(amount, scale);
+        } catch (ArithmeticException e) {
+            return amount;
+        }
     }
 
     /** 产出数量 × 催化剂倍数（倍数 ≤1 = 原样；至少留 1 份） */
