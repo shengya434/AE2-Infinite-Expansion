@@ -13,12 +13,12 @@ import java.util.List;
 /**
  * 催化剂物品（基础/高级/终极）
  * <p>
- * 放入千机·阿比舒 的催化剂槽中（**副产物产出倍数**，每次合成掷一次）：
+ * 放入千机·阿比舒 的催化剂槽中（**产出数量倍数**，每次合成掷一次）：
  * - 基础（Tier 1）: 50% ×2 / 50% ×1（期望 ×1.5），耗电 ×4
  * - 高级（Tier 2）: ×2，耗电 ×20
  * - 终极（Tier 3）: 50% ×4 / 50% ×3（期望 ×3.5），耗电 ×400
  * <p>
- * 乘的是**副产物的产出数量**（触发时给 N 份）；配方自带的概率不被催化剂改动。
+ * 乘的是**命中后的产出数量**（主产物与副产物**都乘**）；几率不被催化剂改动。
  * <p>
  * 不消耗，可随时更换。
  */
@@ -39,14 +39,15 @@ public class CatalystItem extends Item {
     }
 
     /**
-     * 掷一次「副产物产出倍数」（每次合成掷一次；期望值 1.5 / 2 / 3.5）。
+     * 掷一次「产出数量倍数」（每次合成掷一次；期望值 1.5 / 2 / 3.5）。
      * <p>
      * ⚠ 2026-09-15 sensei 定稿：回到**倍数**制（不再用 +2%/+5%/+10% 加法百分点），
-     * 而且乘的是**副产物产出数量**：基础 50% 翻倍、高级固定 2 倍、终极 50% 3 倍 / 50% 4 倍。
+     * 而且乘在**命中概率后的产出数量**上（主产物与副产物都生效）：
+     * 基础 50% 翻倍、高级固定 2 倍、终极 50% 3 倍 / 50% 4 倍。
      * <p>
      * 要调就改这个方法里的数（返回 1 = 本次不倍增）。
      */
-    public int rollByproductMultiplier(net.minecraft.util.RandomSource random) {
+    public int rollOutputMultiplier(net.minecraft.util.RandomSource random) {
         return switch (tier) {
             case 1 -> random.nextFloat() < 0.5f ? 2 : 1;
             case 2 -> 2;
@@ -88,8 +89,8 @@ public class CatalystItem extends Item {
         };
 
         tooltip.add(Component.literal("§7等级: " + name));
-        tooltip.add(Component.literal("§7副产物产出: §e" + bonus));
-        tooltip.add(Component.literal("§8每次合成掷一次；不改配方自带概率"));
+        tooltip.add(Component.literal("§7产出数量: §e" + bonus));
+        tooltip.add(Component.literal("§8主产物与副产物都乘；每次合成掷一次"));
         tooltip.add(Component.literal("§7耗电倍率: §c" + powerMult));
         tooltip.add(Component.literal(""));
         tooltip.add(Component.literal("§8放入千机·阿比舒的催化剂槽使用"));

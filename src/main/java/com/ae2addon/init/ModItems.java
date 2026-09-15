@@ -112,7 +112,7 @@ public class ModItems {
                     new Item.Properties(), "integrated_cpu_formed")
     );
 
-    /** 催化剂三档（千机副产物产出倍数 1.5/2/3.5 / 耗电倍率） */
+    /** 催化剂三档（千机产出数量倍数 1.5/2/3.5，主产物+副产物 / 耗电倍率） */
     public static final RegistryObject<Item> CATALYST_BASIC = ITEMS.register(
             "catalyst_basic",
             () -> new CatalystItem(1)

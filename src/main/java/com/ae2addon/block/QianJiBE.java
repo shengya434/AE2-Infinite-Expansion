@@ -61,7 +61,8 @@ import java.util.Set;
  * <p>
  * - 1280 样板槽（仅接受编码处理样板）
  * - 催化剂槽（基础/高级/终极）
- * - 副产物：实时查「真实配方」的次级产出，按概率额外给（催化剂给产出**数量倍数**）
+ * - 副产物：实时查「真实配方」的次级产出，按概率额外给
+ * - 催化剂：**所有产出（主产物 + 副产物）的数量倍数**（每次合成掷一次）
  * - ICraftingProvider — AE2 合成提供商，直接响应合成 CPU 请求
  * - 处理流程：CPU 请求 → 瞬间处理 → 产物（+副产物）注入 ME 网络
  */
@@ -576,9 +577,9 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      *   <li>样板声明的输出：配方标为概率产（GT chanced / Create rollable / 序列装配结果池）→ 掷骰；否则必出</li>
      *   <li>配方里有、样板没声明的概率产出 → 同样掷骰，掷中就作为机器的真实副产注入</li>
      * </ul>
-     * 几率模型：{@code min(100%, 配方自带几率)} —— 副产几率**只认配方自带值**，催化剂不改几率。
-     * 催化剂改为**副产物产出倍数**（每次合成掷一次：基础 1~2 / 高级 2 / 终极 3~4）：
-     * 触发时给 {@code 数量 × 倍数} 份。配方没标几率的确定性次级产出照给（不掷骰，也不减）。
+     * 几率模型：{@code min(100%, 配方自带几率)} —— 概率**只认配方自带值**，催化剂不改几率。
+     * 催化剂改为**产出数量倍数**（每次合成掷一次：基础 1~2 / 高级 2 / 终极 3~4）：
+     * **主产物与副产物都乘**（{@code 数量 × 倍数}）；配方没标几率的确定性产出照给。
      */
     private boolean instantCraft(IPatternDetails pattern, @Nullable QianJiPatternData ownData) {
         var grid = getMainNode().getGrid();
@@ -593,13 +594,18 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         }
         var netInv = storage.getInventory();
         var src = IActionSource.ofMachine(this);
-        int byproductMult = catalystByproductMultiplier();
+        int outputMult = catalystOutputMultiplier();
         var produced = new ArrayList<GenericStack>();
 
         if (ownData != null) {
             // ══ 自有样板：精确执行（不猜配方）══
             for (var p : ownData.primary()) {
-                produced.add(p.stack());
+                long amount = multipliedAmount(p.stack().amount(), outputMult);
+                produced.add(new GenericStack(p.stack().what(), amount));
+                if (outputMult > 1) {
+                    ChatLog.ok(level, worldPosition, "主产物: " + p.stack().what().getDisplayName().getString()
+                            + " ×" + amount + "（催化剂产出 ×" + outputMult + "）");
+                }
             }
             for (var c : ownData.chanced()) {
                 float effective = c.chance() > 0f ? c.chance() : 1.0f;
@@ -609,11 +615,11 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                             + " ×" + c.stack().amount() + "（概率 " + Math.round(effective * 100) + "%）");
                     continue;
                 }
-                long amount = multipliedAmount(c.stack().amount(), byproductMult);
+                long amount = multipliedAmount(c.stack().amount(), outputMult);
                 produced.add(new GenericStack(key, amount));
                 ChatLog.ok(level, worldPosition, "概率产出: " + key.getDisplayName().getString()
                         + " ×" + amount + "（概率 " + Math.round(effective * 100) + "%"
-                        + (byproductMult > 1 ? "，催化剂产出 ×" + byproductMult : "") + "）");
+                        + (outputMult > 1 ? "，催化剂产出 ×" + outputMult : "") + "）");
             }
             AE2Addon.LOGGER.info("QianJi craft(自有样板): recipe={} primary={} chanced={}",
                     ownData.recipeId(), ownData.primary().size(), ownData.chanced().size());
@@ -656,9 +662,9 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                                 + " ×" + out.amount() + "（概率 " + Math.round(effective * 100) + "%）");
                         continue;
                     }
-                    // 命中的是概率副产 → 按催化剂倍数放大产出数量
-                    amount = multipliedAmount(amount, byproductMult);
                 }
+                // 主产物 / 命中概率的副产：都吃催化剂产出倍数
+                amount = multipliedAmount(amount, outputMult);
                 produced.add(new GenericStack(out.what(), amount));
             }
 
@@ -668,11 +674,11 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                 float effective = bp.chance() > 0f ? bp.chance() : 1.0f;
                 if (level.random.nextFloat() >= effective) continue;
                 var key = AEItemKey.of(bp.stack());
-                long amount = multipliedAmount(bp.stack().getCount(), byproductMult);
+                long amount = multipliedAmount(bp.stack().getCount(), outputMult);
                 produced.add(new GenericStack(key, amount));
                 ChatLog.ok(level, worldPosition, "副产物: " + key.getDisplayName().getString()
                         + " ×" + amount + "（概率 " + Math.round(effective * 100) + "%"
-                        + (byproductMult > 1 ? "，催化剂产出 ×" + byproductMult : "") + "）");
+                        + (outputMult > 1 ? "，催化剂产出 ×" + outputMult : "") + "）");
             }
         }
 
@@ -704,21 +710,23 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     }
 
     /**
-     * 催化剂 → 本次合成的**副产物产出倍数**（每次合成掷一次；无催化剂 = 1）。
+     * 催化剂 → 本次合成的**产出数量倍数**（每次合成掷一次；无催化剂 = 1）。
      * <p>
      * ⚠ 2026-09-15 sensei 定稿：从「加法百分点（+2%/+5%/+10%）」**改回倍数制**，
-     * 并且倍数乘在**副产物产出数量**上：基础 50% ×2 / 50% ×1（期望 1.5）· 高级 ×2 ·
-     * 终极 50% ×4 / 50% ×3（期望 3.5）。配方自带的概率不再被催化剂改动。
+     * 且倍数乘在**产出数量**上：基础 50% ×2 / 50% ×1（期望 1.5）· 高级 ×2 ·
+     * 终极 50% ×4 / 50% ×3（期望 3.5）。配方自带的概率不被催化剂改动。
+     * <p>
+     * 主产物与副产物**都生效**（sensei 2026-09-15 11:56 明确）。
      */
-    private int catalystByproductMultiplier() {
+    private int catalystOutputMultiplier() {
         ItemStack stack = catalystHandler.getStackInSlot(0);
         if (stack.getItem() instanceof CatalystItem catalyst) {
-            return catalyst.rollByproductMultiplier(level.random);
+            return catalyst.rollOutputMultiplier(level.random);
         }
         return 1;
     }
 
-    /** 副产物数量 × 催化剂倍数（倍数 ≤1 = 原样；至少留 1 份） */
+    /** 产出数量 × 催化剂倍数（倍数 ≤1 = 原样；至少留 1 份） */
     private static long multipliedAmount(long amount, int multiplier) {
         if (multiplier <= 1 || amount <= 0) return amount;
         return amount * multiplier;
