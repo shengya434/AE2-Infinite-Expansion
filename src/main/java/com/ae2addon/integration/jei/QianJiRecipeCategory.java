@@ -210,6 +210,9 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             slotBuilder.addItemStack(itemKey.toStack((int) Math.max(1, stack.amount())));
         } else if (stack.what() instanceof AEFluidKey fluidKey) {
             slotBuilder.addFluidStack(fluidKey.getFluid(), stack.amount());
+        } else {
+            // 非物品非流体（MEK 气体/灌注/颜料/浆液）：按既定设计进流体槽，用 MEK 的 JEI ingredient 渲染
+            MekanismJeiCompat.addChemical(slotBuilder, stack.what(), stack.amount());
         }
     }
 
@@ -260,11 +263,14 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             graphics.drawString(font, "§d" + pct, point[0], point[1] + 17, 0xFFFFFF, false);
         }
 
-        // 化学物（气体/浆液/灌注/颜料）在 JEI 里没有可用槽类型 → 用文字列出，数据与编码不受影响
-        String chems = chemicalSummary(data);
-        if (!chems.isEmpty()) {
-            graphics.drawString(font, "§b化学物 §8(JEI 无槽·数据/编码仍有效): " + trim(chems, 52),
-                    EDGE, 178, 0xFFFFFF, false);
+        // 化学物：正常情况已进流体槽渲染（MEK 的 JEI ingredient）；
+        // 只有在**渲染不了**时（缺 MEK JEI / Applied-Mekanistics）才退回文字提示
+        if (!MekanismJeiCompat.available()) {
+            String chems = chemicalSummary(data);
+            if (!chems.isEmpty()) {
+                graphics.drawString(font, "§c化学物无渲染(缺 MEK JEI/Applied-Mekanistics): " + trim(chems, 44),
+                        EDGE, 178, 0xFFFFFF, false);
+            }
         }
 
         // 来源配方 id
