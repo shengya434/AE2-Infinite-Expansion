@@ -16,8 +16,11 @@ import java.util.List;
  * 时，用它充当提交方，让原版 trySubmitJob 创建真实的 requester link——
  * 否则原版返回 successful(null)，队列无法跟踪批次完成/取消。
  * <p>
- * 产物路径不受影响：AE2 CPU 合成完成自动输出到 ME 网络，requester 的
- * insertCraftedItems 只是「请求方收货」的备选路径，这里返回 amount 表示接受。
+ * ❗2026-09-15 修正（sensei：“巨型订单没收到产物”）：“CPU 会自动把成品入网”是**错的** ——
+ * AE2 的成品最终通过 `CraftingLink.insert()` → `requester.insertCraftedItems()` **交给请求方**，
+ * 请求方负责把东西放下。原来这里直接 `return amount`（假装收下），等于把**整单最终产物扔掉了**
+ * （巨型订单必定走本类，普通小订单走 AE2 自己的请求方 → 所以只有巨型订单丢产物，
+ * 与“做装配处理器时遇到的”是同一个坑）。现在真的往 ME 网络里插。
  */
 public final class BatchedRequester implements ICraftingRequester {
 
@@ -39,8 +42,24 @@ public final class BatchedRequester implements ICraftingRequester {
 
     @Override
     public long insertCraftedItems(ICraftingLink link, AEKey what, long amount, Actionable mode) {
-        // 接受产物（CPU 已同步输出到 ME 网络，这里只是路径占位）
-        return amount;
+        // ❗真把成品入网：AE2 的最终产物是交给 requester 的（不是自动入网），
+        // 以前直接 return amount = 把整单成品丢掉（巨型订单没产物的真根因）
+        if (what == null || amount <= 0) {
+            return 0;
+        }
+        var grid = node == null ? null : node.getGrid();
+        var storage = grid == null ? null : grid.getStorageService().getInventory();
+        if (storage == null) {
+            // 断网：模拟阶段说“能收”免得 CPU 直接报错；真入网时只能拒收（产物留在 CPU 手里）
+            return mode == Actionable.SIMULATE ? amount : 0;
+        }
+        long inserted = storage.insert(what, amount, mode, source);
+        if (mode == Actionable.MODULATE && inserted < amount) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] 巨型订单成品入网不完整 what={} 期望{} 实插{}（网络满？）",
+                    what, amount, inserted);
+        }
+        return inserted;
     }
 
     @Override
