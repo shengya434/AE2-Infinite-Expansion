@@ -10,7 +10,6 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 从「真实配方」里抽取次级产出（副产物）。
@@ -51,16 +50,23 @@ public final class RecipeByproducts {
             "getChance", "getSecondaryChance"
     };
 
-    /** 配方类 → 探测结论缓存（避免每次都反射） */
-    private static final Map<Class<?>, List<Chanced>> PROBE_CACHE = new ConcurrentHashMap<>();
+    /**
+     * 配方**实例** → 探测结论缓存（避免每次都反射探测）。
+     * <p>
+     * ❗2026-09-16 sensei 实测教训：**绝不能按「配方类」缓存**。同一类的不同配方实例，
+     * 副产完全不同 —— Create 的 milling 共 231 条：绒球葱 → 紫染料 10% + 粉染料 10%；
+     * 安山岩 → **一条副产都没有**（直接读 create-1.20.1-6.0.8.jar 的配方 JSON 核过）。
+     * 按类缓存时，只要第一条被探测的同类配方恰好无副产，空结论就会被套给**全部同类配方**，
+     * 症状 = 「千机自用的副产物集体消失」。
+     * <p>
+     * 改为按**实例身份**缓存（IdentityHashMap，不依赖 equals）：精确到每条配方；
+     * 条目数超过 {@link #CACHE_LIMIT} 时直接清空重探，避免 `/reload` 后旧配方实例把缓存撑爆。
+     */
+    private static final int CACHE_LIMIT = 20_000;
+    private static final Map<Recipe<?>, List<Chanced>> PROBE_CACHE =
+            java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
 
     private RecipeByproducts() {}
-
-    /** 探测该配方是否有次级产出（结果按配方类缓存，只探一次） */
-    public static boolean hasByproducts(Class<?> recipeClass) {
-        List<Chanced> cached = PROBE_CACHE.get(recipeClass);
-        return cached != null && !cached.isEmpty();
-    }
 
     public static List<Chanced> extract(Recipe<?> recipe, net.minecraft.world.level.Level level) {
         return extract(recipe, level == null ? null : level.registryAccess());
@@ -68,7 +74,7 @@ public final class RecipeByproducts {
 
     /** 同上（不依赖 Level：编码/索引场景用 RecipeManager.registries()） */
     public static List<Chanced> extract(Recipe<?> recipe, @Nullable net.minecraft.core.RegistryAccess access) {
-        List<Chanced> cached = PROBE_CACHE.get(recipe.getClass());
+        List<Chanced> cached = PROBE_CACHE.get(recipe);   // 按实例，不按类（见 PROBE_CACHE 注释）
         if (cached != null) return cached;
 
         List<Chanced> out = new ArrayList<>();
@@ -121,11 +127,10 @@ public final class RecipeByproducts {
         }
 
         List<Chanced> result = List.copyOf(out);
-        // ⚠ 序列装配的结果池**每个配方各不相同** → 不能按类缓存（否则几条装配互相串台：
-        // 副产消失/冒出别的配方的东西，2026-09-15 sensei 实测）
-        if (!com.ae2addon.compat.CreateSequencedCompat.isSequencedAssembly(recipe)) {
-            PROBE_CACHE.put(recipe.getClass(), result);
-        }
+        // 按**实例**缓存（序列装配也一样）：结果池/副产都是 per-配方的，实例级缓存天然不会串台。
+        // 容量上限兜底：/reload 会重建配方实例，旧实例不清理会让缓存无界增长。
+        if (PROBE_CACHE.size() > CACHE_LIMIT) PROBE_CACHE.clear();
+        PROBE_CACHE.put(recipe, result);
         return result;
     }
 
