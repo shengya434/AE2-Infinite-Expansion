@@ -217,9 +217,11 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             // 带 NBT 的流体（GT 药水：药水种类就在 NBT 里）必须把 tag 一起交给 JEI，
             // 否则页面上所有药水都长一个样（GT 注册了 PotionFluidSubtypeInterpreter 来做子类型区分）
             slotBuilder.addFluidStack(fluidKey.getFluid(), stack.amount(), fluidKey.copyTag());
-        } else {
-            // 非物品非流体（MEK 气体/灌注/颜料/浆液）：按既定设计进流体槽，用 MEK 的 JEI ingredient 渲染
-            MekanismJeiCompat.addChemical(slotBuilder, stack.what(), stack.amount());
+        } else if (!MekanismJeiCompat.addChemical(slotBuilder, stack.what(), stack.amount())) {
+            // 非物品非流体、MEK 也渲染不了（典型：桥 mod 的魔力/魔源）→ 图标由 drawKeyIcon 自己画，
+            // 这里再挂一条 AE2 的 tooltip（名字 + 所属 mod）当兜底；槽里没有 ingredient 时
+            // JEI 未必会显示这条 tooltip，所以名字同时在 draw() 里写到格子右边（2026-09-16 sensei 反馈）
+            addKeyTooltip(slotBuilder, stack.what());
         }
     }
 
@@ -256,6 +258,19 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             if (slot.options().isEmpty()) continue;
             var point = fluidInLabelPoints.get(i);
             drawSlotAmount(graphics, font, slot.options().get(0), point[0], point[1]);
+            // 魔力/魔源这类桥 mod 的 AEKey：JEI 里没有对应 ingredient（AE2 的 AEKeyType 没有 icon API），
+            // MEK 化学物渲染器也画不了 → 槽会是空的 → 在格内补一个短名字，别让玩家看到空槽
+            var firstOption = slot.options().get(0);
+            if (isChemical(firstOption) && !MekanismJeiCompat.canRender(firstOption.what())) {
+                // 魔力/魔源：借桥 mod 注册的终端贴图（AE2 的 AEKeyRendering）画出来
+                if (!drawKeyIcon(graphics, firstOption.what(), point[0], point[1])) {
+                    // 没注册渲染器才退回格内短名字，别让玩家看到空槽
+                    drawSmall(graphics, font, "§b" + trim(firstOption.what().getDisplayName().getString(), 3),
+                            point[0] + 1, point[1] + 2);
+                }
+                // 2026-09-16 sensei：格子右边的青色小字**不要**了（图标 + 悬停 tooltip 就够）——
+                // tooltip 见 setRecipe 里的 addKeyTooltip()。
+            }
             if (slot.catalyst()) {
                 drawSmall(graphics, font, "§e不消耗", point[0], point[1] + 17);
             }
@@ -279,6 +294,10 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             var stack = fluidOut.get(i);
             var point = fluidOutPoints.get(i);
             drawSlotAmount(graphics, font, stack, point[0], point[1]);
+            // 非物品非流体产出（理论上的魔力/魔源）：同样借桥 mod 的终端贴图
+            if (isChemical(stack) && !MekanismJeiCompat.canRender(stack.what())) {
+                drawKeyIcon(graphics, stack.what(), point[0], point[1]);
+            }
             float chance = chanceOf(data, stack);
             if (chance >= 0f) {
                 String pct = chance > 0f ? Math.round(chance * 100) + "%" : "?";
@@ -385,6 +404,49 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         graphics.pose().scale(0.5f, 0.5f, 1f);
         graphics.drawString(font, text, -font.width(text), -font.lineHeight, 0xFFFFFF, true);
         graphics.pose().popPose();
+    }
+
+    /**
+     * 给 JEI 槽挂上 AE2 的 key tooltip（默认内容 = 显示名 + 所属 mod）。
+     * <p>
+     * 注意：槽里**没有 ingredient** 时 JEI 不一定显示 tooltip，所以名字另外在 draw() 里画。
+     */
+    private static void addKeyTooltip(mezz.jei.api.gui.builder.IRecipeSlotBuilder slotBuilder,
+                                      appeng.api.stacks.AEKey key) {
+        try {
+            var lines = appeng.api.client.AEKeyRendering.getTooltip(key);
+            if (lines == null || lines.isEmpty()) return;
+            var copy = java.util.List.copyOf(lines);
+            slotBuilder.addRichTooltipCallback((view, tooltip) -> tooltip.addAll(copy));
+        } catch (Throwable ignored) {
+            // 没注册渲染器 / 拿不到 tooltip → 无所谓，draw() 里的名字还在
+        }
+    }
+
+    /**
+     * 用 AE2 的 key 渲染器把图标画进格子 —— 魔力/魔源这类**桥 mod 的 AEKey**，
+     * 桥 mod 早就给它们注册了终端里的 16×16 贴图：
+     * <pre>
+     *   appbot/client/ManaRenderer          （Applied Botanics → 魔力）
+     *   gripe/_90/arseng/client/SourceRenderer（Ars Énergistique → 魔源）
+     * </pre>
+     * 两者都是通过 {@code AEKeyRendering.register(...)} 注册的，所以这里借 AE2 的公开入口
+     * {@code AEKeyRendering.get(type)} 拿渲染器直接画（2026-09-16 sensei 提醒）。
+     *
+     * @return false = 这个 key 类型没注册渲染器（调用方退回文字兜底）
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static boolean drawKeyIcon(GuiGraphics graphics, appeng.api.stacks.AEKey key, int x, int y) {
+        if (key == null) return false;
+        try {
+            appeng.api.client.AEKeyRenderHandler handler =
+                    (appeng.api.client.AEKeyRenderHandler) appeng.api.client.AEKeyRendering.get(key.getType());
+            if (handler == null) return false;
+            handler.drawInGui(net.minecraft.client.Minecraft.getInstance(), graphics, x, y, key);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     /** 小字号（0.5×）文字，用于槽位下方的小标注 */

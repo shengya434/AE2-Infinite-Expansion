@@ -1,5 +1,8 @@
 package com.ae2addon.recipe;
 
+import com.ae2addon.compat.AeResourceKeys;
+import com.ae2addon.compat.ArsNouveauCompat;
+import com.ae2addon.compat.BotaniaCompat;
 import com.ae2addon.compat.CreateCompat;
 import com.ae2addon.compat.CreateSequencedCompat;
 import com.ae2addon.compat.GregTechCompat;
@@ -36,6 +39,9 @@ public final class QianJiRecipeModel {
 
     /** 每个输入槽最多记多少可选物品（标签展开可能上千，截断） */
     private static final int MAX_OPTIONS_PER_SLOT = 32;
+
+    /** 凝矿兰配平上限：权重差距再极端也最多放大到这个倍数（深板岩绿宝石矿要 2366 倍） */
+    private static final int MAX_ORECHID_LOOPS = 4096;
 
     // ── 产出→配方 索引缓存（供 ME 编码器实时匹配用；按 RecipeManager 实例缓存）──
     private static java.lang.ref.WeakReference<net.minecraft.world.item.crafting.RecipeManager> cachedManager =
@@ -132,6 +138,17 @@ public final class QianJiRecipeModel {
         try {
             ItemStack standard = recipe.getResultItem(access);
             if (!standard.isEmpty()) keys.add(appeng.api.stacks.AEItemKey.of(standard));
+            // Ars 灌注室/附魔装置的 getResultItem 恒为 EMPTY → 从字段补真产物，否则编码索引里没有它
+            if (standard.isEmpty()) {
+                ItemStack arsOutput = ArsNouveauCompat.output(recipe);
+                if (!arsOutput.isEmpty()) keys.add(appeng.api.stacks.AEItemKey.of(arsOutput));
+            }
+            // 凝矿兰：产出是方块状态 → 单独补（否则 ME 编码器索引里找不到这些矿石）
+            if (BotaniaCompat.isOrechid(recipe)) {
+                for (var ore : BotaniaCompat.orechidOutputs(recipe)) {
+                    if (ore.what() != null) keys.add(ore.what());
+                }
+            }
         } catch (Throwable ignored) {
         }
         if (GregTechCompat.isGtRecipe(recipe)) {
@@ -354,7 +371,25 @@ public final class QianJiRecipeModel {
         var primary = new ArrayList<QianJiPatternData.Out>();
         var chanced = new ArrayList<QianJiPatternData.Chanced>();
 
-        if (GregTechCompat.isGtRecipe(recipe)) {
+        if (ArsNouveauCompat.isFieldOnlyRecipe(recipe)) {
+            // Ars Nouveau 灌注室 / 附魔装置：**标准 API 全空**（2026-09-16 读字节码实证）
+            // getResultItem → ItemStack.EMPTY、getIngredients 没实现
+            // → 以前整条配方被判「无输入无产出」而丢弃（= sensei 报的「无法识别」）
+            // 数据全在字段里 → 直接读（reagent/input/result/output/sourceCost/source/pedestalItems）
+            for (var slot : ArsNouveauCompat.inputSlots(recipe)) {
+                inputs.add(new QianJiPatternData.Slot(slot));
+            }
+            ItemStack arsResult = ArsNouveauCompat.output(recipe);
+            if (!arsResult.isEmpty()) {
+                primary.add(new QianJiPatternData.Out(appeng.api.stacks.GenericStack.fromItemStack(arsResult)));
+            }
+            long source = ArsNouveauCompat.sourceCost(recipe);
+            if (source > 0) {
+                // 魔源从 ME 网络抽（只在装了 Ars Énergistique 时才有槽）
+                var sourceSlot = AeResourceKeys.source(source);
+                if (sourceSlot != null) inputs.add(new QianJiPatternData.Slot(List.of(sourceSlot)));
+            }
+        } else if (GregTechCompat.isGtRecipe(recipe)) {
             // GT：走 inputs/outputs 映射，**物品与流体都读**（如矿石清洗机要耗水/产流体）
             // notConsumable 输入（催化剂/模具，GT 内部就是把 chance 置 0）→ 标记「不消耗」
             for (var slot : GregTechCompat.inputSlotInfos(recipe)) {
@@ -385,6 +420,39 @@ public final class QianJiRecipeModel {
                             stat.chance() > 0f ? stat.chance() : -1f));
                 }
             }
+        } else if (BotaniaCompat.isOrechid(recipe)) {
+            // 凝矿兰（orechid / orechid_ignem）：输入与输出都是 Botania 自有的 **StateIngredient（方块状态）**，
+            // 标准 API 完全看不到 → 这就是 sensei 报的「无法识别」。
+            // 单条配方概率 = 自身权重 / 同类型全部配方权重和（实测：orechid 总权重 118288、orechid_ignem 23383）。
+            // 权重不是「必出」→ 按整数比换算成「原料 ×k → 矿石 ×1」（k = 总权重/权重），
+            // 跟 Create 概率配方、以及公共收尾的配平是同一套语义（千机是瞬间合成，用整数比表达概率）。
+            int weight = BotaniaCompat.orechidWeight(recipe);
+            int totalWeight = BotaniaCompat.orechidTotalWeight(recipe);
+            long loops = 1;
+            if (weight > 0 && totalWeight >= weight) {
+                loops = Math.max(1, Math.min(MAX_ORECHID_LOOPS,
+                        Math.round((double) totalWeight / weight)));
+            }
+            for (var slot : BotaniaCompat.orechidInputs(recipe)) {
+                var scaled = new ArrayList<appeng.api.stacks.GenericStack>();
+                for (var option : slot) {
+                    scaled.add(new appeng.api.stacks.GenericStack(option.what(),
+                            Math.max(1, option.amount()) * loops));
+                }
+                if (!scaled.isEmpty()) inputs.add(new QianJiPatternData.Slot(List.copyOf(scaled)));
+            }
+            // 凝矿兰的 mana 是机器硬编码常量（OrechidBlockEntity.COST = 17500），按次数一并放大；
+            // 只在装了 Applied Botanics 时才有槽
+            int manaPerOp = BotaniaCompat.orechidManaCost(recipe);
+            if (manaPerOp > 0) {
+                var manaSlot = AeResourceKeys.mana((long) manaPerOp * loops);
+                if (manaSlot != null) inputs.add(new QianJiPatternData.Slot(List.of(manaSlot)));
+            }
+            for (var ore : BotaniaCompat.orechidOutputs(recipe)) {
+                if (ore.what() == null) continue;
+                primary.add(new QianJiPatternData.Out(new appeng.api.stacks.GenericStack(
+                        ore.what(), Math.max(1, ore.amount()))));
+            }
         } else {
             // 标准路径（物品）：输入 Ingredient → 选项；主产物 = getResultItem；概率产出 = RecipeByproducts
             // Create 序列装配**单独走**（getIngredients() 只报基础原料，装配链全靠反射拿）
@@ -412,16 +480,34 @@ public final class QianJiRecipeModel {
             }
             // ⚠ 序列装配：**结果池才是权威**（getResultItem 会把 80% 的主产物当成必出，
             // 副产也因此丢失）→ 不取 getResultItem，交给下面的配平把权重最大项当主产物
-            if (chain == null) {
-                ItemStack standard = recipe.getResultItem(access);
-                if (!standard.isEmpty()) {
-                    primary.add(new QianJiPatternData.Out(appeng.api.stacks.GenericStack.fromItemStack(standard)));
-                }
-            }
+            //
+            // ❗2026-09-16 sensei 实测：Create 的 splashing 等「全概率配方」主产物被误判。
+            // 根因（读 create-1.20.1-6.0.8.jar 的字节码确认）：ProcessingRecipe#getResultItem
+            // = results 为空 ? EMPTY : **get(0).getStack()** —— 它**不看几率**。
+            // 于是「黏土球 25% + 芦荟籽 5%」这种没有必出物的配方，第一条（25%）被当成必出主产物，
+            // 期望从 0.25/份 放大到 1.25/份（1 + 0.25）——即 sensei 报的「1变0.25 成 1变1.25」。
+            // 处置：主产物候选**先留着**，等副产列表出来再确认（见下面 alsoChanced 判定）。
+            ItemStack standardCandidate = chain == null ? recipe.getResultItem(access) : ItemStack.EMPTY;
             for (var bp : RecipeByproducts.extract(recipe, access)) {
                 if (bp.stack().isEmpty()) continue;
                 chanced.add(new QianJiPatternData.Chanced(appeng.api.stacks.GenericStack.fromItemStack(bp.stack()),
                         bp.chance() > 0f ? bp.chance() : -1f));
+            }
+            // 必出判定：候选若**也出现在副产列表里（同物品）** → 它其实是概率产出，不当主产物，
+            // 交给公共收尾的「无主产物配平」按整数比换算（典型结果：输入 ×4 → 主产物 1 + 其余副产几率 ×4）。
+            if (!standardCandidate.isEmpty()) {
+                boolean alsoChanced = false;
+                for (var c : chanced) {
+                    if (c.stack().what() instanceof appeng.api.stacks.AEItemKey k
+                            && k.getItem() == standardCandidate.getItem()) {
+                        alsoChanced = true;
+                        break;
+                    }
+                }
+                if (!alsoChanced) {
+                    primary.add(new QianJiPatternData.Out(
+                            appeng.api.stacks.GenericStack.fromItemStack(standardCandidate)));
+                }
             }
             // Create 加工机：**流体**输入/产出不在标准 API 里（getFluidIngredients / getFluidResults）
             if (CreateCompat.isCreateRecipe(recipe)) {
@@ -430,6 +516,21 @@ public final class QianJiRecipeModel {
                 }
                 for (var fluidOut : CreateCompat.fluidOutputs(recipe)) {
                     primary.add(new QianJiPatternData.Out(fluidOut));
+                }
+            }
+            // Botania（植物魔法）：mana 消耗不在配方标准 API 里（配方类字段 mana）→ 补一个「魔力」输入槽
+            // 花药台（petal_apothecary）还要「任意种子」试剂 + 整整一桶水（1000 mB，sensei 2026-09-16 指出）
+            if (BotaniaCompat.isBotaniaRecipe(recipe)) {
+                int mana = BotaniaCompat.manaCost(recipe);
+                if (mana > 0) {
+                    // 魔力从 ME 网络抽（只在装了 Applied Botanics 时才有槽）
+                    var manaSlot = AeResourceKeys.mana(mana);
+                    if (manaSlot != null) inputs.add(new QianJiPatternData.Slot(List.of(manaSlot)));
+                }
+                if (BotaniaCompat.isPetalApothecary(recipe)) {
+                    var reagent = BotaniaCompat.reagentOptions(recipe);
+                    if (!reagent.isEmpty()) inputs.add(new QianJiPatternData.Slot(reagent));
+                    inputs.add(new QianJiPatternData.Slot(BotaniaCompat.waterSlot()));
                 }
             }
         }
@@ -529,6 +630,19 @@ public final class QianJiRecipeModel {
         var items = new HashSet<Object>();
         ItemStack standard = recipe.getResultItem(level.registryAccess());
         if (!standard.isEmpty()) items.add(standard.getItem());
+        // Ars Nouveau 的灌注室/附魔装置 getResultItem 恒为 EMPTY（字节码实证）→ 从字段补真产物，
+        // 否则 candidates() 会把它们当「无产出配方」直接跳过（= sensei 看到的「无法识别」）
+        if (standard.isEmpty()) {
+            ItemStack arsOutput = ArsNouveauCompat.output(recipe);
+            if (!arsOutput.isEmpty()) items.add(arsOutput.getItem());
+        }
+        // 凝矿兰：产出是方块状态（StateIngredient），标准 API 看不到 → 单独补，
+        // 否则 candidates() 会把它们当「无产出配方」跳过（= sensei 看到的「无法识别」）
+        if (BotaniaCompat.isOrechid(recipe)) {
+            for (var ore : BotaniaCompat.orechidOutputs(recipe)) {
+                if (ore.what() != null) items.add(ore.what());
+            }
+        }
         for (var c : GregTechCompat.outputs(recipe)) {
             if (c.stack() != null) items.add(c.stack().what());
         }

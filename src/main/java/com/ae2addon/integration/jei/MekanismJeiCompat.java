@@ -39,6 +39,17 @@ final class MekanismJeiCompat {
     }
 
     /**
+     * 这个 key 能不能被 MEK 的 JEI 化学物渲染器画出来。
+     * <p>
+     * 2026-09-16 加：魔力（Applied Botanics）/ 魔源（Ars Énergistique）也是「非物品非流体」的 AEKey，
+     * 但 MEK 的渲染器画不了它们，而 AE2 的 {@code AEKeyType} 又没有 icon API —— JEI 槽会是**空的**。
+     * 调用方拿这个判断退回文字提示。
+     */
+    static boolean canRender(AEKey key) {
+        return key != null && available() && MEK_KEY != null && MEK_KEY.isInstance(key);
+    }
+
+    /**
      * 把 AE 侧的化学物键塞进 JEI 槽位。
      *
      * @return false = 没渲染（调用方退回文字提示）
