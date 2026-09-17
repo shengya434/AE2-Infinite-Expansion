@@ -1,12 +1,16 @@
 package com.ae2addon.recipe;
 
+import com.ae2addon.compat.AeAddonRecipeCompat;
 import com.ae2addon.compat.AeResourceKeys;
 import com.ae2addon.compat.ArsNouveauCompat;
+import com.ae2addon.compat.BloodMagicCompat;
 import com.ae2addon.compat.BotaniaCompat;
 import com.ae2addon.compat.CreateCompat;
 import com.ae2addon.compat.CreateSequencedCompat;
 import com.ae2addon.compat.GregTechCompat;
 import com.ae2addon.compat.MekanismCompat;
+import com.ae2addon.compat.NaturesAuraCompat;
+import com.ae2addon.compat.SmithingCompat;
 import com.ae2addon.util.RecipeByproducts;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
@@ -144,9 +148,49 @@ public final class QianJiRecipeModel {
                 if (!arsOutput.isEmpty()) keys.add(appeng.api.stacks.AEItemKey.of(arsOutput));
             }
             // 凝矿兰：产出是方块状态 → 单独补（否则 ME 编码器索引里找不到这些矿石）
-            if (BotaniaCompat.isOrechid(recipe)) {
-                for (var ore : BotaniaCompat.orechidOutputs(recipe)) {
+            if (BotaniaCompat.isWeightedStateRecipe(recipe)) {
+                for (var ore : BotaniaCompat.stateOutputs(recipe)) {
                     if (ore.what() != null) keys.add(ore.what());
+                }
+            }
+            // 凝露雏菊：产物是 BlockState → 单独补（否则 ME 编码器索引里找不到）
+            if (BotaniaCompat.isPureDaisy(recipe)) {
+                for (var out : BotaniaCompat.pureDaisyOutputs(recipe)) {
+                    if (out.what() != null) keys.add(out.what());
+                }
+            }
+            // Ars 粉碎：产出在 outputs 字段 → 单独补
+            if (ArsNouveauCompat.isCrush(recipe)) {
+                for (var out : ArsNouveauCompat.crushOutputs(recipe)) {
+                    if (out.stack() != null && out.stack().what() != null) keys.add(out.stack().what());
+                }
+            }
+            // Ars 附魔：产物是现造的附魔书 → 单独补
+            if (ArsNouveauCompat.isEnchantmentRecipe(recipe)) {
+                ItemStack arsBook = ArsNouveauCompat.enchantmentBook(recipe);
+                if (!arsBook.isEmpty()) keys.add(appeng.api.stacks.AEItemKey.of(arsBook));
+            }
+            // AdvancedAE 反应室：非物品产物 → 单独补
+            if (AeAddonRecipeCompat.isAdvancedReaction(recipe)) {
+                var advOut = AeAddonRecipeCompat.advancedOutput(recipe);
+                if (advOut != null && !(advOut.what() instanceof appeng.api.stacks.AEItemKey)) {
+                    keys.add(advOut.what());
+                }
+            }
+            // 分子操纵器：多产物 / 流体产物 → 单独补
+            if (AeAddonRecipeCompat.isMatterFabrication(recipe)) {
+                for (var extra : AeAddonRecipeCompat.matterFabricationExtraOutputs(recipe)) {
+                    if (extra.what() != null) keys.add(extra.what());
+                }
+            }
+            // Blood Magic ARC：主产物在 output 字段里 → 单独补
+            if (BloodMagicCompat.isArc(recipe)) {
+                ItemStack arcOut = BloodMagicCompat.arcOutput(recipe);
+                if (!arcOut.isEmpty()) keys.add(appeng.api.stacks.AEItemKey.of(arcOut));
+                var arcFluidOut = BloodMagicCompat.arcOutputFluid(recipe);
+                if (arcFluidOut != null && arcFluidOut.what() != null) keys.add(arcFluidOut.what());
+                for (var extra : BloodMagicCompat.arcAddedOutputs(recipe)) {
+                    if (extra.stack() != null && extra.stack().what() != null) keys.add(extra.stack().what());
                 }
             }
         } catch (Throwable ignored) {
@@ -382,6 +426,17 @@ public final class QianJiRecipeModel {
             ItemStack arsResult = ArsNouveauCompat.output(recipe);
             if (!arsResult.isEmpty()) {
                 primary.add(new QianJiPatternData.Out(appeng.api.stacks.GenericStack.fromItemStack(arsResult)));
+            } else if (ArsNouveauCompat.isEnchantmentRecipe(recipe)) {
+                // 附魔装置家族里的「附魔」类（96 条）：产物不是现成字段，而是「附魔书 + 指定魔咒/等级」
+                // → 用 enchantment/enchantLevel 两个字段现造一本附魔书
+                // 另外：配方数据里 reagent 是空的，但游戏里必须塞一本书（assemble 会拿它跟 BOOK 比对）
+                // → 补一个「书」输入槽，否则样板等于白送一本附魔书（2026-09-17 审计补）
+                inputs.add(new QianJiPatternData.Slot(ArsNouveauCompat.enchantmentBookInput()));
+                ItemStack book = ArsNouveauCompat.enchantmentBook(recipe);
+                if (!book.isEmpty()) {
+                    primary.add(new QianJiPatternData.Out(
+                            appeng.api.stacks.GenericStack.fromItemStack(book)));
+                }
             }
             long source = ArsNouveauCompat.sourceCost(recipe);
             if (source > 0) {
@@ -420,20 +475,21 @@ public final class QianJiRecipeModel {
                             stat.chance() > 0f ? stat.chance() : -1f));
                 }
             }
-        } else if (BotaniaCompat.isOrechid(recipe)) {
-            // 凝矿兰（orechid / orechid_ignem）：输入与输出都是 Botania 自有的 **StateIngredient（方块状态）**，
+        } else if (BotaniaCompat.isWeightedStateRecipe(recipe)) {
+            // 权重型方块状态配方：凝矿兰（orechid / orechid_ignem）+ 变形菌（marimorphosis，2026-09-17 补）——
+            // 输入与输出都是 Botania 自有的 **StateIngredient（方块状态）**，
             // 标准 API 完全看不到 → 这就是 sensei 报的「无法识别」。
             // 单条配方概率 = 自身权重 / 同类型全部配方权重和（实测：orechid 总权重 118288、orechid_ignem 23383）。
             // 权重不是「必出」→ 按整数比换算成「原料 ×k → 矿石 ×1」（k = 总权重/权重），
             // 跟 Create 概率配方、以及公共收尾的配平是同一套语义（千机是瞬间合成，用整数比表达概率）。
-            int weight = BotaniaCompat.orechidWeight(recipe);
-            int totalWeight = BotaniaCompat.orechidTotalWeight(recipe);
+            int weight = BotaniaCompat.stateWeight(recipe);
+            int totalWeight = BotaniaCompat.stateTotalWeight(recipe);
             long loops = 1;
             if (weight > 0 && totalWeight >= weight) {
                 loops = Math.max(1, Math.min(MAX_ORECHID_LOOPS,
                         Math.round((double) totalWeight / weight)));
             }
-            for (var slot : BotaniaCompat.orechidInputs(recipe)) {
+            for (var slot : BotaniaCompat.stateInputs(recipe)) {
                 var scaled = new ArrayList<appeng.api.stacks.GenericStack>();
                 for (var option : slot) {
                     scaled.add(new appeng.api.stacks.GenericStack(option.what(),
@@ -443,12 +499,12 @@ public final class QianJiRecipeModel {
             }
             // 凝矿兰的 mana 是机器硬编码常量（OrechidBlockEntity.COST = 17500），按次数一并放大；
             // 只在装了 Applied Botanics 时才有槽
-            int manaPerOp = BotaniaCompat.orechidManaCost(recipe);
+            int manaPerOp = BotaniaCompat.stateManaCost(recipe);
             if (manaPerOp > 0) {
                 var manaSlot = AeResourceKeys.mana((long) manaPerOp * loops);
                 if (manaSlot != null) inputs.add(new QianJiPatternData.Slot(List.of(manaSlot)));
             }
-            for (var ore : BotaniaCompat.orechidOutputs(recipe)) {
+            for (var ore : BotaniaCompat.stateOutputs(recipe)) {
                 if (ore.what() == null) continue;
                 primary.add(new QianJiPatternData.Out(new appeng.api.stacks.GenericStack(
                         ore.what(), Math.max(1, ore.amount()))));
@@ -531,6 +587,119 @@ public final class QianJiRecipeModel {
                     var reagent = BotaniaCompat.reagentOptions(recipe);
                     if (!reagent.isEmpty()) inputs.add(new QianJiPatternData.Slot(reagent));
                     inputs.add(new QianJiPatternData.Slot(BotaniaCompat.waterSlot()));
+                }
+            }
+            // 原版锻造台（SmithingTransformRecipe，2026-09-17 sensei 清单里 41 条「无输入」）：
+            // 这个类**没有覆写 getIngredients()**（字节码实证），原料在 template/base/addition 三个字段里
+            // → 标准路径一个槽都抽不到，必须自己读字段补上（产物照旧走 getResultItem）
+            if (SmithingCompat.isSmithingTransform(recipe)) {
+                for (var slot : SmithingCompat.inputSlots(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(slot));
+                }
+            }
+            // 凝露雏菊（pure_daisy / state_copying_pure_daisy，2026-09-17 补）：输入是方块状态，
+            // 产物是 BlockState（getOutputState 那个方块）→ **1:1 恒定转换**（没有权重），直接当必出主产物
+            if (BotaniaCompat.isPureDaisy(recipe)) {
+                for (var slot : BotaniaCompat.pureDaisyInputs(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(slot));
+                }
+                for (var out : BotaniaCompat.pureDaisyOutputs(recipe)) {
+                    if (out.what() != null) primary.add(new QianJiPatternData.Out(out));
+                }
+            }
+            // Ars 符文（glyph，2026-09-17 补）：产物本来就读得到（getResultItem 读 output 字段），
+            // 缺的是原料 —— 在 inputs（List<Ingredient>，JSON 的 inputItems）字段里
+            if (ArsNouveauCompat.isGlyph(recipe)) {
+                for (var slot : ArsNouveauCompat.glyphInputSlots(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(slot));
+                }
+            }
+            // Ars 粉碎（crush，2026-09-17 补）：getResultItem 是常量 EMPTY，数据在 input + outputs 两个字段里
+            // （outputs 元素是 CrushOutput：stack / chance / maxRange）→ 几率 <100% 的进概率产出
+            if (ArsNouveauCompat.isCrush(recipe)) {
+                var crushInput = ArsNouveauCompat.crushInputOptions(recipe);
+                if (!crushInput.isEmpty()) inputs.add(new QianJiPatternData.Slot(crushInput));
+                for (var out : ArsNouveauCompat.crushOutputs(recipe)) {
+                    if (out.stack() == null || out.stack().what() == null) continue;
+                    if (out.chance() >= 1f) {
+                        primary.add(new QianJiPatternData.Out(out.stack()));
+                    } else {
+                        chanced.add(new QianJiPatternData.Chanced(out.stack(),
+                                out.chance() > 0f ? out.chance() : -1f));
+                    }
+                }
+            }
+            // AdvancedAE 反应室（2026-09-17 补）：inputs / output 字段本身就是 AE2 的 GenericStack
+            // （物品 + 流体 + 气体都用 AEKey）→ 直接搬；物品产物标准 API 也能拿到，
+            // 所以只有**非物品产物**在这里补，免得重复
+            if (AeAddonRecipeCompat.isAdvancedReaction(recipe)) {
+                for (var stack : AeAddonRecipeCompat.advancedInputs(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(List.of(stack)));
+                }
+                var advOut = AeAddonRecipeCompat.advancedOutput(recipe);
+                if (advOut != null && !(advOut.what() instanceof appeng.api.stacks.AEItemKey)) {
+                    primary.add(new QianJiPatternData.Out(advOut));
+                }
+            }
+            // ExtendedAE 电路切割机（2026-09-17 补）：输入是自家的 IngredientStack$Item（ingredient + amount）
+            if (AeAddonRecipeCompat.isCircuitCutter(recipe)) {
+                var cutterInput = AeAddonRecipeCompat.circuitCutterInput(recipe);
+                if (!cutterInput.isEmpty()) inputs.add(new QianJiPatternData.Slot(cutterInput));
+            }
+            // 分子操纵器「物质制造」（2026-09-17 补）：输入在 ingredients(CountedIngredient) / aeInputs / fluidInput
+            // 产物第一条走标准 API，第 2 条往后与流体产物在下面单独补
+            if (AeAddonRecipeCompat.isMatterFabrication(recipe)) {
+                for (var slot : AeAddonRecipeCompat.matterFabricationInputs(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(slot));
+                }
+                for (var extra : AeAddonRecipeCompat.matterFabricationExtraOutputs(recipe)) {
+                    if (extra.what() != null) primary.add(new QianJiPatternData.Out(extra));
+                }
+            }
+            // NaturesAura（2026-09-17 补）：祭坛 / 树仪式 / 献祭三类——产物标准 API 有，输入全在字段里
+            // （祭坛的 catalyst 是**放着反复用**的催化剂 → 标不消耗）
+            if (NaturesAuraCompat.isAltar(recipe)) {
+                for (var spec : NaturesAuraCompat.altarInputs(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(spec.options(), spec.catalyst()));
+                }
+            }
+            if (NaturesAuraCompat.isTreeRitual(recipe)) {
+                for (var spec : NaturesAuraCompat.treeRitualInputs(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(spec.options(), spec.catalyst()));
+                }
+            }
+            if (NaturesAuraCompat.isOffering(recipe)) {
+                for (var spec : NaturesAuraCompat.offeringInputs(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(spec.options(), spec.catalyst()));
+                }
+            }
+            // Blood Magic（2026-09-17 补）：
+            // 炼金台 / 灵魂锻炉：输入在 input（List<Ingredient>）字段里（soulforge 的 input0..input3 也被收进这个表）
+            if (BloodMagicCompat.isAlchemyTable(recipe) || BloodMagicCompat.isSoulForge(recipe)) {
+                for (var slot : BloodMagicCompat.listInputs(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(slot));
+                }
+            }
+            // ARC（炼金反应室）：输入/工具标准 API 已有，缺的是主产物（output 字段）、流体输入与几率附加产物
+            if (BloodMagicCompat.isArc(recipe)) {
+                var arcFluid = BloodMagicCompat.arcFluidInput(recipe);
+                if (!arcFluid.isEmpty()) inputs.add(new QianJiPatternData.Slot(arcFluid));
+                ItemStack arcOut = BloodMagicCompat.arcOutput(recipe);
+                if (!arcOut.isEmpty()) {
+                    primary.add(new QianJiPatternData.Out(
+                            appeng.api.stacks.GenericStack.fromItemStack(arcOut)));
+                }
+                // 流体产出（outputFluid，2026-09-17 自查补上）
+                var arcFluidOut = BloodMagicCompat.arcOutputFluid(recipe);
+                if (arcFluidOut != null) primary.add(new QianJiPatternData.Out(arcFluidOut));
+                for (var extra : BloodMagicCompat.arcAddedOutputs(recipe)) {
+                    if (extra.stack() == null || extra.stack().what() == null) continue;
+                    if (extra.chance() >= 1f) {
+                        primary.add(new QianJiPatternData.Out(extra.stack()));
+                    } else {
+                        chanced.add(new QianJiPatternData.Chanced(extra.stack(),
+                                extra.chance() > 0f ? extra.chance() : -1f));
+                    }
                 }
             }
         }
@@ -638,9 +807,49 @@ public final class QianJiRecipeModel {
         }
         // 凝矿兰：产出是方块状态（StateIngredient），标准 API 看不到 → 单独补，
         // 否则 candidates() 会把它们当「无产出配方」跳过（= sensei 看到的「无法识别」）
-        if (BotaniaCompat.isOrechid(recipe)) {
-            for (var ore : BotaniaCompat.orechidOutputs(recipe)) {
+        if (BotaniaCompat.isWeightedStateRecipe(recipe)) {
+            for (var ore : BotaniaCompat.stateOutputs(recipe)) {
                 if (ore.what() != null) items.add(ore.what());
+            }
+        }
+        // 凝露雏菊：产物是 BlockState（getOutputState），标准 API 看不到 → 单独补
+        if (BotaniaCompat.isPureDaisy(recipe)) {
+            for (var out : BotaniaCompat.pureDaisyOutputs(recipe)) {
+                if (out.what() != null) items.add(out.what());
+            }
+        }
+        // Ars 粉碎：产出在 outputs 字段（getResultItem 是常量 EMPTY）
+        if (ArsNouveauCompat.isCrush(recipe)) {
+            for (var out : ArsNouveauCompat.crushOutputs(recipe)) {
+                if (out.stack() != null && out.stack().what() != null) items.add(out.stack().what());
+            }
+        }
+        // Ars 附魔：产物是现造的附魔书（标准 API 拿不到）
+        if (ArsNouveauCompat.isEnchantmentRecipe(recipe)) {
+            ItemStack arsBook = ArsNouveauCompat.enchantmentBook(recipe);
+            if (!arsBook.isEmpty()) items.add(appeng.api.stacks.AEItemKey.of(arsBook));
+        }
+        // AdvancedAE 反应室：非物品产物（流体/气体）标准 API 看不到 → 单独补
+        if (AeAddonRecipeCompat.isAdvancedReaction(recipe)) {
+            var advOut = AeAddonRecipeCompat.advancedOutput(recipe);
+            if (advOut != null && !(advOut.what() instanceof appeng.api.stacks.AEItemKey)) {
+                items.add(advOut.what());
+            }
+        }
+        // 分子操纵器：多产物 / 流体产物（标准 API 只给第一条）
+        if (AeAddonRecipeCompat.isMatterFabrication(recipe)) {
+            for (var extra : AeAddonRecipeCompat.matterFabricationExtraOutputs(recipe)) {
+                if (extra.what() != null) items.add(extra.what());
+            }
+        }
+        // Blood Magic ARC：主产物在 output 字段里，标准 API 拿不到 → 单独补，否则这条配方根本进不了索引
+        if (BloodMagicCompat.isArc(recipe)) {
+            ItemStack arcOut = BloodMagicCompat.arcOutput(recipe);
+            if (!arcOut.isEmpty()) items.add(appeng.api.stacks.AEItemKey.of(arcOut));
+            var arcFluidOut = BloodMagicCompat.arcOutputFluid(recipe);
+            if (arcFluidOut != null && arcFluidOut.what() != null) items.add(arcFluidOut.what());
+            for (var extra : BloodMagicCompat.arcAddedOutputs(recipe)) {
+                if (extra.stack() != null && extra.stack().what() != null) items.add(extra.stack().what());
             }
         }
         for (var c : GregTechCompat.outputs(recipe)) {

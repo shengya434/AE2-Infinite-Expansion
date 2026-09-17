@@ -181,7 +181,10 @@ public class QianJiPatternCommand {
             if (hasIngredient) break;
         }
         ItemStack out = recipe.getResultItem(level.registryAccess());
-        if (out.isEmpty()) return hasIngredient ? "标准 getResultItem 为空" : "原料与产物都读不出";
+        if (out.isEmpty()) {
+            return hasIngredient ? "标准 getResultItem 为空"
+                    : "原料与产物都读不出（疑似引用了已卸载 mod 的物品，属废配方）";
+        }
         if (!hasIngredient) return "标准 getIngredients 全空";
         return "产物被当成概率产出（RecipeByproducts 撞上主产物）";
     }
