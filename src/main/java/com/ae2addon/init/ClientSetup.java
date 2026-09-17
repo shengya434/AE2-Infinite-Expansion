@@ -22,15 +22,13 @@ public class ClientSetup {
 
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
+        // ⚠ 2026-09-17：这里**原来重复注册了一次 part 模型**，每次启动必然失败并刷一条警告 ——
+        // 真正的注册在 AE2Addon 的构造期（日志里的「part 模型已注册: 1」），早于 AE2 的
+        // PartModels.freeze()（ModelEvent.RegisterAdditional）；而 enqueueWork 的活儿要等所有 mod
+        // 的 client setup 都跑完才执行，那时模型表早冻结了 → 必然抛「Cannot register models after
+        // the pre-initialization phase!」。实测（sensei 2026-09-17）：面板形态游戏内一切正常，
+        // 说明这条重复注册纯属噪声，删掉即可。
         event.enqueueWork(() -> {
-            // 线缆面板 part 模型注册到 AE2（2026-09-02；需在 AE2 冻结前）
-            try {
-                var models = appeng.items.parts.PartModelsHelper
-                        .createModels(com.ae2addon.part.InfiniteInterfacePart.class);
-                appeng.api.parts.PartModels.registerModels(models);
-            } catch (RuntimeException e) {
-                AE2Addon.LOGGER.warn("[ae2addon] part 模型注册失败: ", e);
-            }
             MenuScreens.register(ModMenuTypes.MODE_SELECT.get(), ModeSelectScreen::new);
             MenuScreens.register(ModMenuTypes.MODE2_CONFIG.get(), Mode2ConfigScreen::new);
             MenuScreens.register(ModMenuTypes.INTEGRATED_CPU.get(), IntegratedCPUScreen::new);
