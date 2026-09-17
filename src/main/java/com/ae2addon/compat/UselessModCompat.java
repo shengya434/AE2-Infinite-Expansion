@@ -90,18 +90,20 @@ public final class UselessModCompat {
     }
 
     /**
-     * 催化剂 + 模具（2026-09-17 sensei 定调：锭当催化剂用时不消耗）。
+     * 催化剂 + 模具（2026-09-17 sensei 定调：按锭的种类分三种处理）。
      * <p>
-     * 依据（读 jar 里的配方 JSON 实证）：合金炉的 {@code catalyst} 就是**无用锭 / 有用锭**
-     * ——{@code #useless_mod:useless_ingots} 这个标签里正好是 tier1~9 无用锭 **加上有用锭**；
-     * 而升阶链里 {@code useless_ingot_tier_N} 的催化剂正是 {@code tier_{N-1}}
-     * → 若按「消耗」计，升阶链会自己吃掉自己的前置锭，跟游戏行为矛盾。
-     * <p>
-     * 规则：
+     * 背景：万象合金炉里催化剂的作用是**给机器加并行度**；而千机天生无限并行，
+     * 玩家为它花掉的锭换不来任何提升 —— 体验上纯亏。所以：
      * <ul>
-     *   <li>催化剂一律标 **不消耗**（千机既不为它向网络索取、也不会扣掉它）</li>
-     *   <li>但催化剂若**同时是该配方的输入或输出物**（例如某配方真的消耗/产出这种锭），
-     *       它已经按物料记过一遍 → 这里就不再重复记一个催化剂槽</li>
+     *   <li><b>有用锭</b>（{@code useful_ingot}）→ 当**催化剂**（不消耗），保留为门槛</li>
+     *   <li><b>无用锭</b>（{@code useless_ingot_tier_N}）：
+     *     <ul>
+     *       <li>这条配方**本身就在合成锭**（升阶链：tier_N 的催化剂正是 tier_{N-1}）→ 属正常合成行为
+     *           → **按消耗记**</li>
+     *       <li>产物不是锭（晶体/齿轮/板…，催化剂写的是共享标签 {@code #useless_mod:useless_ingots}）
+     *           → 那只是买并行度的 → **不记这个输入**</li>
+     *     </ul></li>
+     *   <li>非锭类催化剂（万一有）→ 维持原样，当不消耗催化剂</li>
      *   <li>模具（{@code metal_mold_*}）同样是放着反复用的 → 不消耗</li>
      * </ul>
      */
@@ -110,10 +112,64 @@ public final class UselessModCompat {
         if (recipe == null) return slots;
         Object catalyst = readField(recipe, "catalyst");
         if (catalyst instanceof Ingredient ingredient && !isAlsoMaterial(recipe, ingredient)) {
-            addIngredient(slots, catalyst, Math.max(1, readInt(recipe, "catalystCount")), true);
+            long count = Math.max(1, readInt(recipe, "catalystCount"));
+            int role = catalystRole(recipe, ingredient);
+            if (role == ROLE_CATALYST) {
+                addIngredient(slots, catalyst, count, true);    // 不消耗的门槛
+            } else if (role == ROLE_CONSUME) {
+                addIngredient(slots, catalyst, count, false);   // 正常消耗（升阶链）
+            }
+            // ROLE_DROP：只为并行度服务 → 干脆不记（千机不需要那份并行）
         }
         addIngredient(slots, readField(recipe, "mold"), 1, true);
         return slots;
+    }
+
+    private static final int ROLE_CATALYST = 0;   // 记为「不消耗」的催化剂
+    private static final int ROLE_CONSUME = 1;    // 记为正常消耗品
+    private static final int ROLE_DROP = 2;       // 直接不记（只为并行度服务）
+
+    /**
+     * 催化剂按哪种角色记录：见 {@link #specialInputs} 的说明。
+     * 判据来自配方数据本身：催化剂候选里是哪种锭 + 这条配方产不产锭。
+     */
+    private static int catalystRole(Recipe<?> recipe, Ingredient catalyst) {
+        boolean anyUseful = false;
+        boolean anyUseless = false;
+        for (ItemStack stack : catalyst.getItems()) {
+            if (stack.isEmpty()) continue;
+            String path = itemPath(stack);
+            if ("useful_ingot".equals(path)) {
+                anyUseful = true;
+            } else if (path.startsWith("useless_ingot_tier_")) {
+                anyUseless = true;
+            } else {
+                return ROLE_CATALYST;   // 不是锭类催化剂 → 维持「不消耗」
+            }
+        }
+        if (!anyUseless) return ROLE_CATALYST;                          // 只有有用锭 → 催化剂
+        if (!anyUseful && producesIngot(recipe)) return ROLE_CONSUME;   // 升阶链：正常消耗
+        return ROLE_DROP;                                               // 其余：不记
+    }
+
+    /** 这条配方的产物里有没有「锭」（无用锭各阶 / 有用锭 / 可能有用锭） */
+    private static boolean producesIngot(Recipe<?> recipe) {
+        Object outputs = readField(recipe, "outputItems");
+        if (!(outputs instanceof Iterable<?> it)) return false;
+        for (Object element : it) {
+            if (!(element instanceof ItemStack stack) || stack.isEmpty()) continue;
+            String path = itemPath(stack);
+            if (path.startsWith("useless_ingot_tier_") || "useful_ingot".equals(path)
+                    || "possible_useful_ingot".equals(path)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String itemPath(ItemStack stack) {
+        var id = net.minecraftforge.registries.ForgeRegistries.ITEMS.getKey(stack.getItem());
+        return id == null ? "" : id.getPath();
     }
 
     /**
