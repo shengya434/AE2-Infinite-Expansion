@@ -52,6 +52,10 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
     private static final int MAX_ITEM_SLOTS = 18;
     private static final int MAX_FLUID_SLOTS = 4;
 
+    /** 「机器」栏位置：紧挨输入区右侧（流体输入行右边，那行只占 2 格） */
+    private static final int MACHINE_X = 152;
+    private static final int MACHINE_Y = 62;
+
     private static final int Y_ITEM_IN = 22;
     private static final int Y_FLUID_IN = 62;
     private static final int Y_ITEM_OUT = 118;
@@ -191,6 +195,11 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             addCatalystTooltip(slotBuilder, slot);   // 非物品的非消耗输入（如祭坛催化剂）同样注明
         }
 
+        // ── 「机器」栏（2026-09-17 sensei）：合成/熔炼/锻造台显示对应原版方块，其余类型显示千机本体 ──
+        // 注册成 CATALYST 后，JEI 里点/右键这台机器就能筛出它的配方（见 AE2AddonJEIPlugin.registerRecipeCatalysts）
+        builder.addSlot(mezz.jei.api.recipe.RecipeIngredientRole.CATALYST, MACHINE_X, MACHINE_Y)
+                .addItemStack(machineStack(data));
+
         var outSplit = splitOutputs(data);
         var itemOut = outSplit[0];
         var fluidOut = outSplit[1];
@@ -214,6 +223,29 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
      * <p>
      * 这类槽在 JEI 里是有 ingredient 的（物品/流体），所以 tooltip 一定会显示 ✓。
      */
+    /**
+     * 这条配方的「机器」图标（2026-09-17 sensei 要的机器栏）：
+     * 合成 / 熔炼类 / 锻造台 → 对应原版方块；其余类型暂时显示千机本体（正是千机在代劳）。
+     * <p>
+     * ⚠ 类型字符串是**裸名**（原版 RecipeType.toString() 不带命名空间）：crafting / smelting / …
+     */
+    private static ItemStack machineStack(QianJiPatternData data) {
+        String machine = data == null || data.machine() == null ? "" : data.machine();
+        String m = machine.startsWith("minecraft:") ? machine.substring("minecraft:".length()) : machine;
+        net.minecraft.world.item.Item item = switch (m) {
+            case "smelting" -> net.minecraft.world.item.Items.FURNACE;
+            case "blasting" -> net.minecraft.world.item.Items.BLAST_FURNACE;
+            case "smoking" -> net.minecraft.world.item.Items.SMOKER;
+            case "campfire_cooking" -> net.minecraft.world.item.Items.CAMPFIRE;
+            case "smithing", "smithing_transform", "smithing_trim" ->
+                    net.minecraft.world.item.Items.SMITHING_TABLE;
+            default -> null;
+        };
+        if (item == null && m.startsWith("crafting")) item = net.minecraft.world.item.Items.CRAFTING_TABLE;
+        if (item == null) item = com.ae2addon.init.ModItems.QIAN_JI_ITEM.get();   // Item，不是 Block
+        return new ItemStack(item);
+    }
+
     private static void addCatalystTooltip(mezz.jei.api.gui.builder.IRecipeSlotBuilder slotBuilder,
                                            QianJiPatternData.Slot slot) {
         if (slot == null || !slot.catalyst()) return;
@@ -257,6 +289,9 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         for (var point : grid(layout.fluidInCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_IN)) {
             slotDrawable.draw(graphics, point[0] - 1, point[1] - 1);
         }
+        // 「机器」栏底板 + 标签（2026-09-17 sensei）
+        slotDrawable.draw(graphics, MACHINE_X - 1, MACHINE_Y - 1);
+        drawSmall(graphics, font, "§7机器", MACHINE_X - 30, MACHINE_Y + 5);
         for (var point : grid(layout.itemOutCells(), ITEMS_PER_ROW, EDGE, Y_ITEM_OUT)) {
             slotDrawable.draw(graphics, point[0] - 1, point[1] - 1);
         }

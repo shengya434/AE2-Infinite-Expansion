@@ -135,6 +135,18 @@ public class AE2AddonJEIPlugin implements IModPlugin {
         // 千机就是这些配方的『工作台』
         registration.addRecipeCatalyst(new ItemStack(com.ae2addon.init.ModBlocks.QIAN_JI.get()),
                 QianJiRecipeCategory.TYPE);
+        // 2026-09-17 sensei：合成 / 熔炼 / 锻造台这三类配方也在千机页里浏览，
+        // 所以把对应的原版机器也注册成催化剂 —— 在 JEI 里点/右键它们就能直接筛出对应的千机配方。
+        // （页面上那个「机器」栏显示的就是同一张图；暂时只覆盖这三类，效果好再扩到各 mod 机器）
+        for (var machineItem : new net.minecraft.world.item.Item[]{
+                net.minecraft.world.item.Items.CRAFTING_TABLE,
+                net.minecraft.world.item.Items.FURNACE,
+                net.minecraft.world.item.Items.BLAST_FURNACE,
+                net.minecraft.world.item.Items.SMOKER,
+                net.minecraft.world.item.Items.CAMPFIRE,
+                net.minecraft.world.item.Items.SMITHING_TABLE}) {
+            registration.addRecipeCatalyst(new ItemStack(machineItem), QianJiRecipeCategory.TYPE);
+        }
     }
 
     @Override
