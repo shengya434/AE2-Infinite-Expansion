@@ -81,11 +81,15 @@ public final class QianJiPatternData {
      */
     public static boolean isBasicType(@org.jetbrains.annotations.Nullable String machine) {
         if (machine == null || machine.isEmpty()) return false;
-        if (machine.startsWith("minecraft:crafting")) return true;   // shaped / shapeless / special_*
-        return switch (machine) {
-            case "minecraft:smelting", "minecraft:blasting", "minecraft:smoking",
-                 "minecraft:campfire_cooking", "minecraft:smithing_transform",
-                 "minecraft:smithing_trim" -> true;
+        // ⚠ 2026-09-17 sensei 实测「本样板类型：crafting」——原版配方类型的 toString() **不带命名空间**：
+        //   RecipeType.register("crafting") → new ResourceLocation("crafting") + new RecipeType$1("crafting")
+        //   → toString() == "crafting"（mod 自己 create(ns, path) 的才带命名空间，如 "botania:orechid"）
+        // 所以两种形态都要认，先剥掉可能存在的 minecraft: 前缀再比短名。
+        String m = machine.startsWith("minecraft:") ? machine.substring("minecraft:".length()) : machine;
+        if (m.startsWith("crafting")) return true;   // crafting / crafting_shaped / crafting_special_*
+        return switch (m) {
+            case "smelting", "blasting", "smoking", "campfire_cooking",
+                 "smithing", "smithing_transform", "smithing_trim" -> true;
             default -> false;
         };
     }
