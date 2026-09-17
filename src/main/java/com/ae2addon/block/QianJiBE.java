@@ -1315,23 +1315,15 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                 }
                 return true;
             }
-            if (!PatternDetailsHelper.isEncodedPattern(stack)) return false;
-            // 配方校验：只接受"输入输出组合有真实配方"的处理样板（防刷物品）
-            if (level != null) {
-                var details = PatternDetailsHelper.decodePattern(stack, level);
-                if (details instanceof IMolecularAssemblerSupportedPattern) {
-                    ChatLog.warn(level, worldPosition, "合成样板不支持，千机只接受处理样板");
-                    return false;
-                }
-                if (details != null) {
-                    var rejectReason = validatePattern(details);
-                    if (rejectReason != null) {
-                        ChatLog.warn(level, worldPosition, "该样板被拒收：" + rejectReason);
-                        return false;
-                    }
-                }
+            // 2026-09-17 sensei 定调：**只收千机样板**（AE2 原生样板一律不收）。
+            // 原因：原来这里还收 AE2 原生处理样板，于是「合成样板不支持」与「未接入集成型CPU 时
+            // 只许插合成/熔炼类」两条规则互相掐架（合成样板本来就被拒，却又说合成类可插）。
+            // 收敛后逻辑自洽：想要哪条配方，就去「千机·自用配方页」点「编码」或「+」生成千机样板。
+            if (PatternDetailsHelper.isEncodedPattern(stack)) {
+                ChatLog.warn(level, worldPosition,
+                        "千机只接受千机样板：请在「千机·自用配方页」点「编码」或「+」生成（AE2 原生样板不再接收）");
             }
-            return true;
+            return false;
         }
 
         @Override
