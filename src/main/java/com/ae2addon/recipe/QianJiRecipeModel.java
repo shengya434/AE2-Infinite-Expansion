@@ -8,10 +8,12 @@ import com.ae2addon.compat.BotaniaCompat;
 import com.ae2addon.compat.CreateCompat;
 import com.ae2addon.compat.CreateSequencedCompat;
 import com.ae2addon.compat.EnderioCompat;
+import com.ae2addon.compat.EvilcraftCompat;
 import com.ae2addon.compat.GregTechCompat;
 import com.ae2addon.compat.MekanismCompat;
 import com.ae2addon.compat.NaturesAuraCompat;
 import com.ae2addon.compat.SmithingCompat;
+import com.ae2addon.compat.UselessModCompat;
 import com.ae2addon.util.RecipeByproducts;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
@@ -203,6 +205,16 @@ public final class QianJiRecipeModel {
                 } else {
                     ItemStack enderOut = EnderioCompat.output(recipe);
                     if (!enderOut.isEmpty()) keys.add(appeng.api.stacks.AEItemKey.of(enderOut));
+                }
+            }
+            // EvilCraft / 无用之物合金炉：产物在字段里 → 单独补
+            if (EvilcraftCompat.isHandled(recipe)) {
+                ItemStack evilOut = EvilcraftCompat.output(recipe);
+                if (!evilOut.isEmpty()) keys.add(appeng.api.stacks.AEItemKey.of(evilOut));
+            }
+            if (UselessModCompat.isAdvancedAlloyFurnace(recipe)) {
+                for (var out : UselessModCompat.outputs(recipe)) {
+                    if (out.what() != null) keys.add(out.what());
                 }
             }
         } catch (Throwable ignored) {
@@ -559,6 +571,32 @@ public final class QianJiRecipeModel {
                             appeng.api.stacks.GenericStack.fromItemStack(enderOut)));
                 }
             }
+        } else if (EvilcraftCompat.isHandled(recipe)) {
+            // EvilCraft（2026-09-17 补）：getIngredients 没实现 → 输入在 inputIngredient / inputFluid 字段里，
+            // 产物在 outputItem（Either，左边是物品）
+            for (var slot : EvilcraftCompat.inputSlots(recipe)) {
+                inputs.add(new QianJiPatternData.Slot(slot));
+            }
+            ItemStack evilOut = EvilcraftCompat.output(recipe);
+            if (!evilOut.isEmpty()) {
+                primary.add(new QianJiPatternData.Out(
+                        appeng.api.stacks.GenericStack.fromItemStack(evilOut)));
+            }
+        } else if (UselessModCompat.isAdvancedAlloyFurnace(recipe)) {
+            // 无用之物·高级合金炉（2026-09-17 补，sensei 点名的两处）：
+            // ① 原料数量在**平行的** inputItemCounts(List<Long>) 里 —— 不读它就会全按 1 算
+            // ② 流体输入在 inputFluids 里 —— 原来完全不检测
+            for (var slot : UselessModCompat.itemInputs(recipe)) {
+                inputs.add(new QianJiPatternData.Slot(slot));
+            }
+            var uselessFluid = UselessModCompat.fluidInputs(recipe);
+            if (!uselessFluid.isEmpty()) inputs.add(new QianJiPatternData.Slot(uselessFluid));
+            for (var spec : UselessModCompat.specialInputs(recipe)) {
+                inputs.add(new QianJiPatternData.Slot(spec.options(), spec.catalyst()));
+            }
+            for (var out : UselessModCompat.outputs(recipe)) {
+                if (out.what() != null) primary.add(new QianJiPatternData.Out(out));
+            }
         } else {
             // 标准路径（物品）：输入 Ingredient → 选项；主产物 = getResultItem；概率产出 = RecipeByproducts
             // Create 序列装配**单独走**（getIngredients() 只报基础原料，装配链全靠反射拿）
@@ -914,6 +952,16 @@ public final class QianJiRecipeModel {
             } else {
                 ItemStack enderOut = EnderioCompat.output(recipe);
                 if (!enderOut.isEmpty()) items.add(appeng.api.stacks.AEItemKey.of(enderOut));
+            }
+        }
+        // EvilCraft / 无用之物合金炉：产物同样在字段里 → 单独补
+        if (EvilcraftCompat.isHandled(recipe)) {
+            ItemStack evilOut = EvilcraftCompat.output(recipe);
+            if (!evilOut.isEmpty()) items.add(appeng.api.stacks.AEItemKey.of(evilOut));
+        }
+        if (UselessModCompat.isAdvancedAlloyFurnace(recipe)) {
+            for (var out : UselessModCompat.outputs(recipe)) {
+                if (out.what() != null) items.add(out.what());
             }
         }
         for (var c : GregTechCompat.outputs(recipe)) {
