@@ -1,48 +1,34 @@
 package com.ae2addon.mixin;
 
 import appeng.api.stacks.GenericStack;
-import com.ae2addon.recipe.QianJiPatternCodec;
-import com.ae2addon.recipe.QianJiPatternData;
 import net.minecraft.world.item.ItemStack;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * ME 样板编码器接入（2026-09-15）：挂在**更靠外**的公开入口
- * {@code ProcessingPatternItem.encode(GenericStack[] 输入, GenericStack[] 输出)} ——
- * 样板编码终端的流程是
- * {@code PatternEncodingTermMenu.encode() → encodePattern() → encodeProcessingPattern()}，
- * 最终产出的样板物品由这里生成，所以在 TAIL 直接给成品挂我们的元数据最稳。
+ * ME 样板编码器接入（2026-09-15）—— **2026-09-17 sensei 要求收敛后，这里的自动转换已停用**。
  * <p>
- * 挂上的内容：输出重写为**只含主产物** + 写入千机元数据（几率表 + 来源配方 id），
- * 于是 AE2 不会为概率副产等待，而千机可精确执行。
+ * 原行为：只要编码出来的（输入, 输出）能匹配上千机配方，就把成品换成千机样板。
+ * 后果（sensei 实测）：在**任何**配方页编码，出来的都是千机样板。
+ * <p>
+ * 新规则（sensei 定）——**只有这两种情形**才产出千机样板：
+ * <ol>
+ *   <li>千机·自用配方页点「编码」按钮 → 走 {@code QianJiPatternPacket}，不经过这里</li>
+ *   <li>编码终端里在千机·自用配方页点「+」→ 见 {@link EncodePatternTransferHandlerMixin}，也不经过这里</li>
+ * </ol>
+ * 其余页面编码出来的仍是 AE2 原生处理样板 / 合成样板（千机照样能执行原生处理样板，
+ * 只是不再带我们的概率副产元数据）。
+ * <p>
+ * 这里保留注入点但**什么都不做**：留在 mixins.json 里以免动配置，行为上等于停用。
  */
 @Mixin(value = appeng.crafting.pattern.ProcessingPatternItem.class, remap = false)
 public abstract class ProcessingPatternItemMixin {
 
-    private static final Logger LOGGER = LogManager.getLogger("ae2addon");
-
     @Inject(method = "encode", at = @At("TAIL"), cancellable = true)
-    private void ae2addon$attachQianJiData(GenericStack[] inputs, GenericStack[] outputs,
-                                           CallbackInfoReturnable<ItemStack> cir) {
-        LOGGER.info("[ae2addon] encode(样板编码器) 触发: 输入 {} / 输出 {}",
-                inputs == null ? 0 : inputs.length, outputs == null ? 0 : outputs.length);
-        if (outputs == null || outputs.length == 0) return;
-
-        QianJiPatternData data = QianJiPatternCodec.matchCurrent(inputs, outputs);
-        if (data == null) {
-            LOGGER.info("[ae2addon] encode: 未匹配到千机配方（保持 AE2 原生样板）");
-            return;
-        }
-        // 命中千机配方 → **直接出我们自己的样板物品**（数据自洽，千机精确执行）
-        ItemStack pattern = new ItemStack(com.ae2addon.init.ModItems.QIAN_JI_PATTERN.get());
-        data.writeTo(pattern);
-        cir.setReturnValue(pattern);
-        LOGGER.info("[ae2addon] 编码器已改出千机样板: {}（主产物 {} / 概率产出 {}）",
-                data.recipeId(), data.primary().size(), data.chanced().size());
+    private void ae2addon$noAutoConvertToQianJi(GenericStack[] inputs, GenericStack[] outputs,
+                                                CallbackInfoReturnable<ItemStack> cir) {
+        // 故意留空：不再无差别把样板换成千机样板（2026-09-17 sensei 收敛）
     }
 }

@@ -18,6 +18,8 @@
     "ProcessingPatternItemMixin",
     "TooltipsMixin"
   ],
-  "client": [],
+  "client": [
+    "EncodePatternTransferHandlerMixin"
+  ],
   "server": []
 }

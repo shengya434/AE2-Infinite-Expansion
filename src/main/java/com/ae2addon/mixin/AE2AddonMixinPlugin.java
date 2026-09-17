@@ -53,6 +53,14 @@ public final class AE2AddonMixinPlugin implements IMixinConfigPlugin {
 
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        // 2026-09-17：JEI 传输器那个 mixin 的目标类依赖 JEI 类型，没装 JEI 时必须跳过。
+        // 用 getResource 探测（零类加载）—— 见本文件头的血泪教训。
+        if (mixinClassName.endsWith("EncodePatternTransferHandlerMixin")
+                && AE2AddonMixinPlugin.class.getClassLoader()
+                        .getResource("mezz/jei/api/recipe/transfer/IRecipeTransferHandler.class") == null) {
+            LOGGER.info("[ae2addon] 未装 JEI：跳过 mixin {}", mixinClassName);
+            return false;
+        }
         if (!GT_AE2) {
             // 原版/兼容 AE2：CraftingCpuLogicMixin 将被应用（priority 1200 先于
             // gtlcore 等，注入基于原始方法，限流/批量推送全部生效）→ 立即置位，
