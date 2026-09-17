@@ -83,6 +83,45 @@ public abstract class CraftingCpuLogicMixin {
     }
 
     /**
+     * 本网格的**并行上限**（2026-09-17 sensei）：接入集成型CPU → 0（不限）；
+     * 否则 = 网络内并行数总和（{@code QianJiBE.networkParallelSum}）。0 表示不限。
+     */
+    @Unique
+    private long ae2addon$parallelCap() {
+        try {
+            var grid = cluster == null ? null : cluster.getGrid();
+            if (grid == null) return 0;
+            for (var cpu : grid.getMachines(com.ae2addon.block.IntegratedCPUBE.class)) {
+                if (cpu != null && !cpu.isRemoved() && cpu.isFormed()) return 0;   // 在线 → 不限
+            }
+            return com.ae2addon.block.QianJiBE.networkParallelSum(grid);
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    /** 批量 N 的有效上限：config 上限 与 并行上限 取小（并行 0 = 不限 → 用 config） */
+    @Unique
+    private long ae2addon$effectiveBatchMax() {
+        long config = ae2addon$batchMaxMultiplier();
+        long cap = ae2addon$parallelCap();
+        return cap <= 0 ? config : Math.min(config, cap);
+    }
+
+    /**
+     * 批量 N 的**起步值**（2026-09-17 sensei：「智能翻倍到该并行能处理的最大量」）。
+     * <p>
+     * 原来任何新样板都从 1× 起步，逐轮翻倍（1→2→4…）——八千多的并行也要爬十几轮，看着就是「慢」。
+     * 现在离线时**直接以网络并行数总和起步**（能一次吃下多少就先试多少；吃不下会被拒收、自动减半收敛）；
+     * 接入集成型CPU（并行不限）时仍从 1× 起步，靠翻倍快速上涨。
+     */
+    @Unique
+    private long ae2addon$seedBatchMultiplier() {
+        long cap = ae2addon$parallelCap();
+        return cap > 0 ? cap : 1L;
+    }
+
+    /**
      * 批量经验共享（2026-08-27）：按产物物品共享「同 pattern 已成功翻倍到的 N」。
      * 各 lane 独立 CPU、各自维护 batchNext，新 lane 从 1× 探测起步，翻倍到高 N
      * 前速度远落后老 lane（sensei 实测 20:05「每个线程发送速度不一致」）。
@@ -1303,7 +1342,7 @@ public abstract class CraftingCpuLogicMixin {
         }
         // 无本地经验：继承共享经验（其他 lane 同产物已成功翻倍到的 N）
         if (ae2addon$sharedExpCap() <= 0) {
-            return 1L; // config 关闭共享（sharedExpCap=0）
+            return ae2addon$seedBatchMultiplier(); // config 关闭共享 → 用并行数起步
         }
         var key = ae2addon$patternKey(pattern);
         if (key != null) {
@@ -1312,7 +1351,8 @@ public abstract class CraftingCpuLogicMixin {
                 return Math.min(exp, ae2addon$sharedExpCap());
             }
         }
-        return 1L;
+        // 没有任何经验 → 以并行数起步（2026-09-17 sensei：别再慢慢爬了）
+        return ae2addon$seedBatchMultiplier();
     }
 
     /** 样板经验 key：产物 AEKey（同产物样板共享批量经验）；获取失败返回 null */
@@ -1351,7 +1391,7 @@ public abstract class CraftingCpuLogicMixin {
         // 2026-09-09 提速：增殖配方（产物=输入同种）不再强制逐次——批量 N 成功后
         // 正常翻倍（1→2→4…），配合种子回流翻倍实现指数滚雪球。共享经验对增殖
         // 也适用：新 lane 继承 N 后种子不足会自然回退收敛（提取失败减半）。
-        long maxMult = ae2addon$batchMaxMultiplier();
+        long maxMult = ae2addon$effectiveBatchMax();
         long doubled = multiplier > maxMult / 2
                 ? maxMult
                 : multiplier * 2;
