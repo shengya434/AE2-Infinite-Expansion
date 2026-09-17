@@ -1107,14 +1107,8 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
 
     /** 未接入集成型CPU 时允许插入的样板类型：原版合成 / 熔炼类 / 锻造台（2026-09-17 sensei 定） */
     public static boolean isBasicPatternType(@org.jetbrains.annotations.Nullable String machine) {
-        if (machine == null || machine.isEmpty()) return false;
-        if (machine.startsWith("minecraft:crafting")) return true;   // shaped / shapeless / special_*
-        return switch (machine) {
-            case "minecraft:smelting", "minecraft:blasting", "minecraft:smoking",
-                 "minecraft:campfire_cooking", "minecraft:smithing_transform",
-                 "minecraft:smithing_trim" -> true;
-            default -> false;
-        };
+        // 白名单只有一份，放在数据类里（编码匹配也要用同一份），这里直接转发
+        return com.ae2addon.recipe.QianJiPatternData.isBasicType(machine);
     }
 
     /**

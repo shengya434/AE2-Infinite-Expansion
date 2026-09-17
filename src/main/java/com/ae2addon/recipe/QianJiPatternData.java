@@ -73,6 +73,23 @@ public final class QianJiPatternData {
 
     public boolean isEmpty() { return inputs.isEmpty() && primary.isEmpty() && chanced.isEmpty(); }
 
+    /**
+     * 「基础配方类型」= 原版合成 / 熔炼类 / 锻造台（2026-09-17 sensei 定：未接入集成型CPU 时只允许插这类样板）。
+     * <p>
+     * 放在数据类里而不是方块类里，是为了让「编码匹配」与「插入门禁」用**同一份白名单**
+     * （见 {@code QianJiRecipeModel.match} 的基础类型优先）。
+     */
+    public static boolean isBasicType(@org.jetbrains.annotations.Nullable String machine) {
+        if (machine == null || machine.isEmpty()) return false;
+        if (machine.startsWith("minecraft:crafting")) return true;   // shaped / shapeless / special_*
+        return switch (machine) {
+            case "minecraft:smelting", "minecraft:blasting", "minecraft:smoking",
+                 "minecraft:campfire_cooking", "minecraft:smithing_transform",
+                 "minecraft:smithing_trim" -> true;
+            default -> false;
+        };
+    }
+
     // ── NBT ──
 
     public CompoundTag toTag() {

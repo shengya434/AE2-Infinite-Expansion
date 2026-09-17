@@ -96,7 +96,11 @@ public final class QianJiRecipeModel {
                     if (!hit) { covered = false; break; }
                 }
                 if (!covered) continue;
-                int score = data.primary().size() + data.chanced().size();
+                // 2026-09-17 sensei 实测：从别的配方页编码「合成 / 熔炼」配方时，匹配可能落到某台**机器配方**上
+                // （同产物、原料也被覆盖 → 它同样命中），于是样板类型不是基础类型，未接入集成型CPU 时被门禁拒收。
+                // 处置：**基础类型优先**（原版合成 / 熔炼 / 锻造台，权重 1000），同为基础类型才比产出条数。
+                int score = (QianJiPatternData.isBasicType(data.machine()) ? 1000 : 0)
+                        + data.primary().size() + data.chanced().size();
                 if (score > bestScore) {
                     bestScore = score;
                     best = data;
