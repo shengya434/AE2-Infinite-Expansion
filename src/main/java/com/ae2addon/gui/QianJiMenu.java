@@ -71,7 +71,8 @@ public class QianJiMenu extends AbstractContainerMenu {
                 // 匿名类里裸写 be 会捕获那个局部变量 → 找不到 isIntegratedCpuOnline()（2026-09-17 编译报错修的）
                 boolean online = QianJiMenu.this.be != null && QianJiMenu.this.be.isIntegratedCpuOnline();
                 if (index == 1) return online ? 1 : 0;
-                return online ? 0 : 1;   // 0 = 不限（∞），否则就是上限值
+                // 接入集成型CPU → 0（不限/∞）；否则 = 网络内并行数总和（2026-09-17 sensei 修正）
+                return online ? 0 : (QianJiMenu.this.be == null ? 1 : QianJiMenu.this.be.parallelLimit());
             }
 
             @Override

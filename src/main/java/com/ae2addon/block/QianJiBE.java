@@ -1117,9 +1117,39 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         };
     }
 
-    /** 当前并行上限：0 = 不限（接入集成型CPU 时），否则 1（未接入时）—— 与界面显示同口径 */
+    /**
+     * 当前并行上限（2026-09-17 sensei 修正）：
+     * <ul>
+     *   <li>接入集成型CPU → <b>0</b>（不限，界面显示 ∞）</li>
+     *   <li>没接入 → <b>网络内并行数总和</b>（见 {@link #networkParallelSum}）</li>
+     * </ul>
+     */
     public int parallelLimit() {
-        return isIntegratedCpuOnline() ? 0 : 1;
+        if (isIntegratedCpuOnline()) return 0;
+        return networkParallelSum(getGrid());
+    }
+
+    /**
+     * 网络内并行数总和：把网格里所有在线合成 CPU 的并行处理单元数加起来
+     * （每个 CPU 自身再算 1 条线程，跟 AE2 界面「并行处理单元 + 本体」的口径一致）。
+     * <p>
+     * 没有任何 CPU（或网格未就绪）→ 1（至少让它跑一条）。
+     */
+    public static int networkParallelSum(@org.jetbrains.annotations.Nullable appeng.api.networking.IGrid grid) {
+        if (grid == null) return 1;
+        int sum = 0;
+        try {
+            var service = grid.getCraftingService();
+            if (service == null) return 1;
+            for (var cpu : service.getCpus()) {
+                if (cpu == null) continue;
+                sum += Math.max(1, cpu.getCoProcessors() + 1);
+                if (sum < 0) return Integer.MAX_VALUE;   // 溢出兜底（拉满的哨兵值）
+            }
+        } catch (Throwable ignored) {
+            return 1;
+        }
+        return Math.max(1, sum);
     }
 
     @Override
