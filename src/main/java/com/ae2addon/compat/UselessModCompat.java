@@ -89,13 +89,60 @@ public final class UselessModCompat {
         return List.copyOf(out);
     }
 
-    /** 催化剂（按 catalystCount 消耗）+ 模具（不消耗） */
+    /**
+     * 催化剂 + 模具（2026-09-17 sensei 定调：锭当催化剂用时不消耗）。
+     * <p>
+     * 依据（读 jar 里的配方 JSON 实证）：合金炉的 {@code catalyst} 就是**无用锭 / 有用锭**
+     * ——{@code #useless_mod:useless_ingots} 这个标签里正好是 tier1~9 无用锭 **加上有用锭**；
+     * 而升阶链里 {@code useless_ingot_tier_N} 的催化剂正是 {@code tier_{N-1}}
+     * → 若按「消耗」计，升阶链会自己吃掉自己的前置锭，跟游戏行为矛盾。
+     * <p>
+     * 规则：
+     * <ul>
+     *   <li>催化剂一律标 **不消耗**（千机既不为它向网络索取、也不会扣掉它）</li>
+     *   <li>但催化剂若**同时是该配方的输入或输出物**（例如某配方真的消耗/产出这种锭），
+     *       它已经按物料记过一遍 → 这里就不再重复记一个催化剂槽</li>
+     *   <li>模具（{@code metal_mold_*}）同样是放着反复用的 → 不消耗</li>
+     * </ul>
+     */
     public static List<SlotSpec> specialInputs(@Nullable Recipe<?> recipe) {
         var slots = new ArrayList<SlotSpec>();
         if (recipe == null) return slots;
-        addIngredient(slots, readField(recipe, "catalyst"), Math.max(1, readInt(recipe, "catalystCount")), false);
+        Object catalyst = readField(recipe, "catalyst");
+        if (catalyst instanceof Ingredient ingredient && !isAlsoMaterial(recipe, ingredient)) {
+            addIngredient(slots, catalyst, Math.max(1, readInt(recipe, "catalystCount")), true);
+        }
         addIngredient(slots, readField(recipe, "mold"), 1, true);
         return slots;
+    }
+
+    /**
+     * 催化剂里的物品是否**也**是该配方的输入/输出物：
+     * 是的话它已经按物料记过，不再当催化剂重复记（对应 sensei 那句「除非其为输入或输出物」）。
+     */
+    private static boolean isAlsoMaterial(Recipe<?> recipe, Ingredient catalyst) {
+        var wanted = new java.util.HashSet<net.minecraft.world.item.Item>();
+        for (ItemStack stack : catalyst.getItems()) {
+            if (!stack.isEmpty()) wanted.add(stack.getItem());
+        }
+        if (wanted.isEmpty()) return false;
+        Object inputs = readField(recipe, "inputItems");
+        if (inputs instanceof Iterable<?> it) {
+            for (Object element : it) {
+                if (!(element instanceof Ingredient ing)) continue;
+                for (ItemStack stack : ing.getItems()) {
+                    if (!stack.isEmpty() && wanted.contains(stack.getItem())) return true;
+                }
+            }
+        }
+        Object outputs = readField(recipe, "outputItems");
+        if (outputs instanceof Iterable<?> it) {
+            for (Object element : it) {
+                if (element instanceof ItemStack stack && !stack.isEmpty()
+                        && wanted.contains(stack.getItem())) return true;
+            }
+        }
+        return false;
     }
 
     /** 产出：{@code outputItems} + {@code outputFluids} */
