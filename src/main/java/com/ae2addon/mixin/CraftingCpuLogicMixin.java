@@ -275,6 +275,31 @@ public abstract class CraftingCpuLogicMixin {
     private final Map<IPatternDetails, Boolean> ae2addon$batchLocked =
             new HashMap<>();
 
+    /**
+     * 2026-09-17 sensei「A 方案」：本次提取/推送是不是**千机样板**。
+     * <p>
+     * 批量通道原来只对「我们的集成型CPU」开放（{@code budgetActive}），于是用别的 CPU
+     * （如 omni cells 的量子CPU）时，千机样板也只能 1× 走，吃不到并行。
+     * 现在放宽成：**我们的集成CPU 或 千机样板**都能进批量通道；
+     * 时间片限流（limitTaskIteration / limitProviderIteration / 派发预算）仍然只对我们的集成CPU 开。
+     */
+    @Unique
+    private boolean ae2addon$qianjiBatch;
+
+    /** 判定一条样板是不是千机的（自有样板详情，或样板物品上带我们的 NBT） */
+    @Unique
+    private static boolean ae2addon$isQianJiPattern(IPatternDetails pattern) {
+        if (pattern == null) return false;
+        if (pattern instanceof com.ae2addon.crafting.QianJiPatternDetails) return true;
+        try {
+            var def = pattern.getDefinition();
+            if (def == null) return false;
+            return com.ae2addon.recipe.QianJiPatternData.of(def.toStack(1)) != null;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     // 当前批量上下文（一次提取 → 一次 push 之间传递）
     @Unique
     private boolean ae2addon$batchActive;
@@ -564,8 +589,12 @@ public abstract class CraftingCpuLogicMixin {
                     patternDetails == null ? "null" : patternDetails.getClass().getSimpleName(),
                     ae2addon$budgetActive);
         }
-        if (!ae2addon$budgetActive || patternDetails == null || inventory == null) {
-            // 非我们 CPU（原版）：直接调用原始静态方法（原版行为）
+        // 2026-09-17 sensei「A 方案」：批量通道对「我们的集成CPU」或「千机样板」开放 ——
+        // 用其它 CPU（如 omni cells 的量子CPU）跑千机样板时，也要能吃到网络并行数的批量。
+        ae2addon$qianjiBatch = !ae2addon$budgetActive && ae2addon$isQianJiPattern(patternDetails);
+        if ((!ae2addon$budgetActive && !ae2addon$qianjiBatch)
+                || patternDetails == null || inventory == null) {
+            // 别的样板 / 原版 CPU：直接调用原始静态方法（原版行为）
             return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
                     level, expectedOutputs, expectedContainerItems);
         }
@@ -929,7 +958,8 @@ public abstract class CraftingCpuLogicMixin {
             }
             // 1× 成功也是批量探测的成功：翻倍 N，让同一 tick 内后续提取
             // 直接尝试 2×/4×/8×... 指数暴涨，对无限消费型接收方瞬间全发
-            if (ae2addon$budgetActive && accepted && patternDetails != null) {
+            // A 方案：非我们 CPU 跑千机样板时也要能翻倍（否则 N 永远是 1）
+            if ((ae2addon$budgetActive || ae2addon$qianjiBatch) && accepted && patternDetails != null) {
                 ae2addon$onBatchAccepted(patternDetails, 1L);
             } else if (!accepted && patternDetails != null) {
                 ae2addon$recordStuck(patternDetails);
