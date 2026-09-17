@@ -7,6 +7,7 @@ import com.ae2addon.compat.BloodMagicCompat;
 import com.ae2addon.compat.BotaniaCompat;
 import com.ae2addon.compat.CreateCompat;
 import com.ae2addon.compat.CreateSequencedCompat;
+import com.ae2addon.compat.EnderioCompat;
 import com.ae2addon.compat.GregTechCompat;
 import com.ae2addon.compat.MekanismCompat;
 import com.ae2addon.compat.NaturesAuraCompat;
@@ -191,6 +192,17 @@ public final class QianJiRecipeModel {
                 if (arcFluidOut != null && arcFluidOut.what() != null) keys.add(arcFluidOut.what());
                 for (var extra : BloodMagicCompat.arcAddedOutputs(recipe)) {
                     if (extra.stack() != null && extra.stack().what() != null) keys.add(extra.stack().what());
+                }
+            }
+            // EnderIO：产物在字段里 → 单独补
+            if (EnderioCompat.isHandled(recipe)) {
+                if (EnderioCompat.isSagMilling(recipe)) {
+                    for (var out : EnderioCompat.sagOutputs(recipe)) {
+                        if (out.stack() != null && out.stack().what() != null) keys.add(out.stack().what());
+                    }
+                } else {
+                    ItemStack enderOut = EnderioCompat.output(recipe);
+                    if (!enderOut.isEmpty()) keys.add(appeng.api.stacks.AEItemKey.of(enderOut));
                 }
             }
         } catch (Throwable ignored) {
@@ -508,6 +520,44 @@ public final class QianJiRecipeModel {
                 if (ore.what() == null) continue;
                 primary.add(new QianJiPatternData.Out(new appeng.api.stacks.GenericStack(
                         ore.what(), Math.max(1, ore.amount()))));
+            }
+        } else if (EnderioCompat.isHandled(recipe)) {
+            // EnderIO（2026-09-17 补；清单里最大的一块 —— alloy_smelting 号称 2227 条，
+            // 大半是它照 GT/原版熔炼**运行时生成**的）：五类机器的数据全在字段里，
+            // 标准 API 只给一半（alloy/sag/slicing/soul 的 getResultItem 都是空的）
+            // → 走独立分支，免得跟标准路径重复加输入
+            if (EnderioCompat.isAlloySmelting(recipe)) {
+                for (var slot : EnderioCompat.countedInputs(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(slot));   // 数量在 CountedIngredient 里，别丢
+                }
+            } else if (EnderioCompat.isSlicing(recipe)) {
+                for (var slot : EnderioCompat.ingredientListInputs(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(slot));
+                }
+            } else {
+                // sag_milling / soul_binding / tank：单个 input，tank 还带流体
+                var single = EnderioCompat.singleInput(recipe);
+                if (!single.isEmpty()) inputs.add(new QianJiPatternData.Slot(single));
+                var enderFluid = EnderioCompat.fluidInput(recipe);
+                if (!enderFluid.isEmpty()) inputs.add(new QianJiPatternData.Slot(enderFluid));
+            }
+            if (EnderioCompat.isSagMilling(recipe)) {
+                // 粉碎：产出带几率（0.8/0.6/0.3/0.1…）→ 不足 100% 的进概率产出，交给公共收尾配平
+                for (var out : EnderioCompat.sagOutputs(recipe)) {
+                    if (out.stack() == null || out.stack().what() == null) continue;
+                    if (out.chance() >= 1f) {
+                        primary.add(new QianJiPatternData.Out(out.stack()));
+                    } else {
+                        chanced.add(new QianJiPatternData.Chanced(out.stack(),
+                                out.chance() > 0f ? out.chance() : -1f));
+                    }
+                }
+            } else {
+                ItemStack enderOut = EnderioCompat.output(recipe);
+                if (!enderOut.isEmpty()) {
+                    primary.add(new QianJiPatternData.Out(
+                            appeng.api.stacks.GenericStack.fromItemStack(enderOut)));
+                }
             }
         } else {
             // 标准路径（物品）：输入 Ingredient → 选项；主产物 = getResultItem；概率产出 = RecipeByproducts
@@ -853,6 +903,17 @@ public final class QianJiRecipeModel {
             if (arcFluidOut != null && arcFluidOut.what() != null) items.add(arcFluidOut.what());
             for (var extra : BloodMagicCompat.arcAddedOutputs(recipe)) {
                 if (extra.stack() != null && extra.stack().what() != null) items.add(extra.stack().what());
+            }
+        }
+        // EnderIO：alloy/sag/slicing/soul 的 getResultItem 都是空的 → 产物单独补，否则整类进不了索引
+        if (EnderioCompat.isHandled(recipe)) {
+            if (EnderioCompat.isSagMilling(recipe)) {
+                for (var out : EnderioCompat.sagOutputs(recipe)) {
+                    if (out.stack() != null && out.stack().what() != null) items.add(out.stack().what());
+                }
+            } else {
+                ItemStack enderOut = EnderioCompat.output(recipe);
+                if (!enderOut.isEmpty()) items.add(appeng.api.stacks.AEItemKey.of(enderOut));
             }
         }
         for (var c : GregTechCompat.outputs(recipe)) {
