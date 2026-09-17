@@ -636,6 +636,9 @@ public final class QianJiRecipeModel {
                 for (var stack : AeAddonRecipeCompat.advancedInputs(recipe)) {
                     inputs.add(new QianJiPatternData.Slot(List.of(stack)));
                 }
+                // 流体输入（fluid 字段，2026-09-17 自查补：AdvancedAE 配方基本都带流体）
+                var advFluid = AeAddonRecipeCompat.advancedFluidInput(recipe);
+                if (!advFluid.isEmpty()) inputs.add(new QianJiPatternData.Slot(advFluid));
                 var advOut = AeAddonRecipeCompat.advancedOutput(recipe);
                 if (advOut != null && !(advOut.what() instanceof appeng.api.stacks.AEItemKey)) {
                     primary.add(new QianJiPatternData.Out(advOut));

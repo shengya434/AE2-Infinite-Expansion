@@ -175,14 +175,20 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
         var itemInPoints = grid(layout.itemInCells(), ITEMS_PER_ROW, EDGE, Y_ITEM_IN);
         for (int i = 0; i < Math.min(itemIn.size(), itemInPoints.size()); i++) {
             var point = itemInPoints.get(i);
-            addOptions(builder.addInputSlot(point[0], point[1]), itemIn.get(i).options());
+            var slot = itemIn.get(i);
+            var slotBuilder = builder.addInputSlot(point[0], point[1]);
+            addOptions(slotBuilder, slot.options());
+            addCatalystTooltip(slotBuilder, slot);   // 「不消耗」写进 tooltip（2026-09-17 sensei）
         }
 
         // 流体（非物品）输入
         var fluidInPoints = grid(layout.fluidInCells(), FLUIDS_PER_ROW, EDGE, Y_FLUID_IN);
         for (int i = 0; i < Math.min(fluidIn.size(), fluidInPoints.size()); i++) {
             var point = fluidInPoints.get(i);
-            addOptions(builder.addInputSlot(point[0], point[1]), fluidIn.get(i).options());
+            var slot = fluidIn.get(i);
+            var slotBuilder = builder.addInputSlot(point[0], point[1]);
+            addOptions(slotBuilder, slot.options());
+            addCatalystTooltip(slotBuilder, slot);   // 非物品的非消耗输入（如祭坛催化剂）同样注明
         }
 
         var outSplit = splitOutputs(data);
@@ -200,6 +206,19 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
             var point = fluidOutPoints.get(i);
             addStack(builder.addOutputSlot(point[0], point[1]), fluidOut.get(i));
         }
+    }
+
+    /**
+     * 非消耗输入（催化剂 / 模具 / 工具类）→ 把「不消耗」写进**悬停 tooltip**
+     * （2026-09-17 sensei：不消耗的材料要在 tooltip 里指明）。
+     * <p>
+     * 这类槽在 JEI 里是有 ingredient 的（物品/流体），所以 tooltip 一定会显示 ✓。
+     */
+    private static void addCatalystTooltip(mezz.jei.api.gui.builder.IRecipeSlotBuilder slotBuilder,
+                                           QianJiPatternData.Slot slot) {
+        if (slot == null || !slot.catalyst()) return;
+        slotBuilder.addRichTooltipCallback((view, tooltip) ->
+                tooltip.add(Component.literal("§e不消耗 §7（催化剂 / 模具 / 工具类输入）")));
     }
 
     private static void addOptions(mezz.jei.api.gui.builder.IRecipeSlotBuilder slotBuilder,
@@ -247,8 +266,10 @@ public class QianJiRecipeCategory implements IRecipeCategory<QianJiRecipeCategor
 
         // 分区标题（下行箭头标出输入→产出）
         graphics.drawString(font, "§7输入 §8(物品 9 · 流体 2，不足自动扩)", EDGE, 8, 0xFFFFFF, false);
-        graphics.drawString(font, "§7产出 §8(◀ 输入 → 输出；绿=主产物 §d紫=概率产出)", EDGE, 104, 0xFFFFFF, false);
-        arrow.draw(graphics, EDGE + 4, 106);
+        graphics.drawString(font, "§7产出 §8(输入 → 输出；绿=主产物 §d紫=概率产出)", EDGE, 104, 0xFFFFFF, false);
+        // 2026-09-17 sensei：大灰箭头**上移到「产出」文字上方**（原来画在 y=106 会跟文字挤在一起；
+        // 现在 y=86，箭头高 16px → 占到 102，正好压在 104 那行文字上方）
+        arrow.draw(graphics, EDGE + 4, 86);
 
         // 非物品输入槽：**格内右下角**小字号标数量（GT 风格：纯数字 / K·M·G）+ 非消耗标记
         var inSlots = splitInputs(data)[1];

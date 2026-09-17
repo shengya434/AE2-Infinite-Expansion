@@ -70,6 +70,22 @@ public final class AeAddonRecipeCompat {
         return out;
     }
 
+    /**
+     * 流体输入：字段 {@code fluid}，类型是 {@code ae2addonlib} 的 {@code IngredientStack$Fluid}
+     * （jar-in-jar 里的库；父类字段 {@code ingredient} 是 {@code Object}，实际装的是 {@code FluidStack}，
+     * 另有 {@code amount}）。2026-09-17 自查补：AdvancedAE 的配方**基本都带流体**（如 500 mB 水）。
+     */
+    public static List<GenericStack> advancedFluidInput(@Nullable Recipe<?> recipe) {
+        if (recipe == null) return List.of();
+        Object fluid = readField(recipe, "fluid");
+        if (fluid == null) return List.of();
+        Object inner = readField(fluid, "ingredient");
+        if (!(inner instanceof FluidStack stack) || stack.isEmpty()) return List.of();
+        long amount = Math.max(1, readInt(fluid, "amount"));
+        if (amount <= 1 && stack.getAmount() > 1) amount = stack.getAmount();
+        return List.of(new GenericStack(AEFluidKey.of(stack.getFluid()), amount));
+    }
+
     /** 产出：{@code output} 字段（{@code GenericStack}）；物品侧标准 API 也能拿到，流体侧只有这里能拿 */
     @Nullable
     public static GenericStack advancedOutput(@Nullable Recipe<?> recipe) {
