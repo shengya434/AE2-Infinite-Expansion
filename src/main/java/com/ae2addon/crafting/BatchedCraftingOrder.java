@@ -64,6 +64,24 @@ public final class BatchedCraftingOrder {
      */
     public static volatile int MAX_CONCURRENT = com.ae2addon.config.AE2AddonConfig.maxConcurrent();
 
+    /**
+     * 本次订单的**实际**并行上限（2026-09-17 sensei 门禁）：
+     * 所属网格里没有「已成型」的集成型CPU 时压到 1；有则按 config（0 = 不限）。
+     */
+    private int effectiveConcurrency() {
+        if (MAX_CONCURRENT == 1) return 1;
+        if (grid != null) {
+            try {
+                for (var cpu : grid.getMachines(com.ae2addon.block.IntegratedCPUBE.class)) {
+                    if (cpu != null && !cpu.isRemoved() && cpu.isFormed()) return MAX_CONCURRENT;
+                }
+            } catch (Throwable ignored) {
+                // 网格未就绪 → 当作不在线
+            }
+        }
+        return 1;
+    }
+
     /** 配置热加载时由 AE2AddonConfig 调用（更新并行度/批数上限）。 */
     public static void applyConfig() {
         MAX_CONCURRENT = com.ae2addon.config.AE2AddonConfig.maxConcurrent();
@@ -626,7 +644,7 @@ public final class BatchedCraftingOrder {
      */
     private void fillWindow() {
         while (status == Status.RUNNING
-                && running.size() < MAX_CONCURRENT
+                && running.size() < effectiveConcurrency()
                 && nextBatchIndex < batchAmounts.size()) {
             BatchProgress batch = new BatchProgress(batchAmounts.get(nextBatchIndex));
             nextBatchIndex++;

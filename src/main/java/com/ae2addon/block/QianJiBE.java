@@ -1081,6 +1081,47 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return getMainNode().getGrid();
     }
 
+    /**
+     * 网络里有没有「已成型」的集成型CPU（2026-09-17 sensei 门禁）。
+     * <p>
+     * sensei 定调：**接入集成型CPU 后千机解除所有限制**；没接入时只允许插「原版合成 / 熔炼类 / 锻造台」样板、
+     * 并行数压到 1、催化剂不能插。判定走 AE2 的网格机器表（我们的 GridMixin 已保证自家 BE 能被查到）。
+     * <p>
+     * ⚠ 客户端一律返回 true：槽位校验在客户端也会被调用，而客户端拿不到网格；
+     * 真正的门禁在服务端（{@link PatternHandler#isItemValid} / {@link CatalystHandler#isItemValid}）。
+     * 界面上的两条状态读的是菜单同步数据，不直接调这里。
+     */
+    public boolean isIntegratedCpuOnline() {
+        if (level == null || level.isClientSide()) return true;
+        try {
+            var grid = getGrid();
+            if (grid == null) return false;
+            for (var cpu : grid.getMachines(IntegratedCPUBE.class)) {
+                if (cpu != null && !cpu.isRemoved() && cpu.isFormed()) return true;
+            }
+        } catch (Throwable ignored) {
+            // 网格未就绪 → 当作不在线
+        }
+        return false;
+    }
+
+    /** 未接入集成型CPU 时允许插入的样板类型：原版合成 / 熔炼类 / 锻造台（2026-09-17 sensei 定） */
+    public static boolean isBasicPatternType(@org.jetbrains.annotations.Nullable String machine) {
+        if (machine == null || machine.isEmpty()) return false;
+        if (machine.startsWith("minecraft:crafting")) return true;   // shaped / shapeless / special_*
+        return switch (machine) {
+            case "minecraft:smelting", "minecraft:blasting", "minecraft:smoking",
+                 "minecraft:campfire_cooking", "minecraft:smithing_transform",
+                 "minecraft:smithing_trim" -> true;
+            default -> false;
+        };
+    }
+
+    /** 当前并行上限：0 = 不限（接入集成型CPU 时），否则 1（未接入时）—— 与界面显示同口径 */
+    public int parallelLimit() {
+        return isIntegratedCpuOnline() ? 0 : 1;
+    }
+
     @Override
     public appeng.api.inventories.InternalInventory getTerminalPatternInventory() {
         return terminalPatternInv;
@@ -1241,6 +1282,13 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                     ChatLog.warn(level, worldPosition, "千机样板没有输入（无原料消耗），已拒收");
                     return false;
                 }
+                // 2026-09-17 sensei 门禁：未接入集成型CPU → 只允许合成 / 熔炼 / 锻造台三类样板
+                // （own.machine() 就是配方类型，如 minecraft:crafting_shaped / minecraft:smelting）
+                if (!isIntegratedCpuOnline() && !isBasicPatternType(own.machine())) {
+                    ChatLog.warn(level, worldPosition, "未接入集成型CPU：只允许插入合成 / 熔炼 / 锻造台类样板"
+                            + "（本样板类型 " + own.machine() + "），已拒收");
+                    return false;
+                }
                 return true;
             }
             if (!PatternDetailsHelper.isEncodedPattern(stack)) return false;
@@ -1284,7 +1332,9 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
 
         @Override
         public boolean isItemValid(int slot, @NotNull ItemStack stack) {
-            return stack.getItem() instanceof CatalystItem;
+            if (!(stack.getItem() instanceof CatalystItem)) return false;
+            // 2026-09-17 sensei 门禁：未接入集成型CPU 时不能插催化剂（接入后解除限制）
+            return isIntegratedCpuOnline();
         }
 
         @Override

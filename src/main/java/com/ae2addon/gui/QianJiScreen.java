@@ -70,6 +70,13 @@ public class QianJiScreen extends AbstractContainerScreen<QianJiMenu> {
         g.drawString(font, Component.literal("§7催化剂"),
                 leftPos + 28, topPos + 22, 0x888888, false);
 
+        // 2026-09-17 sensei 要求的两条状态：集成型CPU 是否在线 / 当前并行数
+        boolean cpuOnline = menu.isIntegratedCpuOnline();
+        g.drawString(font, Component.literal(cpuOnline ? "§7集成CPU：§a在线" : "§7集成CPU：§c未在线"),
+                leftPos + 84, topPos + 22, 0xFFFFFF, false);
+        g.drawString(font, Component.literal("§7当前并行数：" + menu.parallelText()),
+                leftPos + 84, topPos + 32, 0xFFFFFF, false);
+
         // 样板标签
         g.drawString(font, Component.literal("§7样板"),
                 leftPos + 8, topPos + 42, 0x555555, false);

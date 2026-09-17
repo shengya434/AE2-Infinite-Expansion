@@ -59,9 +59,30 @@ public class QianJiMenu extends AbstractContainerMenu {
         this.be = qianjiBE;
         this.pagedHandler = new PagedPatternHandler(qianjiBE.getPatternHandler());
         this.catalystHandler = qianjiBE.getCatalystHandler();
-        this.pageData = new SimpleContainerData(1);
+        // 3 条同步数据：0 = 当前页，1 = 集成型CPU 是否在线，2 = 当前并行上限（0 = 不限/∞）
+        // 2026-09-17 sensei 要求千机界面显示这两个状态
+        this.pageData = new ContainerData() {
+            private int page = 0;
+
+            @Override
+            public int get(int index) {
+                if (index == 0) return page;
+                // ⚠ 必须写 QianJiMenu.this.be：构造函数里有个同名局部变量 be（类型是 BlockEntity），
+                // 匿名类里裸写 be 会捕获那个局部变量 → 找不到 isIntegratedCpuOnline()（2026-09-17 编译报错修的）
+                boolean online = QianJiMenu.this.be != null && QianJiMenu.this.be.isIntegratedCpuOnline();
+                if (index == 1) return online ? 1 : 0;
+                return online ? 0 : 1;   // 0 = 不限（∞），否则就是上限值
+            }
+
+            @Override
+            public void set(int index, int value) {
+                if (index == 0) page = value;
+            }
+
+            @Override
+            public int getCount() { return 3; }
+        };
         addDataSlots(pageData);
-        pageData.set(0, 0); // 首页
 
         // ── 样板槽（54 个，映射到当前页） ──
         for (int i = 0; i < PAGE_SIZE; i++) {
@@ -106,6 +127,17 @@ public class QianJiMenu extends AbstractContainerMenu {
 
     public int getCurrentPage() {
         return pageData.get(0);
+    }
+
+    /** 集成型CPU 是否在线（读同步数据，客户端也能拿到） */
+    public boolean isIntegratedCpuOnline() {
+        return pageData.get(1) != 0;
+    }
+
+    /** 当前并行数的显示文本：0 = 不限（∞） */
+    public String parallelText() {
+        int limit = pageData.get(2);
+        return limit <= 0 ? "§a∞" : "§e" + limit;
     }
 
     @Override
