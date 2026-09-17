@@ -63,21 +63,42 @@ public class QianJiMenu extends AbstractContainerMenu {
         // 2026-09-17 sensei 要求千机界面显示这两个状态
         this.pageData = new ContainerData() {
             private int page = 0;
+            /** 客户端专用：服务端同步过来的值（**不能**在客户端重算，见 serverSide() 注释） */
+            private int syncedOnline = 0;
+            private int syncedParallel = 1;
+
+            /**
+             * ⚠ 2026-09-17 sensei 实测 bug：「世界里没有集成型CPU 也显示在线」。
+             * 原因：客户端也会调 get()，而 {@code isIntegratedCpuOnline()} 在客户端**一律返回 true**
+             * （为了不让本地槽位校验误拒）→ 显示就成了恒「在线」。
+             * 修法：**服务端实时算**（同步给别人），客户端只读同步值。
+             */
+            private boolean serverSide() {
+                var be = QianJiMenu.this.be;
+                return be != null && be.getLevel() != null && !be.getLevel().isClientSide();
+            }
 
             @Override
             public int get(int index) {
                 if (index == 0) return page;
-                // ⚠ 必须写 QianJiMenu.this.be：构造函数里有个同名局部变量 be（类型是 BlockEntity），
-                // 匿名类里裸写 be 会捕获那个局部变量 → 找不到 isIntegratedCpuOnline()（2026-09-17 编译报错修的）
-                boolean online = QianJiMenu.this.be != null && QianJiMenu.this.be.isIntegratedCpuOnline();
+                boolean server = serverSide();
+                boolean online = server
+                        ? QianJiMenu.this.be.isIntegratedCpuOnline()   // 服务端：实时判定
+                        : syncedOnline != 0;                           // 客户端：读同步值
                 if (index == 1) return online ? 1 : 0;
-                // 接入集成型CPU → 0（不限/∞）；否则 = 网络内并行数总和（2026-09-17 sensei 修正）
-                return online ? 0 : (QianJiMenu.this.be == null ? 1 : QianJiMenu.this.be.parallelLimit());
+                if (server) {
+                    return online ? 0 : QianJiMenu.this.be.parallelLimit();
+                }
+                return syncedParallel;
             }
 
             @Override
             public void set(int index, int value) {
-                if (index == 0) page = value;
+                switch (index) {
+                    case 0 -> page = value;
+                    case 1 -> syncedOnline = value;
+                    default -> syncedParallel = value;
+                }
             }
 
             @Override
