@@ -1,0 +1,17 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "modLoaded":  "mysticalagriculture",
+    "inputs":  [
+                   {
+                       "item":  "mysticalagriculture:flux_infused_ingot_seeds",
+                       "count":  1,
+                       "catalyst":  true
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "mysticalagriculture:flux_infused_ingot_essence",
+                        "count":  1
+                    }
+                ]
+}

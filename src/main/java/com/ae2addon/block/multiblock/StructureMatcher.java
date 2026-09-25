@@ -30,14 +30,45 @@ import java.util.List;
  */
 public final class StructureMatcher {
 
-    /** 结构定义：返回局部坐标处**期望**的方块；{@code null} = 该处必须是空气 */
+    /**
+     * 结构定义：回答「局部坐标 (x,y,z) 期望什么」。
+     * <p>
+     * 2026-09-24 扩展：允许一格里**接受多个方块**（集成 CPU 的扩展单元可互换：
+     * {@code assembler_core ↔ smooth_sky_stone_block}、{@code 256k_crafting_storage ↔ crafting_unit}），
+     * 所以判定不再用「期望方块相等」而是两组查询 —— {@link #isAirRequired} + {@link #accepts}。
+     * 旧实现只覆写 {@link #expected} 也能继续工作（默认实现都转调它）。
+     */
     public interface Expector {
+        /**
+         * 结构定义：返回局部坐标处**期望**的方块；{@code null} = 该处必须是空气。
+         * <p>
+         * ⚠ 保持**抽象**（不用 default）：这样 {@code Expector} 仍是**函数式接口** ——
+         * 千机 / 无限驱动器那边用 lambda 写的 {@code (x,y,z) -> 单一方块} 才能继续编译。
+         * 集成 CPU 那种「一格接受多个方块」的实现走匿名类覆写下面三个 default 方法。
+         */
         @Nullable
         Block expected(int x, int y, int z);
+
+        /** 该格是否**必须是空气**（默认：{@link #expected} 返回 null 即视为空气） */
+        default boolean isAirRequired(int x, int y, int z) {
+            return expected(x, y, z) == null;
+        }
+
+        /** 该格给定的方块状态是否可接受（默认：方块相等；子类可覆写为「多个任一命中」） */
+        default boolean accepts(int x, int y, int z, BlockState state) {
+            Block want = expected(x, y, z);
+            return want != null && state.getBlock() == want;
+        }
+
+        /** 期望内容的人话描述（错误提示用） */
+        default String describe(int x, int y, int z) {
+            Block want = expected(x, y, z);
+            return want == null ? "空气" : want.getName().getString();
+        }
     }
 
     /** 匹配失败的一条问题（诊断/提示用） */
-    public record Problem(BlockPos pos, @Nullable Block expected, BlockState found) {}
+    public record Problem(BlockPos pos, @Nullable String expectedName, BlockState found) {}
 
     /**
      * 匹配结果。
@@ -59,11 +90,29 @@ public final class StructureMatcher {
     public static Match match(ServerLevel level, BlockPos corePos, Direction defaultBody,
                               int width, int height, int depth, BlockPos coreOffset,
                               Expector expector) {
+        return match(level, corePos, defaultBody, width, height, depth, coreOffset, expector, null);
+    }
+
+    /**
+     * 依次尝试 4 个水平朝向，返回**第一个**完全匹配的结果；都不匹配返回 null。
+     *
+     * @param defaultBody 旧硬编码布局对应的「局部 +z 轴」朝向（旋转从这里开始试）
+     * @param problems    非 null 时把最后一个朝向的不匹配位置写进去（人话提示用）
+     */
+    @Nullable
+    public static Match match(ServerLevel level, BlockPos corePos, Direction defaultBody,
+                              int width, int height, int depth, BlockPos coreOffset,
+                              Expector expector, @Nullable List<Problem> problems) {
         for (int turn = 0; turn < 4; turn++) {
             Direction body = rotateAroundY(defaultBody, turn);
-            var toConsume = check(level, corePos, body, width, height, depth, coreOffset, expector, null);
+            List<Problem> local = problems != null ? new ArrayList<>() : null;
+            var toConsume = check(level, corePos, body, width, height, depth, coreOffset, expector, local);
             if (toConsume != null) {
                 return new Match(body, frontFor(body, depth, coreOffset.getZ()), toConsume);
+            }
+            if (local != null) {
+                problems.clear();
+                problems.addAll(local);
             }
         }
         return null;
@@ -97,15 +146,18 @@ public final class StructureMatcher {
                             right.getStepZ() * x + body.getStepZ() * z);
                     if (checkPos.equals(corePos)) continue;   // 核心自身不检查、不消耗
 
-                    Block expected = expector.expected(x, y, z);
                     BlockState state = level.getBlockState(checkPos);
-                    if (expected == null) {
+                    if (expector.isAirRequired(x, y, z)) {
                         if (state.isAir()) continue;
-                        if (problems != null) problems.add(new Problem(checkPos, null, state));
+                        if (problems != null) {
+                            problems.add(new Problem(checkPos, "空气", state));
+                        }
                         return null;
                     }
-                    if (state.getBlock() != expected) {
-                        if (problems != null) problems.add(new Problem(checkPos, expected, state));
+                    if (!expector.accepts(x, y, z, state)) {
+                        if (problems != null) {
+                            problems.add(new Problem(checkPos, expector.describe(x, y, z), state));
+                        }
                         return null;
                     }
                     toConsume.add(checkPos);

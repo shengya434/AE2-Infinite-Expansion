@@ -1,0 +1,23 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "ae2addon:eternal_heart",
+                       "count":  1
+                   },
+                   {
+                       "item":  "ae2:drive",
+                       "count":  64
+                   },
+                   {
+                       "fluid":  "minecraft:water",
+                       "buckets":  100
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:infinite_drive",
+                        "count":  1
+                    }
+                ]
+}

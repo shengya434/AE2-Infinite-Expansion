@@ -1,0 +1,17 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "modLoaded":  "mysticalagriculture",
+    "inputs":  [
+                   {
+                       "item":  "mysticalagriculture:redstone_seeds",
+                       "count":  1,
+                       "catalyst":  true
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "mysticalagriculture:redstone_essence",
+                        "count":  1
+                    }
+                ]
+}

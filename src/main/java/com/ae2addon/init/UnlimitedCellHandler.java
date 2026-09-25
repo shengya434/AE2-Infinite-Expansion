@@ -26,7 +26,9 @@ public class UnlimitedCellHandler implements ICellHandler {
 
     @Override
     public boolean isCell(ItemStack stack) {
-        return stack.getItem() instanceof UniversalStorageCell;
+        return stack.getItem() instanceof UniversalStorageCell
+                // 2026-09-19：无限 xxx 元件（单物品永久绑定）也走同一 handler
+                || stack.getItem() instanceof com.ae2addon.item.BoundInfiniteCellItem;
     }
 
     /**
@@ -38,6 +40,10 @@ public class UnlimitedCellHandler implements ICellHandler {
 
     @Override
     public @Nullable StorageCell getCellInventory(ItemStack stack, ISaveProvider saveProvider) {
+        // 无限 xxx 元件：单 key 无限（无状态，不需要存档）
+        if (stack.getItem() instanceof com.ae2addon.item.BoundInfiniteCellItem) {
+            return new com.ae2addon.cell.BoundInfiniteCellInventory(stack, saveProvider);
+        }
         if (!isCell(stack)) return null;
         return new UnlimitedCellInventory(stack, saveProvider);
     }

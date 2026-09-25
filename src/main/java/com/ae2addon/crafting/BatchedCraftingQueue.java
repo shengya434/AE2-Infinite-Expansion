@@ -128,6 +128,14 @@ public final class BatchedCraftingQueue {
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
+        // ⚠ 2026-09-18 晚：任务值取证**借用这个已验证会执行的钩子**。
+        // 之前 TaskValueProbe 自己注册 EVENT_BUS 却没被调用（原因未确定），
+        // 而本方法一直在跑，所以把取证挂在这里——诊断必须挂在**确定执行**的路径上。
+        try {
+            com.ae2addon.debug.TaskValueProbe.tick(event.getServer());
+        } catch (Throwable ignored) {
+            // 取证异常绝不影响主流程
+        }
         // 懒加载恢复：世界加载后第一次 tick 从存档恢复巨型订单（断点续跑）
         ensureRestored(event.getServer());
         if (orders.isEmpty()) {
@@ -315,5 +323,25 @@ public final class BatchedCraftingQueue {
                 orders.get(index).cancelOrder();
             }
         }
+    }
+
+    /**
+     * 取消**全部**巨型订单（2026-09-19 sensei：急停按钮第二下「取消所有订单」）。
+     *
+     * @return 已下发的取消数量
+     */
+    public static int cancelAll() {
+        int n = 0;
+        synchronized (orders) {
+            for (var order : orders) {
+                try {
+                    order.cancelOrder();
+                    n++;
+                } catch (Throwable ignored) {
+                    // 单个订单异常不影响其余
+                }
+            }
+        }
+        return n;
     }
 }

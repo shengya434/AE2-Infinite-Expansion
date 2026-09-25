@@ -61,6 +61,105 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
     /** 客户端：订单 id 列表（与 fullOrders 同序同长；取消时回传 id 而不是行索引，见 2026-09-15 修复） */
     public volatile java.util.List<Integer> fullOrderIds = java.util.List.of();
 
+    // ── 一键成型（2026-09-24 sensei 第 3 阶段）────────────────────────────────
+    // 构建状态/进度同步给界面：按钮文案与「已放置 N/M」都用它们。
+
+    @GuiSync(70)
+    public String buildState = "IDLE";
+    @GuiSync(71)
+    public String buildMessage = "";
+    @GuiSync(72)
+    public int buildPlaced;
+    @GuiSync(73)
+    public int buildTotal;
+
+    /** 客户端按钮 → 服务端：请求一键成型 */
+    public void requestBuild() {
+        sendClientAction(ACTION_BUILD, 0);
+    }
+
+    private static final String ACTION_BUILD = "build_structure";
+
+    private void buildServer(int ignored) {
+        if (core != null) {
+            // 服务端权威：直接让 BE 跑构建（它会自己取料/预检/摆放）
+            core.startBuild(getPlayer());
+        }
+        broadcastChanges();
+    }
+
+    // ── 一键回收（2026-09-25 sensei）──────────────────────────────────────────
+    // 界面按一次 = 变成「确定回收」；3 秒内再按一次才真的拆。
+    // 双击判定放在客户端（IntegratedCPUScreen$RecycleButton），这里只负责执行。
+
+    /** 是否正在回收（界面显示进度） */
+    @GuiSync(74)
+    public boolean recycling;
+    @GuiSync(75)
+    public int recycleDone;
+    @GuiSync(76)
+    public int recycleTotal;
+    /** 上一次回收是否已结束（true 且 total>0 → 按钮显示"已回收 N"） */
+    @GuiSync(77)
+    public boolean recycleFinished;
+
+    // ── 结构形态选择（2026-09-25 sensei 选 A1：界面加形态切换）──────────────
+    // 决定「一键成型放哪一份结构」：false = 含拓展（31×53×41）、true = 无拓展（27×44×42）。
+    // 结构**判定**两份都认（matchAny），这里只管"一键成型放哪份"。
+
+    /** 当前选定的形态是不是"无拓展单元" */
+    @GuiSync(78)
+    public boolean noExpandForm;
+
+    /** -1 automatic; 0 south, 1 west, 2 north, 3 east. */
+    @GuiSync(79)
+    public int buildFacing = -1;
+
+    private static final String ACTION_BUILD_FACING = "build_facing";
+
+    public void requestBuildFacing(int facing) {
+        sendClientAction(ACTION_BUILD_FACING, facing);
+    }
+
+    private void buildFacingServer(int facing) {
+        if (core != null) core.setBuildFacing(facing);
+        broadcastChanges();
+    }
+
+    /** 客户端按钮 → 服务端：切换结构形态（true = 无拓展） */
+    public void requestFormVariant(boolean noExpand) {
+        sendClientAction(ACTION_FORM_VARIANT, noExpand ? 1 : 0);
+    }
+
+    private static final String ACTION_FORM_VARIANT = "form_variant";
+
+    private void formVariantServer(int flag) {
+        if (core != null) {
+            core.setNoExpandForm(flag != 0);
+        }
+        broadcastChanges();
+    }
+
+    /** 客户端按钮 → 服务端：确认回收（拆掉除控制器以外的结构方块） */
+    public void requestRecycle() {
+        sendClientAction(ACTION_RECYCLE, 0);
+    }
+
+    private static final String ACTION_RECYCLE = "recycle_structure";
+
+    private void recycleServer(int ignored) {
+        if (core != null) {
+            int n = core.startRecycle(getPlayer());
+            var p = getPlayer();
+            if (p != null) {
+                p.sendSystemMessage(Component.literal(n > 0
+                        ? "§b[集成CPU] 开始回收：" + n + " 块结构方块将退回（控制器保留）"
+                        : "§e[集成CPU] 没有可回收的结构方块（或正在摆放/回收中）"));
+            }
+        }
+        broadcastChanges();
+    }
+
     /** 服务端：上次发送的 lane 列表指纹（变化检测，防高频刷包） */
     private String lastLanesKey = "";
 
@@ -77,6 +176,64 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
         this.core = core;
         registerClientAction(ACTION_SELECT_LANE, Integer.class, this::selectLaneServer);
         registerClientAction(ACTION_CANCEL_ORDER, Integer.class, this::cancelOrderServer);
+        registerClientAction(ACTION_HALT, Integer.class, this::haltServer);
+        registerClientAction(ACTION_CANCEL_ALL, Integer.class, this::cancelAllServer);
+        registerClientAction(ACTION_BUILD, Integer.class, this::buildServer);
+        registerClientAction(ACTION_RECYCLE, Integer.class, this::recycleServer);
+        registerClientAction(ACTION_FORM_VARIANT, Integer.class, this::formVariantServer);
+        registerClientAction(ACTION_BUILD_FACING, Integer.class, this::buildFacingServer);
+    }
+
+    // ── 急停（2026-09-19 sensei：AE2-VM 超 Long.MAX 会报错，需要强行停工按钮）──
+
+    private static final String ACTION_HALT = "halt";
+
+    /** 同步给界面的急停状态（渲染用） */
+    @GuiSync(54)
+    public boolean halted;
+
+    /** 界面按下的急停/恢复：切到目标状态并广播（1=急停，0=恢复） */
+    public void requestHalt(boolean target) {
+        sendClientAction(ACTION_HALT, target ? 1 : 0);
+    }
+
+    private void haltServer(int flag) {
+        boolean want = flag != 0;
+        com.ae2addon.crafting.CraftingCompat.setCpuHalted(want);
+        this.halted = want;
+        broadcastChanges();
+    }
+
+    /**
+     * **强制取消所有订单**（2026-09-19 sensei：急停后左按钮显示「删除」，点它就是强制取消订单）。
+     * <p>
+     * 做的事：取消我们自己的巨型订单队列 + 取消当前 CPU 簇的任务。
+     * **注意：不清除急停状态** —— 想恢复线程工作请点右侧「恢复」按钮（sensei 定义的两个按钮）。
+     */
+    public void cancelAllOrders() {
+        sendClientAction(ACTION_CANCEL_ALL, 1);
+    }
+
+    private static final String ACTION_CANCEL_ALL = "cancel_all";
+
+    private void cancelAllServer(int flag) {
+        int cancelled = 0;
+        try {
+            // ① 我们自己的巨型订单队列（一次性全下取消；会 cancel 各批次的 CraftingLink）
+            cancelled += com.ae2addon.crafting.BatchedCraftingQueue.cancelAll();
+            // ② 本机**所有线程**的任务：主簇 + 全部量子分裂 lane
+            //  ⚠ 2026-09-19（sensei：「删除后订单没有全部取消完，仍然会有线程在工作」）：
+            //  原来这里只 `core.getCluster().cancelJob()` —— 只取消主簇，
+            //  几十条 lane 上的任务一个都没动。改用 IntegratedCPUBE.cancelAllLanes()。
+            if (core != null) {
+                cancelled += core.cancelAllLanes();
+            }
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] 强制取消所有订单：已清理 {} 项（主簇 + 全部 lane；急停状态保持不变）",
+                    cancelled);
+        } catch (Throwable t) {
+            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon] 强制取消所有订单时异常: {}", t.toString());
+        }
     }
 
     // 客户端构造（IForgeMenuType 工厂）：从网络包读 locator 定位 host
@@ -142,9 +299,17 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
 
     /**
      * 服务端处理：setCPU 到目标 lane，原版状态同步机制会自动刷新任务列表。
+     * <p>
+     * ⚠ 2026-09-24 sensei：「没办法在量子分裂线程列表内切换线程」—— 根因同 `broadcastChanges`：
+     * 这里也是 {@code ownerOf(core.getCluster())}，而我们的结构建不出 AE2 主簇 →
+     * `getCluster()` 恒 null → owner 恒 null → **直接 return，点了没反应**。
+     * 现在同样回退成 core 自己。
      */
     private void selectLaneServer(int index) {
         var owner = com.ae2addon.block.IntegratedCPURegistry.ownerOf(core.getCluster());
+        if (owner == null) {
+            owner = core;
+        }
         if (owner == null) {
             return;
         }
@@ -152,7 +317,32 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
         if (index >= 0 && index < cpus.size()) {
             setCPU(cpus.get(index));
             selectedLaneIndex = index;
+            // 选中项变化也要下发：LaneListPacket 的发送条件是"lane 文本变化"，
+            // 单纯点一下不会发 → 客户端的高亮/选中行不会更新（2026-09-24）。
+            resendLaneList(owner);
         }
+    }
+
+    /** 立刻把当前 lane 列表（含选中项）下发给客户端 */
+    private void resendLaneList(com.ae2addon.block.IntegratedCPUBE owner) {
+        if (!(getPlayer() instanceof net.minecraft.server.level.ServerPlayer sp)) {
+            return;
+        }
+        var cpus = owner.allCpus();
+        var lanes = new java.util.ArrayList<String>(cpus.size());
+        int active = 0;
+        for (int i = 0; i < cpus.size(); i++) {
+            var lane = cpus.get(i);
+            if (lane.isBusy()) {
+                active++;
+            }
+            lanes.add(describeLane(i, lane));
+        }
+        lastLanesKey = String.join("\u0000", lanes);
+        com.ae2addon.AE2Addon.NETWORK.send(
+                net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> sp),
+                new com.ae2addon.network.LaneListPacket(
+                        lanes, cpus.size(), active, owner.isFormed(), selectedLaneIndex));
     }
 
     /**
@@ -169,8 +359,17 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
     @Override
     public void broadcastChanges() {
         // 先刷新 lane 状态（在 super 的 GuiSync 发送之前）
+        //
+        // ⚠ 2026-09-24 修「GUI 里线程数显示 0」：不能再靠 `ownerOf(core.getCluster())` 找归属。
+        //   我们的多方块结构**永远建不出 AE2 主簇**（CraftingCPUCalculator 要求 ≤17³ 实心，
+        //   见 IntegratedCPUBE#refreshLanes 的注释），所以 getCluster() 恒为 null →
+        //   ownerOf(null) 恒为 null → 整段同步被跳过，界面永远显示 0 个 lane。
+        //   这个菜单**本来就是某个控制器的菜单**，所以「主人就是它自己」，直接用 core。
         var primary = core.getCluster();
         var owner = com.ae2addon.block.IntegratedCPURegistry.ownerOf(primary);
+        if (owner == null) {
+            owner = core;
+        }
         if (!DIAG_LOGGED) {
             DIAG_LOGGED = true;
             com.ae2addon.AE2Addon.LOGGER.info(
@@ -194,6 +393,8 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
             formed = owner.isFormed();
             laneCount = cpus.size();
             activeJobs = active;
+            // 急停状态同步（服务端权威，客户端据此显示"急停中/恢复"）
+            halted = com.ae2addon.crafting.CraftingCompat.cpuHalted;
             // 完整列表变化检测：状态类型变化（空闲/忙碌/销毁）才发，避免每 tick 刷包
             String key = String.join("\u0000", lanes);
             if (!key.equals(lastLanesKey)) {
@@ -214,6 +415,33 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
             setLaneField(5, lanes.size() > 5 ? lanes.get(5) : "");
             setLaneField(6, lanes.size() > 6 ? lanes.get(6) : "");
             setLaneField(7, lanes.size() > 7 ? lanes.get(7) : "");
+        } else {
+            // ⚠ 2026-09-24：菜单现在**未成型也能打开**（sensei：界面始终可打开、成型状态放进 GUI）。
+            // 未成型时 core.getCluster() 为 null、owner 自然为 null —— 必须显式把状态同步成
+            // 「未成型 + 0 线程」，否则界面会一直显示上一次的旧值（甚至以为已成型）。
+            if (core != null) {
+                formed = core.isFormed();
+                if (!formed) {
+                    laneCount = 0;
+                    activeJobs = 0;
+                }
+            }
+        }
+
+        // 一键成型状态同步（未成型/成型都要显示，所以放在 if/else 外面）
+        if (core != null) {
+            buildState = core.getBuildState().name();
+            buildMessage = core.getBuildMessage();
+            buildPlaced = core.getBuildPlaced();
+            buildTotal = core.getBuildTotal();
+            // 一键回收进度（2026-09-25）
+            recycling = core.isRecycling();
+            recycleDone = core.getRecycleProgress();
+            recycleTotal = core.getRecycleTotal();
+            recycleFinished = core.isRecycleFinished();
+            // 结构形态（2026-09-25 A1）：界面按钮显示当前选定的是哪一份
+            noExpandForm = core.isNoExpandForm();
+            buildFacing = core.getBuildFacing();
         }
 
         // 巨型订单列表同步（变化检测：订单数/进度/状态变化才发）

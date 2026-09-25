@@ -103,6 +103,17 @@ public final class RequirementCalculator {
         /** 展开时用到的每个物品的配方列表快照（校验：getCraftingFor 是否还是这些） */
         final Map<AEKey, Collection<IPatternDetails>> snapshots;
         final boolean truncated;
+        /**
+         * 根样板**一次执行的产出量**（{@code outputAmount(rootPattern, what)}，至少 1）。
+         * <p>
+         * ⚠ 2026-09-19（sensei：「实际每批跑了 9.2E…真实合成数量比请求数量多了 64 倍」）：
+         * {@link #computePerUnit} 用 {@code need = 1} 展开，而 expand 里
+         * {@code times = ceil(need / outAmount)} —— 根样板一次出 64 个时
+         * {@code ceil(1/64) = 1}，等于**按"整整一次执行"记账**：叶子需求与样板执行次数
+         * 全被放大了 {@code rootOutAmount} 倍（实测现象："每单位需求 redstone = 64"）。
+         * 缩放时必须除以它，见 {@link #scaleToAmount}。
+         */
+        final long rootOutAmount;
         int invalidations;
         int skipValidation;
 
@@ -110,13 +121,30 @@ public final class RequirementCalculator {
                     Map<IPatternDetails, BigInteger> perUnitPatternTimes,
                     Map<AEKey, BigInteger> perUnitLeafNeeds,
                     Map<AEKey, Collection<IPatternDetails>> snapshots,
-                    boolean truncated) {
+                    boolean truncated,
+                    long rootOutAmount) {
             this.perUnit = perUnit;
             this.perUnitPatternTimes = perUnitPatternTimes;
             this.perUnitLeafNeeds = perUnitLeafNeeds;
             this.snapshots = snapshots;
             this.truncated = truncated;
+            this.rootOutAmount = Math.max(1L, rootOutAmount);
         }
+    }
+
+    /**
+     * 把缓存里"按 1 个产物 ceil 展开"的值，按**目标产物数量**正确缩放。
+     * <p>
+     * 正确式：{@code 值 × amount ÷ rootOutAmount}（向上取整，保持"宁可多算"的安全方向）。
+     * 根样板一次出 1 个时 {@code rootOutAmount = 1}，与旧行为完全一致（普通配方不受影响）。
+     */
+    private static BigInteger scaleToAmount(CachedNeeds cached, BigInteger perUnitValue,
+                                            BigInteger amountBI) {
+        if (cached.rootOutAmount <= 1L) {
+            return perUnitValue.multiply(amountBI);
+        }
+        BigInteger div = BigInteger.valueOf(cached.rootOutAmount);
+        return perUnitValue.multiply(amountBI).add(div).subtract(BigInteger.ONE).divide(div);
     }
 
     /** 一次分析的结果（单趟产出全部答案）。 */
@@ -159,13 +187,14 @@ public final class RequirementCalculator {
         CachedNeeds cached = cachedPerUnit(grid, what);
         Map<AEKey, BigInteger> perUnit = cached.perUnit;
 
-        // 缩放：needs = perUnit × amount
+        // 缩放：needs = perUnit × amount ÷ rootOutAmount（⚠ 2026-09-19：必须除，
+        // 否则"一次出 64 个"的样板会被算成 64 倍需求 —— 见 CachedNeeds.rootOutAmount）
         BigInteger amountBI = BigInteger.valueOf(amount);
         Map<AEKey, BigInteger> needs = new HashMap<>();
         boolean oversized = cached.truncated;
         BigInteger limitBI = BigInteger.valueOf(safeLimit);
         for (var e : perUnit.entrySet()) {
-            BigInteger scaled = e.getValue().multiply(amountBI);
+            BigInteger scaled = scaleToAmount(cached, e.getValue(), amountBI);
             needs.put(e.getKey(), scaled);
             if (!oversized && scaled.compareTo(limitBI) > 0) {
                 oversized = true;
@@ -178,7 +207,7 @@ public final class RequirementCalculator {
         } else if (cached.truncated) {
             perBatch = 1; // 调用方会拒绝；这里给最保守值
         } else {
-            perBatch = maxSafeBatchOf(perUnit, amount, safeLimit);
+            perBatch = maxSafeBatchOf(perUnit, amount, safeLimit, cached.rootOutAmount);
         }
         return new Analysis(oversized, cached.truncated, perBatch, needs, perUnit);
     }
@@ -220,7 +249,9 @@ public final class RequirementCalculator {
         // 原版语义：usedItems = 需从网络提取注入 CPU inventory 的初始材料（叶子总需求），
         // 库存不够时 tryExtractInitialItems 自然报 MISSING_INGREDIENT（正确缺料行为）。
         for (var e : cached.perUnitLeafNeeds.entrySet()) {
-            BigInteger need = e.getValue().multiply(amountBI);
+            // ⚠ 2026-09-19：必须 scaleToAmount（除以根样板单次产出），否则"64 出 64"的
+            // 样板会把叶子需求算成 64 倍 —— 那是"真实合成数量比请求多 64 倍"的直接成因
+            BigInteger need = scaleToAmount(cached, e.getValue(), amountBI);
             long needLong = need.min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
             if (needLong > 0) {
                 used.add(e.getKey(), needLong);
@@ -228,7 +259,9 @@ public final class RequirementCalculator {
         }
         Map<appeng.api.crafting.IPatternDetails, Long> patternTimes = new HashMap<>();
         for (var e : cached.perUnitPatternTimes.entrySet()) {
-            BigInteger scaled = e.getValue().multiply(amountBI);
+            // ⚠ 同上：不除 rootOut 的话，一次出 64 个的样板会被要求执行 64 倍的次数
+            // （实测：每批 1.44e17 个产物，CPU 任务值却也是 1.44e17 次执行 → 多产 64 倍）
+            BigInteger scaled = scaleToAmount(cached, e.getValue(), amountBI);
             patternTimes.put(e.getKey(), scaled
                     .min(BigInteger.valueOf(Long.MAX_VALUE)).longValue());
         }
@@ -244,10 +277,15 @@ public final class RequirementCalculator {
                 patternTimes);
     }
 
-    /** 由每单位需求反推单批安全产物量（瓶颈材料 = 需求最大的那个）。 */
-    private static long maxSafeBatchOf(Map<AEKey, BigInteger> perUnit, long amount, long safeLimit) {
+    /** 由每单位需求反推单批安全产物量（瓶颈材料 = 需求最大的那个）。
+     *  ⚠ 2026-09-19：perUnit 是"按 1 个产物 ceil 展开"的值，乘了 rootOut 倍，
+     *  所以安全批量要按 {@code safeLimit × rootOut / perUnitNeed} 反推，
+     *  否则"一次出 64 个"的样板会把批量算小 64 倍（拆批数虚增 64 倍）。 */
+    private static long maxSafeBatchOf(Map<AEKey, BigInteger> perUnit, long amount,
+                                       long safeLimit, long rootOut) {
         BigInteger perBatch = BigInteger.valueOf(amount);
-        BigInteger limitBI = BigInteger.valueOf(safeLimit);
+        BigInteger limitBI = BigInteger.valueOf(safeLimit)
+                .multiply(BigInteger.valueOf(Math.max(1L, rootOut)));
         for (var e : perUnit.entrySet()) {
             BigInteger perUnitNeed = e.getValue();
             if (perUnitNeed.signum() <= 0) {
@@ -343,6 +381,28 @@ public final class RequirementCalculator {
         }
         expand(grid, what, BigInteger.ONE, new HashSet<>(), needs, patternTimes,
                 leafNeeds, snapshots, budget, truncated);
+        // ⚠ 2026-09-19：根样板一次出几个 —— 上面是按 need=1 展开的，
+        // `times = ceil(1/outAmount)` 会向上取整成"整整一次执行"，
+        // 于是叶子需求/执行次数都被放大 outAmount 倍。这里把倍数记下来，
+        // 缩放时统一除掉（见 scaleToAmount）。普通 1:1 配方 outAmount=1 → 行为不变。
+        long rootOut = 1L;
+        try {
+            var rootPatterns = grid.getCraftingService().getCraftingFor(what);
+            IPatternDetails bestRoot = pickBestPattern(grid, rootPatterns);
+            if (bestRoot != null) {
+                long out = outputAmount(bestRoot, what);
+                if (out > 1L) {
+                    rootOut = out;
+                    if (CraftingCompat.debugLogs) {
+                        com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ae2addon][debug] 根样板一次出 {} 个（{}）→ 缩放时按 /{} 修正",
+                                out, bestRoot.getClass().getSimpleName(), out);
+                    }
+                }
+            }
+        } catch (RuntimeException ignored) {
+            // 取不到就按 1 处理（保守：宁可多算）
+        }
         if (CraftingCompat.debugLogs) {
             com.ae2addon.AE2Addon.LOGGER.info(
                     "[ae2addon][debug] 每单位需求 {}: {} 种材料, 截断={}",
@@ -358,7 +418,48 @@ public final class RequirementCalculator {
                         "[ae2addon][debug]   {} = {}", e.getKey(), e.getValue());
             }
         }
-        return new CachedNeeds(needs, patternTimes, leafNeeds, snapshots, truncated[0]);
+        return new CachedNeeds(needs, patternTimes, leafNeeds, snapshots, truncated[0], rootOut);
+    }
+
+    /**
+     * 选「能继续展开」且「非 EMC」的配方里单次材料总消耗<b>最小</b>的（2026-08-22）。
+     * 必须在 AE2 原版的代价路径上，否则残留测试样板会被当成最坏分支。
+     * <p>
+     * 2026-09-19：从 {@link #expand} 内联代码抽出来，供 {@link #computePerUnit}
+     * 计算"根样板一次出几个"时复用 —— **两处选中同一个样板**，
+     * 否则 rootOutAmount 会和实际展开用的样板不一致（那正是 64 倍多产的成因）。
+     */
+    private static IPatternDetails pickBestPattern(IGrid grid,
+                                                   Collection<IPatternDetails> patterns) {
+        if (patterns == null || patterns.isEmpty()) {
+            return null;
+        }
+        IPatternDetails best = null;
+        BigInteger bestCost = null;
+        for (var pattern : patterns) {
+            if (isEmcPattern(pattern)) {
+                continue;
+            }
+            if (!isExpandable(grid, pattern)) {
+                continue;
+            }
+            BigInteger cost = patternCost(pattern);
+            if (best == null || cost.compareTo(bestCost) < 0) {
+                bestCost = cost;
+                best = pattern;
+            }
+        }
+        if (best == null) {
+            // 全部被跳过（整条链都是 EMC/外部提供）：取消耗最小的兜底
+            for (var pattern : patterns) {
+                BigInteger cost = patternCost(pattern);
+                if (best == null || cost.compareTo(bestCost) < 0) {
+                    bestCost = cost;
+                    best = pattern;
+                }
+            }
+        }
+        return best;
     }
 
     private static void expand(IGrid grid, AEKey key, BigInteger need,
@@ -410,31 +511,7 @@ public final class RequirementCalculator {
         // 每单位需求撑到 10^12+，连 1 单位的订单都被判超限/无法拆批
         // （sensei 实测 15:37：dark_oak_log 1M 单 eternal_heart=999998000001 → perBatch=1 拒绝）。
         // 安全性不变：若连最省路径都超限 → 拦截拆批，仍然正确。
-        IPatternDetails best = null;
-        BigInteger bestCost = null;
-        for (var pattern : patterns) {
-            if (isEmcPattern(pattern)) {
-                continue;
-            }
-            if (!isExpandable(grid, pattern)) {
-                continue;
-            }
-            BigInteger cost = patternCost(pattern);
-            if (best == null || cost.compareTo(bestCost) < 0) {
-                bestCost = cost;
-                best = pattern;
-            }
-        }
-        if (best == null) {
-            // 全部被跳过（整条链都是 EMC/外部提供）：取消耗最小的兜底，需求照记
-            for (var pattern : patterns) {
-                BigInteger cost = patternCost(pattern);
-                if (best == null || cost.compareTo(bestCost) < 0) {
-                    bestCost = cost;
-                    best = pattern;
-                }
-            }
-        }
+        IPatternDetails best = pickBestPattern(grid, patterns);
         if (best == null) {
             path.remove(key);
             return;
@@ -450,7 +527,7 @@ public final class RequirementCalculator {
             }
             com.ae2addon.AE2Addon.LOGGER.info(
                     "[ae2addon][debug] 展开 {}: 最省配方={} 成本={} 输入=[{}]",
-                    key, best.getClass().getName(), bestCost, sb);
+                    key, best.getClass().getName(), patternCost(best), sb);
         }
 
         long outAmount = outputAmount(best, key);

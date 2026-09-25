@@ -36,6 +36,14 @@ public class QianJiMenu extends AbstractContainerMenu {
 
     private static final int BTN_PREV = 0;
     private static final int BTN_NEXT = 1;
+    /**
+     * 按钮 id ≥ 此值 → "跳到第 (id - JUMP_BASE) 页"。
+     * <p>
+     * 2026-09-21 v244：搜索结果在一页之外时，客户端需要**直接跳页**；
+     * 复用现有的 {@code clickMenuButton} 通道比新加一个包便宜，也不引入新的权限面
+     * （按钮点击本来就要服务端校验）。
+     */
+    private static final int JUMP_BASE = 100;
 
     private final QianJiBE be;
     /** 分页包装器：将 1280 槽映射为当前页的 54 槽 */
@@ -134,6 +142,10 @@ public class QianJiMenu extends AbstractContainerMenu {
      */
     @Override
     public boolean clickMenuButton(Player player, int id) {
+        // id ≥ JUMP_BASE：直接跳页（GUI 搜索结果的定位），id 0/1 仍是上一页/下一页
+        if (id >= JUMP_BASE) {
+            return jumpToPage(id - JUMP_BASE);
+        }
         int curPage = pageData.get(0);
         int newPage = curPage;
         if (id == BTN_PREV) newPage = Math.max(0, curPage - 1);
@@ -145,6 +157,49 @@ public class QianJiMenu extends AbstractContainerMenu {
             return true;
         }
         return false;
+    }
+
+    /**
+     * 跳到指定页（自动夹在合法范围内）。翻页的三件套与 {@link #clickMenuButton} 完全一致，
+     * 免得两处各写一遍、以后改一处忘另一处。
+     *
+     * @param page 目标页（0 起）
+     * @return 是否真的换了页
+     */
+    public boolean jumpToPage(int page) {
+        int target = Math.max(0, Math.min(MAX_PAGE, page));
+        if (target == pageData.get(0)) return false;
+        pageData.set(0, target);
+        pagedHandler.setPage(target);
+        broadcastChanges();
+        return true;
+    }
+
+    /**
+     * GUI 搜索：在**打开这个菜单的那台千机**上搜（服务端执行，扫 1280 槽）。
+     * <p>
+     * 门槛就挂在"菜单"上——玩家必须先真的打开这台千机，才能通过它搜索；
+     * 客户端自己拿不到任何样板数据。搜索逻辑与 {@code /qianji find} 共用同一份实现。
+     *
+     * @param term  关键词
+     * @param limit 条数上限（≤0 = 不限）
+     * @return 命中列表（槽位 + 数据）
+     */
+    public java.util.List<QianJiBE.PatternHit> searchPatterns(String term, int limit) {
+        return be == null ? java.util.List.of() : be.searchPatterns(term, limit);
+    }
+
+    /**
+     * 这台千机所属的网络（服务端）。
+     * <p>
+     * 2026-09-21：编码时"空白样板可从网络直接取用"要用它（见 {@code QianJiPatternPacket}）。
+     * 客户端拿到的 be 不可靠/为 null → 返回 null，调用方自己兜底。
+     *
+     * @return 网络；没接入或客户端时返回 {@code null}
+     */
+    public appeng.api.networking.IGrid grid() {
+        if (be == null || be.getLevel() == null || be.getLevel().isClientSide()) return null;
+        return be.getGrid();
     }
 
     public int getCurrentPage() {

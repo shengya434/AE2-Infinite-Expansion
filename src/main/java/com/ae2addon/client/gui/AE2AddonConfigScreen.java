@@ -68,6 +68,9 @@ public class AE2AddonConfigScreen extends Screen {
         entries.add(new Entry("feederPowerFeCap — 感应卡单轮供电FE上限（0/1/2速度卡=此值/×16/无上限）", AE2AddonConfig.FEEDER_POWER_FE_CAP, 1, Integer.MAX_VALUE));
         entries.add(new Entry("feederPowerPassesPerTick — 感应卡每tick供电轮数（1=单轮，N=N×单轮上限）", AE2AddonConfig.FEEDER_POWER_PASSES, 1, 1024));
         entries.add(new Entry("debugLogs — 调试日志", AE2AddonConfig.DEBUG_LOGS, 0, 0));
+        // v281：无线千机·样板终端的能源上限（AE；0 = 跟随 AE2）
+        entries.add(new Entry("wirelessTerminalCapacity — 无线千机终端能源上限AE（0=跟AE2一样）",
+                AE2AddonConfig.WIRELESS_TERMINAL_CAPACITY, 0, Long.MAX_VALUE));
     }
 
     @Override

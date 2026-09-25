@@ -1,0 +1,20 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "mekanism:pellet_antimatter",
+                       "count":  1
+                   },
+                   {
+                       "fluid":  "minecraft:lava",
+                       "buckets":  10
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:eternal_heart",
+                        "count":  32
+                    }
+                ],
+    "modLoaded":  "mekanism"
+}

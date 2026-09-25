@@ -1,0 +1,27 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "ae2:pattern_provider",
+                       "count":  1
+                   },
+                   {
+                       "item":  "ae2:interface",
+                       "count":  1
+                   },
+                   {
+                       "item":  "ae2:singularity",
+                       "count":  1
+                   },
+                   {
+                       "item":  "ae2addon:eternal_heart",
+                       "count":  1
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:qianji",
+                        "count":  1
+                    }
+                ]
+}

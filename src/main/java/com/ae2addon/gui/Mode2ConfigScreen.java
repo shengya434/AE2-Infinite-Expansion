@@ -891,7 +891,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
             var entry = filteredItems.get(i);
             boolean isInfinite = entry.isInfinite;
             AEKey key = entry.key;
-            long amount = entry.amount;
+            java.math.BigInteger amount = entry.amount;
             long bytes = entry.bytes;
 
             // 行悬停高亮
@@ -949,6 +949,21 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         if (amount >= 1_000_000) return (amount / 1_000_000) + "M";
         if (amount >= 1_000) return (amount / 1_000) + "K";
         return String.valueOf(amount);
+    }
+
+    /**
+     * BigInteger 版数量格式化（2026-09-19，sensei：真实存储量远超 Long.MAX 时面板只显示 9.2E）。
+     * <p>
+     * 在 long 范围内沿用原来的 K/M/G/T/P/E 后缀（观感不变）；
+     * 超出 long 则用科学计数（如 {@code 1.23e24}）——继续用后缀会拼出几十个字符撑爆面板。
+     */
+    private String formatAmount(java.math.BigInteger amount) {
+        if (amount == null) return "0";
+        if (amount.compareTo(java.math.BigInteger.valueOf(Long.MAX_VALUE)) <= 0) {
+            return formatAmount(amount.longValue());
+        }
+        String s = amount.toString();
+        return s.charAt(0) + "." + s.substring(1, Math.min(3, s.length())) + "e" + (s.length() - 1);
     }
 
     // ── 点击处理 ──

@@ -32,13 +32,100 @@ public class AE2Addon {
     );
 
     private void onCommonSetup(net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent event) {
+        // 2026-09-20：把**千机样板**注册成 AE2 认可的样板（解码器）。
+        // 不做这一步，PatternDetailsHelper.isEncodedPattern(千机样板) 恒为假 →
+        // EAEP 的「上传样板」、样板管理终端、其它 mod 的样板工具全都把我们当普通物品
+        //（逐个 mixin 放宽过滤只是治标，这一步才治本）。
+        try {
+            appeng.api.crafting.PatternDetailsHelper.registerDecoder(
+                    new com.ae2addon.crafting.QianJiPatternDecoder());
+            LOGGER.info("[ae2addon] 已注册千机样板解码器（AE2 的 isEncodedPattern/decodePattern 现在认得千机样板）");
+        } catch (Throwable t) {
+            LOGGER.warn("[ae2addon] 注册千机样板解码器失败：{}", t.toString());
+        }
         event.enqueueWork(() -> {
             // 注册集成 CPU 菜单 opener（AE2 locator 协议）
             appeng.menu.MenuOpener.addOpener(
                     ModMenuTypes.INTEGRATED_CPU.get(),
                     com.ae2addon.gui.IntegratedCPUMenu::openMenu);
+            // 千机·样板终端 opener（2026-09-21 v272：无线终端要靠它才打得开）
+            registerTerminalOpener();
+            // 无线终端要能放进无线访问点的链接槽（2026-09-21 v273）
+            registerGridLinkable();
+            // 通用终端（AE2WTLib）集成：把千机终端登记成通用终端的一种状态（2026-09-21 v273）
+            if (com.ae2addon.compat.ae2wtlib.AE2WTLibCompat.isLoaded()) {
+                com.ae2addon.compat.ae2wtlib.QianJiWUTRegistrar.register();
+            } else {
+                LOGGER.info("[ae2addon][wut] 没装 AE2WTLib，跳过通用终端集成（千机终端照旧能用）");
+            }
             dumpRegistrations();
+            dumpKeyTypes();
         });
+    }
+
+    /**
+     * 把无线千机·样板终端登记成 AE2 认可的**可链接物品**（2026-09-21 v273）。
+     * <p>
+     * 为什么必须显式登记（javap 核对 15.4.10 的字节码）：无线访问点的链接槽是
+     * {@code RestrictedInputSlot} 的 {@code GRID_LINKABLE_ITEM} 分支，它按
+     * **物品对象**查处理器 —— {@code GridLinkables.get(stack.getItem())} ——
+     * 而 AE2 只在 {@code InitGridLinkables} 里给 {@code ae2:wireless_terminal} 与
+     * {@code ae2:wireless_crafting_terminal} 各注册了一份。
+     * 我们的物品虽然**继承**了 {@code WirelessTerminalItem}，但**不会自动继承这份登记** →
+     * 表现就是 sensei 报的"放不进无线访问点的链接槽位"（顺带也永远绑不上访问点）。
+     * 这里补上登记，处理器直接用 AE2 自己那份（{@code canLink} 判 instanceof，
+     * {@code link} 写 {@code accessPoint} NBT —— 与 AE2 无线终端完全一致）。
+     */
+    private static void registerGridLinkable() {
+        try {
+            appeng.api.features.GridLinkables.register(
+                    ModItems.QIAN_JI_WIRELESS_TERMINAL_ITEM.get(),
+                    appeng.items.tools.powered.WirelessTerminalItem.LINKABLE_HANDLER);
+            LOGGER.info("[ae2addon] 无线终端已登记为可链接物品（可以放进无线访问点的链接槽了）");
+        } catch (Throwable t) {
+            LOGGER.warn("[ae2addon] 登记可链接物品失败：{}", t.toString());
+        }
+    }
+
+    /**
+     * 给千机·样板终端注册 AE2 的菜单 opener（2026-09-21 v272）。
+     * <p>
+     * 无线终端右键走的是 AE2 自己的链路：{@code WirelessTerminalItem#use} →
+     * {@code MenuOpener.open(getMenuType(), player, locator)}。没注册 opener 的话，
+     * AE2 只会在日志留一句 "Trying to open menu for unknown menu type" 然后什么都不发生。
+     * <p>
+     * ⚠ 2026-09-21 v273：终端菜单改成继承 AE2 的 {@code AEBaseMenu}（通用终端的切换包要求），
+     * 所以这里不再需要 v272 那个"原生类型转换"绕开泛型上界的写法了。
+     */
+    private static void registerTerminalOpener() {
+        try {
+            appeng.menu.MenuOpener.addOpener(
+                    ModMenuTypes.QIAN_JI_TERMINAL.get(),
+                    com.ae2addon.gui.QianJiTerminalMenu::openTerminal);
+            LOGGER.info("[ae2addon] 千机·样板终端 opener 已注册（线缆面板 + 无线终端 + 通用终端共用）");
+        } catch (Throwable t) {
+            LOGGER.warn("[ae2addon] 注册千机·样板终端 opener 失败：{}", t.toString());
+        }
+    }
+
+    /**
+     * 键类型自检（2026-09-19）：把已注册的 AE 键类型摊出来。
+     * <p>
+     * 为什么需要：化学品（Applied-Mekanistics）兼容是**按注册名**探测的
+     * （{@code appmek:chemical}），而这个 id 是我从对方 jar 的 lang/模型文件名推出来的。
+     * 万一真实 id 不同，这行日志会直接给出答案 —— 不用进游戏猜、也不用截图。
+     */
+    private static void dumpKeyTypes() {
+        try {
+            var sb = new StringBuilder();
+            for (var type : appeng.api.stacks.AEKeyTypes.getAll()) {
+                sb.append(type.getId()).append(' ');
+            }
+            LOGGER.info("[ae2addon] 已注册的 AE 键类型: {}", sb.toString().trim());
+            LOGGER.info("[ae2addon] {}", com.ae2addon.compat.ChemicalCompat.describe());
+        } catch (Throwable t) {
+            LOGGER.warn("[ae2addon] 键类型自检失败: {}", t.toString());
+        }
     }
 
     /** 注册表自检（2026-08-28：创造标签页物品缺失排查）。 */
@@ -86,6 +173,15 @@ public class AE2Addon {
             } catch (Throwable t) {
                 LOGGER.warn("[ae2addon] part 模型注册失败(构造期): ", t);
             }
+            // 千机·样板终端（线缆面板 part，2026-09-21 v249）：同样必须早于 PartModels.freeze()
+            try {
+                var terminalModels = appeng.items.parts.PartModelsHelper
+                        .createModels(com.ae2addon.part.QianJiTerminalPart.class);
+                appeng.api.parts.PartModels.registerModels(terminalModels);
+                LOGGER.info("[ae2addon] 终端 part 模型已注册: {}", terminalModels.size());
+            } catch (Throwable t) {
+                LOGGER.warn("[ae2addon] 终端 part 模型注册失败(构造期): ", t);
+            }
         }
 
         // 注册物品
@@ -100,6 +196,12 @@ public class AE2Addon {
 
         // 注册菜单类型
         ModMenuTypes.MENUS.register(modBus);
+
+        // 注册配方序列化器（2026-09-19：无限精华 + 元件外壳 → 无限 xxx 元件）
+        com.ae2addon.init.ModRecipes.SERIALIZERS.register(modBus);
+        // 配方类型也必须走 DeferredRegister：直接用 RecipeType.register(...) 会在（已冻结的）
+        // 内置注册表上写 → 启动即崩（2026-09-19 实锤，见 ModRecipes.RECIPE_TYPES 的注释）
+        com.ae2addon.init.ModRecipes.RECIPE_TYPES.register(modBus);
 
         // 集成 CPU 菜单 opener 延迟到注册表就绪后注册（FMLCommonSetupEvent）
         modBus.addListener(this::onCommonSetup);
@@ -167,10 +269,81 @@ public class AE2Addon {
                 com.ae2addon.network.QianJiPatternPacket::handle
         );
 
+        // 千机 GUI 搜索（2026-09-21 v244）：12 = 请求（C→S，只发关键词），13 = 结果（S→C，只回命中）
+        NETWORK.registerMessage(12, com.ae2addon.network.QianJiSearchRequestPacket.class,
+                com.ae2addon.network.QianJiSearchRequestPacket::encode,
+                com.ae2addon.network.QianJiSearchRequestPacket::decode,
+                com.ae2addon.network.QianJiSearchRequestPacket::handle
+        );
+        NETWORK.registerMessage(13, com.ae2addon.network.QianJiSearchResultPacket.class,
+                com.ae2addon.network.QianJiSearchResultPacket::encode,
+                com.ae2addon.network.QianJiSearchResultPacket::decode,
+                com.ae2addon.network.QianJiSearchResultPacket::handle
+        );
+
+        // 千机·样板终端（2026-09-21 v254）：14 = 查询（C→S，关键词 + 窗口），15 = 回包（S→C，一段列表）
+        NETWORK.registerMessage(14, com.ae2addon.network.QianJiTerminalQueryPacket.class,
+                com.ae2addon.network.QianJiTerminalQueryPacket::encode,
+                com.ae2addon.network.QianJiTerminalQueryPacket::decode,
+                com.ae2addon.network.QianJiTerminalQueryPacket::handle
+        );
+        NETWORK.registerMessage(15, com.ae2addon.network.QianJiTerminalPagePacket.class,
+                com.ae2addon.network.QianJiTerminalPagePacket::encode,
+                com.ae2addon.network.QianJiTerminalPagePacket::decode,
+                com.ae2addon.network.QianJiTerminalPagePacket::handle
+        );
+        // 16 = 终端的"取 / 放"动作（C→S，2026-09-21 v256）
+        NETWORK.registerMessage(16, com.ae2addon.network.QianJiTerminalActionPacket.class,
+                com.ae2addon.network.QianJiTerminalActionPacket::encode,
+                com.ae2addon.network.QianJiTerminalActionPacket::decode,
+                com.ae2addon.network.QianJiTerminalActionPacket::handle
+        );
+        // 17 = 「样板插进千机了 → 列表跳过去并高亮 3 秒」（S→C，2026-09-22 v277）
+        NETWORK.registerMessage(17, com.ae2addon.network.QianJiTerminalFocusPacket.class,
+                com.ae2addon.network.QianJiTerminalFocusPacket::encode,
+                com.ae2addon.network.QianJiTerminalFocusPacket::decode,
+                com.ae2addon.network.QianJiTerminalFocusPacket::handle
+        );
+        // 18 = 「一键成型」请求（C→S，2026-09-24：集成 CPU 从网络取料自动搭建结构）
+        NETWORK.registerMessage(18, com.ae2addon.network.IntegratedCpuBuildPacket.class,
+                com.ae2addon.network.IntegratedCpuBuildPacket::encode,
+                com.ae2addon.network.IntegratedCpuBuildPacket::decode,
+                com.ae2addon.network.IntegratedCpuBuildPacket::handle
+        );
+        // 19 = 「放置被阻挡」红框位置（S→C，2026-09-24：客户端渲染描边，关深度测试才穿墙）
+        NETWORK.registerMessage(19, com.ae2addon.network.IntegratedCpuConflictPacket.class,
+                com.ae2addon.network.IntegratedCpuConflictPacket::encode,
+                com.ae2addon.network.IntegratedCpuConflictPacket::decode,
+                com.ae2addon.network.IntegratedCpuConflictPacket::handle
+        );
+        // 20 = 集成 CPU 网络侧展示信息（S→C，2026-09-24：AE2 自己的 CPU 列表拿不到我们的线程/存储）
+        NETWORK.registerMessage(20, com.ae2addon.network.IntegratedCpuStatusPacket.class,
+                com.ae2addon.network.IntegratedCpuStatusPacket::encode,
+                com.ae2addon.network.IntegratedCpuStatusPacket::decode,
+                com.ae2addon.network.IntegratedCpuStatusPacket::handle
+        );
+        NETWORK.registerMessage(21, com.ae2addon.network.IntegratedCpuRingPacket.class,
+                com.ae2addon.network.IntegratedCpuRingPacket::encode,
+                com.ae2addon.network.IntegratedCpuRingPacket::decode,
+                com.ae2addon.network.IntegratedCpuRingPacket::handle
+        );
+        NETWORK.registerMessage(22, com.ae2addon.network.IntegratedCpuOutlinePacket.class,
+                com.ae2addon.network.IntegratedCpuOutlinePacket::encode,
+                com.ae2addon.network.IntegratedCpuOutlinePacket::decode,
+                com.ae2addon.network.IntegratedCpuOutlinePacket::handle
+        );
+
         MinecraftForge.EVENT_BUS.register(this);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.QianJiPatternCommand.class);
+        // 测试指令：/ae2essence 造「无限 xxx 精华 / 元件」（2026-09-19 无限元件体系）
+        MinecraftForge.EVENT_BUS.register(com.ae2addon.command.EssenceCommand.class);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.crafting.BatchedCraftingQueue.class);
+        // 爆炸配方：东西扔地上炸一下 → 产物（2026-09-19 sensei 方案 A；
+        // AE2 原生 ae2:transform 不支持数量，见 ExplosionRecipe 类注释）
+        MinecraftForge.EVENT_BUS.register(com.ae2addon.crafting.ExplosionRecipeHandler.class);
+        // 任务值取证：不在这里注册 —— TaskValueProbe 由 BatchedCraftingQueue.onServerTick 直接调用
+        // （2026-09-18 实测：本类自己注册 EVENT_BUS 没被调用，挂到已验证的钩子上才可靠）
 
         // 升级卡注册统一在 ensureCompatUpgrades（BE 构造时触发）：此时所有注册表
         // 就绪，block.asItem() 能正确解析——注册阶段执行会命中 asItem 毒缓存

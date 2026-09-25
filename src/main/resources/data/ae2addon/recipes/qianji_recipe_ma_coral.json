@@ -1,0 +1,17 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "modLoaded":  "mysticalagriculture",
+    "inputs":  [
+                   {
+                       "item":  "mysticalagriculture:coral_seeds",
+                       "count":  1,
+                       "catalyst":  true
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "mysticalagriculture:coral_essence",
+                        "count":  1
+                    }
+                ]
+}

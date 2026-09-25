@@ -63,3 +63,10 @@ description='''
     versionRange="[15,)"
     ordering="AFTER"
     side="CLIENT"
+
+[[dependencies.ae2addon]]
+    modId="ae2wtlib"
+    mandatory=false
+    versionRange="[15,)"
+    ordering="AFTER"
+    side="BOTH"

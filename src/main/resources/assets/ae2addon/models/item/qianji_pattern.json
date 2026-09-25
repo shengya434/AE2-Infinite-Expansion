@@ -1,6 +1,6 @@
 {
-  "parent": "minecraft:item/generated",
+  "parent": "builtin/entity",
   "textures": {
-    "layer0": "ae2addon:item/qianji_pattern"
+    "particle": "ae2addon:item/qianji_pattern"
   }
 }

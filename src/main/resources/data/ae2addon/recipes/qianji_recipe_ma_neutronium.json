@@ -1,0 +1,17 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "modLoaded":  "mysticalagradditions",
+    "inputs":  [
+                   {
+                       "item":  "mysticalagriculture:neutronium_seeds",
+                       "count":  1,
+                       "catalyst":  true
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "mysticalagriculture:neutronium_essence",
+                        "count":  1
+                    }
+                ]
+}

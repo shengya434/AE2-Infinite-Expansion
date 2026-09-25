@@ -1,0 +1,23 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "ae2addon:qianji",
+                       "count":  1
+                   },
+                   {
+                       "item":  "minecraft:netherite_block",
+                       "count":  25
+                   },
+                   {
+                       "item":  "minecraft:dragon_egg",
+                       "count":  1
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:qianji_formed",
+                        "count":  1
+                    }
+                ]
+}

@@ -1,0 +1,27 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "ae2addon:infinite_drive",
+                       "count":  1
+                   },
+                   {
+                       "item":  "minecraft:gray_concrete",
+                       "count":  88
+                   },
+                   {
+                       "item":  "minecraft:light_gray_concrete",
+                       "count":  19
+                   },
+                   {
+                       "item":  "ae2:drive",
+                       "count":  1
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:infinite_drive_formed",
+                        "count":  1
+                    }
+                ]
+}

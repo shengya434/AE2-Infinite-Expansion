@@ -53,8 +53,15 @@ public class UnlimitedCellInventory implements StorageCell {
     private Map<AEKey, BigInteger> s2 = new HashMap<>();
     private Set<AEKey> wl = new HashSet<>();
     private Set<AEKey> ul = new HashSet<>();
-    /** 承诺额度：升级为无限时的记录数（用 long 够用） */
-    private Map<AEKey, Long> ca = new HashMap<>();
+    /**
+     * 承诺额度：升级为无限时记录的真实数量。
+     * <p>
+     * ⚠ 2026-09-19（sensei：「Mode 2 取消无限排出数量也是 9.2E，即使真实存储量大得多」）：
+     * 原来这里是 {@code Map<AEKey, Long>} 且写入时 `clampToLong` → **第一刀就把真实数量
+     * 截成 Long.MAX（9.22e18）**，面板显示与物质球打包都只是照抄这个假数字。
+     * 现在改成 BigInteger：与 s1/s2 同一精度，取消无限时排出的是**真实数量**。
+     */
+    private Map<AEKey, BigInteger> ca = new HashMap<>();
     private Set<AEKey> m3 = new HashSet<>();
     /** Mode 2 按 tag 批量无限（如 "minecraft:logs"） */
     private Set<String> tags = new HashSet<>();
@@ -301,7 +308,23 @@ public class UnlimitedCellInventory implements StorageCell {
     /** 内部 insert：depth 为解包深度（物质球套球最多解 2 层）。 */
     private long insert(AEKey what, long amount, Actionable act, IActionSource src, int depth) {
         if (amount <= 0) return 0;
-        if (act != Actionable.MODULATE) return amount;
+        insertBI(what, BigInteger.valueOf(amount), act, src, depth);
+        // 原语义：MODULATE 收下全额；非 MODULATE 也返回 amount（调用方据此判断"可收"）
+        return amount;
+    }
+
+    /**
+     * 入库内核（**BigInteger**，真实数量可远超 Long.MAX）。
+     * <p>
+     * 2026-09-19：把原 {@code insert} 的实体抽到这里，{@link #insert}（long 入口）与
+     * 物质球解包（可能是天文数字的真实数量）**共用同一份语义**，
+     * 避免"解包走一条简化路径"导致模式 3 / 规则无限 / 升级判定被漏掉。
+     *
+     * @param depth 解包深度（物质球套球最多解 2 层）
+     */
+    private void insertBI(AEKey what, BigInteger amount, Actionable act, IActionSource src, int depth) {
+        if (what == null || amount == null || amount.signum() <= 0) return;
+        if (act != Actionable.MODULATE) return;
 
         // ── 物质球特例（2026-08-27 22:16 sensei 要求）：存入物质球 → 自动解包入库 ──
         // 物质球是取消无限时打包的临时容器（NBT 存 innerKey+amount），
@@ -311,13 +334,14 @@ public class UnlimitedCellInventory implements StorageCell {
                 && ballKey.hasTag()) {
             var ballStack = ballKey.toStack(1);
             var innerKey = com.ae2addon.item.MatterBallItem.getKey(ballStack);
-            long innerAmount = com.ae2addon.item.MatterBallItem.getAmount(ballStack);
-            if (innerKey != null && innerAmount > 0) {
-                insert(innerKey, innerAmount, act, src, depth + 1);
+            // ⚠ BigInteger：解开物质球时按真实数量入库（可能远超 Long.MAX）
+            BigInteger innerAmount = com.ae2addon.item.MatterBallItem.getAmount(ballStack);
+            if (innerKey != null && innerAmount.signum() > 0) {
+                insertBI(innerKey, innerAmount, act, src, depth + 1);
             }
             dataDirty = true;
             save();
-            return amount; // 物质球本身不入库（已解包）
+            return; // 物质球本身不入库（已解包）
         }
 
         // ── 无限路径：直接收下，不占内部存储 ──
@@ -327,7 +351,7 @@ public class UnlimitedCellInventory implements StorageCell {
                 dataDirty = true;
                 save();
             }
-            return amount;
+            return;
         }
         if (mode == 2) {
             if (matchesRule(what) && !blacklist.contains(what)) {
@@ -338,41 +362,40 @@ public class UnlimitedCellInventory implements StorageCell {
                 // 双轨合一：s2 中的存量并入承诺额度，避免同一物品被规则段和白名单段重复报告
                 BigInteger existing = s2.remove(what);
                 if (existing != null && existing.signum() > 0) {
-                    ca.put(what, Math.max(ca.getOrDefault(what, 0L), clampToLong(existing)));
+                    // ⚠ 取较大值（BigInteger，不截断）
+                    ca.merge(what, existing, (a, b) -> a.compareTo(b) >= 0 ? a : b);
                 }
                 dataDirty = true;
                 save();
-                return amount;
+                return;
             }
         }
         if (mode == 2 && workMode == 2) {
             if (!ul.contains(what)) ul.add(what);
             dataDirty = true;
             save();
-            return amount;
+            return;
         }
         if (mode == 2 && workMode == 3 && (wl.contains(what) || ul.contains(what))) {
-            return amount;
+            return;
         }
 
         // ── 非无限路径：用 BigInteger 累加，永不溢出 ──
         Map<AEKey, BigInteger> map = (mode == 1) ? s1 : s2;
-        BigInteger biAmount = BigInteger.valueOf(amount);
-        map.merge(what, biAmount, BigInteger::add);
+        map.merge(what, amount, BigInteger::add);
         dataDirty = true;
 
         if (mode == 2 && workMode == 1) {
             // 检查是否要升级为无限
             BigInteger total = map.get(what);
-            if (total.compareTo(BigInteger.valueOf(thr)) >= 0) {
-                ca.put(what, clampToLong(total));
+            if (total != null && total.compareTo(BigInteger.valueOf(thr)) >= 0) {
+                ca.put(what, total);   // ⚠ 2026-09-19：不再 clampToLong（真实数量要留住）
                 ul.add(what);
                 map.remove(what);
             }
         }
 
         save();
-        return amount;
     }
 
     /** 从 BigInteger map 中安全提取，返回 long（上限 Long.MAX_VALUE） */
@@ -638,7 +661,7 @@ public class UnlimitedCellInventory implements StorageCell {
                     if (entry.getValue().signum() <= 0) { it1.remove(); continue; }
                     AEKey key = entry.getKey();
                     if (wl.contains(key) || entry.getValue().compareTo(BigInteger.valueOf(thr)) >= 0) {
-                        ca.put(key, clampToLong(entry.getValue()));
+                        ca.put(key, entry.getValue());   // ⚠ 不再 clampToLong
                         ul.add(key);
                         it1.remove();
                     }
@@ -651,7 +674,7 @@ public class UnlimitedCellInventory implements StorageCell {
                     Map.Entry<AEKey, BigInteger> entry = it2.next();
                     if (entry.getValue().signum() > 0
                             && !wl.contains(entry.getKey()) && !ul.contains(entry.getKey())) {
-                        ca.put(entry.getKey(), clampToLong(entry.getValue()));
+                        ca.put(entry.getKey(), entry.getValue());   // ⚠ 不再 clampToLong
                         ul.add(entry.getKey());
                         it2.remove();
                     }
@@ -665,7 +688,7 @@ public class UnlimitedCellInventory implements StorageCell {
                     if (entry.getValue().signum() <= 0) { it3.remove(); continue; }
                     AEKey key = entry.getKey();
                     if (wl.contains(key) || ul.contains(key)) {
-                        ca.put(key, clampToLong(entry.getValue()));
+                        ca.put(key, entry.getValue());   // ⚠ 不再 clampToLong
                         ul.add(key);
                         it3.remove();
                     }
@@ -687,14 +710,14 @@ public class UnlimitedCellInventory implements StorageCell {
         if (plainKey != null && !plainKey.equals(key)) {
             BigInteger s2Amount = s2.remove(plainKey);
             if (s2Amount != null && s2Amount.signum() > 0) {
-                ca.put(key, clampToLong(s2Amount));
+                ca.put(key, s2Amount);   // ⚠ 不再 clampToLong
             }
             ul.remove(plainKey);
             wl.remove(plainKey);
         } else {
             BigInteger s2Amount = s2.get(key);
             if (s2Amount != null && s2Amount.signum() > 0) {
-                ca.put(key, clampToLong(s2Amount));
+                ca.put(key, s2Amount);   // ⚠ 不再 clampToLong
             }
         }
 
@@ -887,7 +910,8 @@ public class UnlimitedCellInventory implements StorageCell {
             }
             for (Map.Entry<AEKey, BigInteger> e : s2.entrySet()) {
                 if (!wl.contains(e.getKey()) && !ul.contains(e.getKey())) {
-                    items.add(new PanelItem(e.getKey(), clampToLong(e.getValue()), false));
+                    // ⚠ 2026-09-19：传真实 BigInteger（原来 clampToLong → 面板顶在 9.2E）
+                    items.add(new PanelItem(e.getKey(), e.getValue(), false));
                 }
             }
             return items;
@@ -904,7 +928,8 @@ public class UnlimitedCellInventory implements StorageCell {
         if (workMode == 1) {
             for (Map.Entry<AEKey, BigInteger> e : s2.entrySet()) {
                 if (!wl.contains(e.getKey()) && !ul.contains(e.getKey())) {
-                    items.add(new PanelItem(e.getKey(), clampToLong(e.getValue()), false));
+                    // ⚠ 2026-09-19：传真实 BigInteger（原来 clampToLong → 面板顶在 9.2E）
+                    items.add(new PanelItem(e.getKey(), e.getValue(), false));
                 }
             }
         }
@@ -924,7 +949,7 @@ public class UnlimitedCellInventory implements StorageCell {
 
         BigInteger amount = s2.getOrDefault(key, BigInteger.ZERO);
         if (amount.signum() > 0) {
-            ca.put(key, clampToLong(amount));
+            ca.put(key, amount);   // ⚠ 2026-09-19：不再 clampToLong —— 取消无限时要排真值
             s2.remove(key);
         }
 
@@ -934,8 +959,14 @@ public class UnlimitedCellInventory implements StorageCell {
         return true;
     }
 
-    public long getCommitedAmount(AEKey key) {
-        return ca.getOrDefault(key, thr).longValue();
+    /**
+     * 承诺额度（真实数量，可远超 Long.MAX）。
+     * <p>
+     * ⚠ 2026-09-19（sensei）：原返回 long（且写入时已被 clampToLong）→ 取消无限只排出 9.2E。
+     * 现在返回 BigInteger。取不到时回落阈值 {@code thr}。
+     */
+    public BigInteger getCommitedAmount(AEKey key) {
+        return ca.getOrDefault(key, BigInteger.valueOf(thr));
     }
 
     public boolean hasCommitedAmount(AEKey key) {
@@ -950,29 +981,26 @@ public class UnlimitedCellInventory implements StorageCell {
         return server.overworld();
     }
 
+    /** 读旧版 ByteArray/Long map（兼容两种格式）。
+     *  2026-09-19：`ca` 也改成 BigInteger 了，这里统一支持 byte[] 与 long 两种写法。 */
     private static void getMapFromNbt(CompoundTag tag, String key, Map<AEKey, BigInteger> map) {
         map.clear();
         if (!tag.contains(key)) return;
         for (Tag t : tag.getList(key, 10)) {
             CompoundTag ct = (CompoundTag) t;
             AEKey k = AEKey.fromTagGeneric(ct);
-            if (k != null) {
+            if (k == null) continue;
+            if (ct.contains("#", Tag.TAG_BYTE_ARRAY)) {
+                map.put(k, new BigInteger(ct.getByteArray("#")));
+            } else {
                 map.put(k, BigInteger.valueOf(ct.getLong("#")));
             }
         }
     }
 
-    /** ca 等 Long map 的旧 NBT 迁移 */
-    private static void getMapFromNbtLong(CompoundTag tag, String key, Map<AEKey, Long> map) {
-        map.clear();
-        if (!tag.contains(key)) return;
-        for (Tag t : tag.getList(key, 10)) {
-            CompoundTag ct = (CompoundTag) t;
-            AEKey k = AEKey.fromTagGeneric(ct);
-            if (k != null) {
-                map.put(k, ct.getLong("#"));
-            }
-        }
+    /** 旧版 Long map 的 NBT 迁移（内容按 BigInteger 承接，不再受 Long 上限约束） */
+    private static void getMapFromNbtLong(CompoundTag tag, String key, Map<AEKey, BigInteger> map) {
+        getMapFromNbt(tag, key, map);
     }
 
     private static void getSetFromNbt(CompoundTag tag, String key, Set<AEKey> set) {
@@ -988,17 +1016,30 @@ public class UnlimitedCellInventory implements StorageCell {
 
     public static class PanelItem {
         public final AEKey key;
-        public final long amount;
+        /**
+         * 数量。⚠ 2026-09-19：从 long 改成 **BigInteger** —— Mode 2 的存储本来就是
+         * BigInteger（可超 Long.MAX），沿用 long 会让面板把真实数量显示成 9.2E
+         * （sensei 实测："最大显示数量为 9.2E，即使真实存储量大得多"）。
+         */
+        public final BigInteger amount;
         public final boolean isInfinite;
         public final long bytes;
 
         public PanelItem(AEKey key, long amount, boolean isInfinite) {
+            this(key, BigInteger.valueOf(amount), isInfinite, 0L);
+        }
+
+        public PanelItem(AEKey key, BigInteger amount, boolean isInfinite) {
             this(key, amount, isInfinite, 0L);
         }
 
         public PanelItem(AEKey key, long amount, boolean isInfinite, long bytes) {
+            this(key, BigInteger.valueOf(amount), isInfinite, bytes);
+        }
+
+        public PanelItem(AEKey key, BigInteger amount, boolean isInfinite, long bytes) {
             this.key = key;
-            this.amount = amount;
+            this.amount = amount == null ? BigInteger.ZERO : amount;
             this.isInfinite = isInfinite;
             this.bytes = bytes;
         }

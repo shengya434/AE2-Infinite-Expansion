@@ -1,0 +1,27 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "minecraft:cobblestone",
+                       "count":  2100000
+                   },
+                   {
+                       "item":  "minecraft:clay_ball",
+                       "count":  1200
+                   },
+                   {
+                       "item":  "minecraft:slime_ball",
+                       "count":  1024
+                   },
+                   {
+                       "fluid":  "minecraft:water",
+                       "buckets":  2100000
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:catalyst_basic",
+                        "count":  1
+                    }
+                ]
+}

@@ -12,7 +12,9 @@ import com.ae2addon.compat.EvilcraftCompat;
 import com.ae2addon.compat.GregTechCompat;
 import com.ae2addon.compat.MekanismCompat;
 import com.ae2addon.compat.NaturesAuraCompat;
+import com.ae2addon.compat.ProductiveBeesCompat;
 import com.ae2addon.compat.SmithingCompat;
+import com.ae2addon.compat.ThermalCompat;
 import com.ae2addon.compat.UselessModCompat;
 import com.ae2addon.util.RecipeByproducts;
 import net.minecraft.resources.ResourceLocation;
@@ -145,6 +147,18 @@ public final class QianJiRecipeModel {
     /** 一条配方的全部产出键（物品 + 流体；标准 API + GT） */
     private static List<appeng.api.stacks.AEKey> allOutputKeys(
             Recipe<?> recipe, net.minecraft.core.RegistryAccess access) {
+        // 千机自用配方：产出键直接来自数据（物品/流体/化学品通吃），不必走下面那一长串兼容探测
+        if (recipe instanceof QianJiRecipe own) {
+            var keys = new ArrayList<appeng.api.stacks.AEKey>();
+            var data = own.data();
+            for (var out : data.primary()) {
+                if (out.stack() != null && out.stack().what() != null) keys.add(out.stack().what());
+            }
+            for (var out : data.chanced()) {
+                if (out.stack() != null && out.stack().what() != null) keys.add(out.stack().what());
+            }
+            return keys;
+        }
         var keys = new ArrayList<appeng.api.stacks.AEKey>();
         try {
             ItemStack standard = recipe.getResultItem(access);
@@ -234,6 +248,20 @@ public final class QianJiRecipeModel {
                 if (stat.stack() != null && stat.stack().what() != null) keys.add(stat.stack().what());
             }
         }
+        // Thermal：产出同样全在字段里，标准 API 看不到 → 单独补（否则整类进不了索引）
+        if (ThermalCompat.isThermalRecipe(recipe)) {
+            for (var stat : ThermalCompat.outputs(recipe)) {
+                if (stat.stack() != null && stat.stack().what() != null) keys.add(stat.stack().what());
+            }
+        }
+        // Productive Bees（2026-09-20）：13 个配方类型的数据同样全在 PB 自己的字段里
+        // （TagOutputRecipe.itemOutput / Lazy<BeeIngredient> / Pair<流体id,量> …），标准 API 是空的
+        // → 整类丢。见 ProductiveBeesCompat 的类注释（javap 实证表 + 蜜蜂→刷怪蛋的官方依据）
+        if (ProductiveBeesCompat.isProductiveBeesRecipe(recipe)) {
+            for (var stat : ProductiveBeesCompat.outputs(recipe)) {
+                if (stat.stack() != null && stat.stack().what() != null) keys.add(stat.stack().what());
+            }
+        }
         // Create：流体产出也不在标准 API 里
         if (CreateCompat.isCreateRecipe(recipe)) {
             for (var stack : CreateCompat.fluidOutputs(recipe)) {
@@ -263,6 +291,14 @@ public final class QianJiRecipeModel {
         var out = new ArrayList<Recipe<?>>();
         for (var recipe : level.getRecipeManager().getRecipes()) {
             if (recipe == null) continue;
+            // 爆炸配方有自己的一页，不属千机页
+            if (recipe instanceof com.ae2addon.recipe.ExplosionRecipe) continue;
+            // 千机自用配方：产物可能全是流体/化学品（getResultItem 只能是 EMPTY）或超大数量，
+            // 走下面的物品筛选会被整条丢掉 → 直接收录
+            if (recipe instanceof QianJiRecipe) {
+                out.add(recipe);
+                continue;
+            }
             if (outputsOf(recipe, level).isEmpty() && RecipeByproducts.extract(recipe, level).isEmpty()) continue;
             out.add(recipe);
         }
@@ -287,6 +323,16 @@ public final class QianJiRecipeModel {
      */
     public static List<Variant> fromRecipeAll(Recipe<?> recipe, net.minecraft.core.RegistryAccess access) {
         if (recipe == null) return List.of();
+        // 爆炸配方（ae2addon:explosion_recipe）**不是千机样板**：它有自己的一页 JEI
+        // （ExplosionRecipeCategory），所以这里返回空 —— 千机页里不该出现它
+        //（2026-09-19 sensei：爆炸配方单开一个配方标签页）
+        if (recipe instanceof com.ae2addon.recipe.ExplosionRecipe) {
+            return List.of();
+        }
+        // 千机自用配方（本模组数据包定义）：JSON 里的数据**本身就是**样板数据，直接搬，不做任何解析
+        if (recipe instanceof QianJiRecipe own) {
+            return List.of(new Variant(0, "", own.data()));
+        }
         // 旋转机（罗盘转换机）：一个配方对象含两个方向 → **每个方向一张样板**
         if (MekanismCompat.isMekanismRecipe(recipe)) {
             var directions = MekanismCompat.rotaryDirections(recipe);
@@ -438,6 +484,10 @@ public final class QianJiRecipeModel {
     @Nullable
     public static QianJiPatternData fromRecipe(Recipe<?> recipe, net.minecraft.core.RegistryAccess access) {
         if (recipe == null) return null;
+        // 爆炸配方不产出千机样板（执行者是爆炸，见 fromRecipeAll 的说明）
+        if (recipe instanceof com.ae2addon.recipe.ExplosionRecipe) return null;
+        // 千机自用配方：数据已经是样板数据（见上面 fromRecipeAll 的说明）
+        if (recipe instanceof QianJiRecipe own) return own.data();
 
         var inputs = new ArrayList<QianJiPatternData.Slot>();
         var primary = new ArrayList<QianJiPatternData.Out>();
@@ -494,6 +544,53 @@ public final class QianJiRecipeModel {
                 inputs.add(new QianJiPatternData.Slot(slot, isToolInput(slot)));
             }
             for (var stat : MekanismCompat.outputs(recipe)) {
+                var stack = stat.stack();
+                if (stack == null || stack.amount() <= 0) continue;
+                if (stat.chance() >= 1f) {
+                    primary.add(new QianJiPatternData.Out(stack));
+                } else {
+                    chanced.add(new QianJiPatternData.Chanced(stack,
+                            stat.chance() > 0f ? stat.chance() : -1f));
+                }
+            }
+        } else if (ThermalCompat.isThermalRecipe(recipe)) {
+            // Thermal（2026-09-20）：配方数据全在 ThermalRecipe 自己的字段里，标准 Recipe API 是空的
+            // → 标准路径一行都读不到。反射拿 getInputItems/getInputFluids/getOutputItems/getOutputFluids。
+            // 不消耗的输入：*_die 压印模具 + **仅设备映射配方**的环境方块
+            // （"方块物品就不消耗"不再对所有 Thermal 配方生效 —— press 的 *_unpacking 真吃方块，
+            //  不改 → 一块方块无限换碎片；判定下沉进 compat，见 ThermalCompat.isCatalystSlot）
+            var thermalSlots = ThermalCompat.inputSlots(recipe);
+            for (int i = 0; i < thermalSlots.size(); i++) {
+                var slot = thermalSlots.get(i);
+                inputs.add(new QianJiPatternData.Slot(slot,
+                        isToolInput(slot) || ThermalCompat.isCatalystSlot(recipe, i, slot)));
+            }
+            for (var stat : ThermalCompat.outputs(recipe)) {
+                var stack = stat.stack();
+                if (stack == null || stack.amount() <= 0) continue;
+                if (stat.chance() >= 1f) {
+                    primary.add(new QianJiPatternData.Out(stack));
+                } else {
+                    chanced.add(new QianJiPatternData.Chanced(stack,
+                            stat.chance() > 0f ? stat.chance() : -1f));
+                }
+            }
+        } else if (ProductiveBeesCompat.isProductiveBeesRecipe(recipe)) {
+            // Productive Bees（2026-09-20）：字段反射提取，纯类名匹配、零硬依赖。
+            // 蜜蜂（BeeIngredient）按 sensei 定的映射换成刷怪蛋：先试独立刷怪蛋
+            // productivebees:spawn_egg_<蜂种path>，没有再用 spawn_egg_configurable_bee + NBT
+            // （EntityTag.type = 蜂种 id，来自 BeeCreator.getSpawnEgg 的字节码实证）。
+            // 不消耗的输入：蜜蜂槽（本体不变）+ 工具类输入（isToolInput 自带的耐久/_press 规则）
+            // 2026-09-20 修 bug：原来对**每个**槽都套 isCatalystSlot（只看"候选是不是刷怪蛋"）
+            // → bee_breeding 的亲代 / bee_conversion 的源蜂也被标成不消耗 → 一只蜂无限繁殖/转换。
+            // 现在判定下沉进 compat（recipe + 槽序号），这里只调一次、照它的答案走。
+            var pbSlots = ProductiveBeesCompat.inputSlots(recipe);
+            for (int i = 0; i < pbSlots.size(); i++) {
+                var slot = pbSlots.get(i);
+                inputs.add(new QianJiPatternData.Slot(slot,
+                        isToolInput(slot) || ProductiveBeesCompat.isCatalystSlot(recipe, i, slot)));
+            }
+            for (var stat : ProductiveBeesCompat.outputs(recipe)) {
                 var stack = stat.stack();
                 if (stack == null || stack.amount() <= 0) continue;
                 if (stat.chance() >= 1f) {
@@ -973,6 +1070,19 @@ public final class QianJiRecipeModel {
         }
         if (MekanismCompat.isMekanismRecipe(recipe)) {
             for (var c : MekanismCompat.outputs(recipe)) {
+                if (c.stack() != null) items.add(c.stack().what());
+            }
+        }
+        // Thermal：产出全在字段里（标准 getResultItem 是 EMPTY）→ 不许漏，
+        // 否则 candidates() 判它「无产出」直接跳过 = sensei 看到的一整类「提取失败」
+        if (ThermalCompat.isThermalRecipe(recipe)) {
+            for (var c : ThermalCompat.outputs(recipe)) {
+                if (c.stack() != null) items.add(c.stack().what());
+            }
+        }
+        // Productive Bees：同上（产出在 TagOutputRecipe.itemOutput / Lazy<BeeIngredient> 里）
+        if (ProductiveBeesCompat.isProductiveBeesRecipe(recipe)) {
+            for (var c : ProductiveBeesCompat.outputs(recipe)) {
                 if (c.stack() != null) items.add(c.stack().what());
             }
         }

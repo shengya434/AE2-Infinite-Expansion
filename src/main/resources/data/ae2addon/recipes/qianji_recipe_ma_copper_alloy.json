@@ -1,0 +1,17 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "modLoaded":  "mysticalagriculture",
+    "inputs":  [
+                   {
+                       "item":  "mysticalagriculture:copper_alloy_seeds",
+                       "count":  1,
+                       "catalyst":  true
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "mysticalagriculture:copper_alloy_essence",
+                        "count":  1
+                    }
+                ]
+}

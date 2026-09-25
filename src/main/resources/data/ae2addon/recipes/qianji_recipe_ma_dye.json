@@ -1,0 +1,17 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "modLoaded":  "mysticalagriculture",
+    "inputs":  [
+                   {
+                       "item":  "mysticalagriculture:dye_seeds",
+                       "count":  1,
+                       "catalyst":  true
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "mysticalagriculture:dye_essence",
+                        "count":  1
+                    }
+                ]
+}

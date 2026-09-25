@@ -322,11 +322,14 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             ICraftingSimulationRequester simRequester, AEKey what, long amount,
             CalculationStrategy strategy,
             CallbackInfoReturnable<Future<ICraftingPlan>> callback) {
-        // 2026-08-27：handler 是否被调用的诊断（非 debug——VM 环境下曾出现
-        // handler 完全不执行/被抢先，debug 日志看不到，改 WARN 定位）。
-        com.ae2addon.AE2Addon.LOGGER.warn(
-                "[ae2addon] 模拟拦截被调用 what={} amount={} isCancelled={}",
-                what, amount, callback.isCancelled());
+        // 2026-08-27：handler 是否被调用的诊断（VM 环境下曾出现 handler 完全不执行/被抢先，
+        // debug 日志看不到，所以用 WARN 定位）。2026-09-22 v285：收进 debugLogs 开关 ——
+        // 每次合成模拟都会打一行，平时太吵。
+        if (com.ae2addon.config.AE2AddonConfig.debugLogs()) {
+            com.ae2addon.AE2Addon.LOGGER.warn(
+                    "[ae2addon] 模拟拦截被调用 what={} amount={} isCancelled={}",
+                    what, amount, callback.isCancelled());
+        }
         // 2026-08-29 诊断已清理：此前打印 getCraftingFor/getProviders 定位
         // 「用成品合成成品」，根因是接口 getEmitableItems 重写导致 canEmit=true，
         // 与第三方 mixin 无关，诊断代码已移除。

@@ -68,6 +68,96 @@ public class AssemblerCoreBE extends CraftingBlockEntity
         super(ModBlockEntities.ASSEMBLER_CORE.get(), pos, state);
     }
 
+    // ── 激活判定：**不靠 AE2 簇**（2026-09-24 sensei：改机制，让它能当多方块的拓展单元）──
+
+    /**
+     * ⚠ 2026-09-24 机制改动（sensei：「不然没办法作为这个多方块的拓展单元使用」+「单独给一套多方块结构成型检测，
+     * 不然没装上集成 CPU 的多方块结构上也可以使用」）。
+     * <p>
+     * 原实现在服务端是 {@code cluster != null}（AE2 的 {@code CraftingBlockEntity.isFormed()}）——
+     * 装配处理器**必须进 AE2 合成簇才算激活**。但它现在的用法是**集成 CPU 多方块结构里的一格**
+     * （模板里 {@code ae2addon:assembler_core} 只 1 格），周围贴的是 {@code crafting_unit} /
+     * {@code 256k_crafting_storage}，簇归属与"同类型才成簇"的规则根本对不上 →
+     * 永远 {@code isFormed() == false} → 注册表直接跳过它 → 拓展单元形同虚设。
+     * <p>
+     * 现在改成**独立判定**，而且判定条件是"**装在已成型的集成 CPU 多方块结构里**"：
+     * <ul>
+     *   <li>装在结构里（且该 CPU 已成型）→ 激活：可被 {@code moduleFor} 找到、界面可开、白名单生效；</li>
+     *   <li>散放（不在任何已成型的集成 CPU 结构里）→ **不激活**：和普通装饰方块一样不能用
+     *       （这正是 sensei 要的"没有装上集成 CPU 就不能使用"）。</li>
+     * </ul>
+     */
+    @Override
+    public boolean isFormed() {
+        if (isRemoved()) {
+            return false;
+        }
+        // 位置归属：我在某个**已成型**的集成 CPU 结构里吗？
+        return ownerCPU != null && !ownerCPU.isRemoved() && ownerCPU.isFormed()
+                && ownerCPU.isAssemblerPos(worldPosition);
+    }
+
+    /** 是否已装入集成 CPU 多方块结构（界面/提示用，语义同 {@link #isFormed()}） */
+    public boolean isInstalledInStructure() {
+        return isFormed();
+    }
+
+    /**
+     * 定期重新认领 + 诊断（由方块 ticker 调，2 秒一次）。
+     * <p>
+     * 为什么要定期：① 集成 CPU 可能在本模块**之后**才成型（认领要能跟上）；
+     * ② 认领逻辑与自身状态互相依赖过（2026-09-24 修），定期重试能自愈。
+     * 诊断只在状态**变化**时打一行，避免刷屏。
+     */
+    public void tickOwnerMaintenance() {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        // ⚠ 定性日志（2026-09-24）：**第一次被 tick 就叫一声**，用来区分
+        //   "ticker 根本没跑"（连这行都不出现）与 "跑了但认领失败"（这行出现、状态=false）。
+        if (!tickerSeen) {
+            tickerSeen = true;
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][assembler] ticker 首次运行 pos={} 已装入结构={} owner={}",
+                    worldPosition, isFormed(),
+                    ownerCPU == null ? "null" : ownerCPU.getBlockPos().toShortString());
+        }
+        boolean before = isFormed();
+        refreshOwner();
+        boolean after = isFormed();
+        if (before != after || diagLoggedState != after) {
+            diagLoggedState = after;
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][assembler] pos={} 已装入结构={} owner={} owner成型={} 在结构内={}",
+                    worldPosition, after,
+                    ownerCPU == null ? "null" : ownerCPU.getBlockPos().toShortString(),
+                    ownerCPU != null && ownerCPU.isFormed(),
+                    ownerCPU != null && ownerCPU.isAssemblerPos(worldPosition));
+        }
+    }
+
+    /** 是否已经打印过"ticker 首次运行"（定性用） */
+    private boolean tickerSeen;
+
+    /**
+     * 诊断用：上次记录的激活状态（避免重复打日志）。
+     * <p>
+     * ⚠ 2026-09-24 崩溃修复：这里原来是包装类型 {@code Boolean}（初值 null），
+     * 比较时自动拆箱 → `NullPointerException: ... "this.diagLoggedState" is null`，
+     * 而它由**每 2 秒一次的 ticker** 调用 → 直接把服务器 tick 炸掉。
+     * **基础类型字段不要用包装类型**，尤其不要让它参与 `!=`/比较运算。
+     */
+    private boolean diagLoggedState;
+
+    /**
+     * 网络连接面：**全 6 面**。
+     * <p>
+     * 本类下方已有一个 {@code getGridConnectableSides} 覆写（2026-09-04 加的），
+     * 这里只留说明、不再重复定义（重复定义会编译失败）。
+     * 提醒：{@code CraftingBlockEntity} 默认按"是否已成型"裁剪连接面（未成型返回空集），
+     * 对这种"独立激活"的方块不适用。
+     */
+
     // ── 注册表 ──
 
     @Override
@@ -92,8 +182,22 @@ public class AssemblerCoreBE extends CraftingBlockEntity
         if (myCluster != null && !myCluster.isDestroyed()) {
             owner = IntegratedCPURegistry.ownerOf(myCluster);
         }
+        // 2026-09-24 新增：**位置归属**优先于"同网格兜底" ——
+        // 本方块现在是集成 CPU 多方块结构里的一格（模板里只有 1 格 assembler_core），
+        // 所以"我在哪个集成 CPU 的结构里，就服务哪个 CPU"最准确。
+        if (owner == null && level != null) {
+            for (IntegratedCPUBE cpu : IntegratedCPURegistry.all()) {
+                if (cpu.isRemoved() || !cpu.isFormed()) {
+                    continue;
+                }
+                if (cpu.isAssemblerPos(worldPosition)) {
+                    owner = cpu;
+                    break;
+                }
+            }
+        }
         if (owner == null) {
-            // 同簇未命中 → 同网格：遍历集成 CPU，找同一 grid 的（一般就一个）
+            // 同簇/位置都没命中 → 同网格兜底（模块与集成 CPU 接入同一网络即关联）
             try {
                 var myGrid = getMainNode() == null ? null : getMainNode().getGrid();
                 if (myGrid != null) {
@@ -116,9 +220,18 @@ public class AssemblerCoreBE extends CraftingBlockEntity
         this.ownerCPU = owner;
     }
 
-    /** 外部（AssemblerRegistry.moduleFor）触发的惰性刷新：owner 未建立时重试。 */
+    /**
+     * 外部（AssemblerRegistry.moduleFor）触发的惰性刷新。
+     * <p>
+     * ⚠ 2026-09-24 修死循环（sensei：「为啥成型后不能用，没成型能用」）：
+     * 原实现是 {@code if (ownerCPU == null && isFormed()) refreshOwner();} ——
+     * 而 {@link #isFormed()} 又要求 {@code ownerCPU != null}，
+     * **两者互相依赖 → 认领永远发生不了**（散放时 ownerCPU 一直是 null，
+     * 装进结构后也不会被认领），于是状态看起来像是"反的"。
+     * 现在无条件重试认领：认领是由"我在哪个集成 CPU 的结构里"决定的，与自身状态无关。
+     */
     public void refreshOwnerNow() {
-        if (ownerCPU == null && isFormed()) {
+        if (ownerCPU == null || ownerCPU.isRemoved()) {
             refreshOwner();
         }
     }
@@ -274,9 +387,20 @@ public class AssemblerCoreBE extends CraftingBlockEntity
     }
 
     // ── ICraftingProvider：报告样板槽内全部样板 ──
+    //
+    // ⚠ 2026-09-24 sensei：「不过没在结构里的也能成型」—— 这就是漏洞所在。
+    //   我只在「界面能不能开」上做了门禁（isFormed 要求装在已成型的集成 CPU 结构里），
+    //   却忘了这三个方法是 AE2 的**功能入口**：只要网络拿到这个 ICraftingProvider，
+    //   不管它在不在结构里都可能被用上。所以这里全部按 isFormed() 过滤：
+    //   - 未装入结构 → 报"零样板"，AE2 拿不到任何可用样板；
+    //   - pushPattern 本来一律拒收（虚拟结算由 CPU mixin 拦截），保持 false。
 
     @Override
     public List<appeng.api.crafting.IPatternDetails> getAvailablePatterns() {
+        if (!isFormed()) {
+            // 没装在结构里 → 对外表现为"没有任何可用样板"（网络里等于不存在）
+            return List.of();
+        }
         return ensureCache().details;
     }
 
@@ -291,7 +415,9 @@ public class AssemblerCoreBE extends CraftingBlockEntity
 
     @Override
     public boolean isBusy() {
-        return false; // 虚拟结算无真实占用；pushPattern 一律拒收（由 mixin 拦截）
+        // 虚拟结算无真实占用（pushPattern 一律拒收、由 mixin 拦截）。
+        // 但**未装入结构时报"忙"**，让 AE2 的调度把它当不可用的 provider 跳过。
+        return !isFormed();
     }
 
     // ── 缓存 ──
@@ -338,6 +464,12 @@ public class AssemblerCoreBE extends CraftingBlockEntity
     // ── PatternContainer（样板管理终端兼容，2026-09-04 sensei：终端可访问样板槽）──
     // 终端全量暴露 9000 格：AE2 PAT 按每行 9 格拆行 + 滚动渲染（反编译确认
     // SlotsRow(container, offset, min(9, ...)) 拆行逻辑）——大容器天然支持。
+    //
+    // ⚠ 2026-09-24 sensei：「未成形的装配处理器还是可以通过样板管理终端插入样板」——
+    //   样板管理终端是**直接读写 getTerminalPatternInventory()** 的，所以门禁必须加在
+    //   这个库存上（只拦 ICraftingProvider 与 GUI 都不够）：
+    //   未装入结构时 size()=0、setItemDirect() 直接忽略、isItemValid()=false，
+    //   终端那边看到的就是"这个容器是空的、也塞不进东西"。
 
     @Override
     public appeng.api.networking.IGrid getGrid() {
@@ -364,28 +496,35 @@ public class AssemblerCoreBE extends CraftingBlockEntity
             new appeng.api.inventories.InternalInventory() {
                 @Override
                 public int size() {
-                    return TOTAL_SLOTS;
+                    // 未装入结构 → 对外表现为"没有样板槽"（终端里看不到、也塞不进）
+                    return isFormed() ? TOTAL_SLOTS : 0;
                 }
 
                 @Override
                 public ItemStack getStackInSlot(int slot) {
+                    if (!isFormed()) {
+                        return ItemStack.EMPTY;
+                    }
                     return getSlot(slot);
                 }
 
                 @Override
                 public void setItemDirect(int slot, ItemStack stack) {
+                    if (!isFormed()) {
+                        return;   // 未装入结构：**拒绝写入**（这条就是终端的插入路径）
+                    }
                     setSlot(slot, stack);
                     onPatternsChanged();
                 }
 
                 @Override
                 public int getSlotLimit(int slot) {
-                    return 1;
+                    return isFormed() ? 1 : 0;
                 }
 
                 @Override
                 public boolean isItemValid(int slot, ItemStack stack) {
-                    return isCraftingPatternItem(stack, getLevel());
+                    return isFormed() && isCraftingPatternItem(stack, getLevel());
                 }
             };
 

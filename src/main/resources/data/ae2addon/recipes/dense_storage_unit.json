@@ -1,0 +1,22 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "group": "ae2addon_storage_unit",
+  "key": {
+    "h": {
+      "item": "ae2addon:blank_storage_unit"
+    },
+    "m": {
+      "item": "ae2:256k_crafting_storage"
+    }
+  },
+  "pattern": [
+    "hhh",
+    "hmh",
+    "hhh"
+  ],
+  "result": {
+    "item": "ae2addon:dense_storage_unit"
+  },
+  "show_notification": true
+}

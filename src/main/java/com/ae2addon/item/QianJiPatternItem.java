@@ -31,6 +31,28 @@ public class QianJiPatternItem extends Item {
         super(new Item.Properties().stacksTo(1));
     }
 
+    /**
+     * 客户端渲染挂载点（2026-09-20 sensei 需求：按住 Shift 时显示主产物的物品图标）。
+     * <p>
+     * <b>为什么写在这里不会连累专用服务器</b>：{@code initializeClient} 是 Forge 的"只在客户端调用"钩子
+     * （{@code Item#initializeClient(Consumer<IClientItemExtensions>)}，专用服务器从不调它）；
+     * 而渲染器类 {@code com.ae2addon.client.QianJiPatternItemRenderer} 只在**这个 lambda 的方法体里**
+     * 被 new —— 我**故意不写 import**（用全限定名），这样即使本类在服务端被加载，
+     * 也不会因为 import / 字段 / 方法签名把客户端类拽进服务端 classpath。
+     * <p>
+     * 渲染器实例本身是懒加载缓存的（{@code BlockEntityWithoutLevelRenderer} 在 1.20.1 只有
+     * {@code (BlockEntityRenderDispatcher, EntityModelSet)} 一个构造，必须在客户端已就绪时才能建）。
+     */
+    @Override
+    public void initializeClient(java.util.function.Consumer<net.minecraftforge.client.extensions.common.IClientItemExtensions> consumer) {
+        consumer.accept(new net.minecraftforge.client.extensions.common.IClientItemExtensions() {
+            @Override
+            public net.minecraft.client.renderer.BlockEntityWithoutLevelRenderer getCustomRenderer() {
+                return com.ae2addon.client.QianJiPatternItemRenderer.instance();
+            }
+        });
+    }
+
     @Override
     public void appendHoverText(ItemStack stack, @Nullable Level level, List<Component> tooltip, TooltipFlag flag) {
         QianJiPatternData data = QianJiPatternData.of(stack);

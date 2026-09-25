@@ -86,9 +86,13 @@ public final class QianJiPatternData {
         //   → toString() == "crafting"（mod 自己 create(ns, path) 的才带命名空间，如 "botania:orechid"）
         // 所以两种形态都要认，先剥掉可能存在的 minecraft: 前缀再比短名。
         String m = machine.startsWith("minecraft:") ? machine.substring("minecraft:".length()) : machine;
+        // 2026-09-19：**千机自用配方**（ae2addon:qianji_recipe）是千机自己执行的配方，
+        // 不依赖网络里存在某台真实机器 → 没接集成型CPU 时也必须能插进千机样板槽（sensei 的这批配方要用它）
+        if (m.equals(QianJiRecipe.MACHINE_ID)) return true;
         if (m.startsWith("crafting")) return true;   // crafting / crafting_shaped / crafting_special_*
         return switch (m) {
             case "smelting", "blasting", "smoking", "campfire_cooking",
+                 "stonecutting",   // 2026-09-19 补：切石机也是原版基础配方（此前漏了，见 design §11）
                  "smithing", "smithing_transform", "smithing_trim" -> true;
             default -> false;
         };
@@ -182,6 +186,40 @@ public final class QianJiPatternData {
     /** 写到物品上 */
     public void writeTo(net.minecraft.world.item.ItemStack stack) {
         stack.getOrCreateTag().put(TAG_KEY, toTag());
+        writeAeSearchOut(stack);
+    }
+
+    /**
+     * 2026-09-20 sensei：**样板管理终端里按产物搜不到千机样板**。
+     * <p>
+     * 反汇编 AE2 的 {@code PatternAccessTermScreen#itemStackMatchesSearchTerm} 得到真因：
+     * 它只读物品 NBT 里的 **{@code out}** 列表（AE2 自己样板的产物格式）——
+     * {@code stack.getTag().getList("out", COMPOUND)} → 逐个 {@code ItemStack.of(compound)} →
+     * {@code AEItemKey.getDisplayName()} → 含搜索词即命中。
+     * 我们的数据写在 {@link #TAG_KEY}（{@code ***}）下，**没有 {@code out}** → 永远搜不到。
+     * <p>
+     * 处置：额外同步写一份 {@code out}（**只写物品形态**的产物，格式与 AE2 一致：每个元素是一个 ItemStack 的 NBT）。
+     * 主数据一个字节都不动；AE2 的其它读取路径都是"按物品类型分派到各解码器"，
+     * 本来就不认 {@code ae2addon:qianji_pattern}，所以多这个键不会让它们误认。
+     */
+    private void writeAeSearchOut(net.minecraft.world.item.ItemStack stack) {
+        var outList = new ListTag();
+        for (var out : primary) {
+            addSearchOut(outList, out.stack());
+        }
+        for (var chanced : chanced) {
+            addSearchOut(outList, chanced.stack());
+        }
+        stack.getOrCreateTag().put("out", outList);
+    }
+
+    private static void addSearchOut(ListTag list, GenericStack gs) {
+        if (gs == null || !(gs.what() instanceof appeng.api.stacks.AEItemKey itemKey)) {
+            return;   // 流体/化学品没有物品形态 → 不进 AE2 的搜索列表（它的搜索只认 ItemStack）
+        }
+        var tag = new CompoundTag();
+        itemKey.toStack(1).save(tag);
+        list.add(tag);
     }
 
     // ── 展示 ──
@@ -218,5 +256,50 @@ public final class QianJiPatternData {
     private static String label(GenericStack stack) {
         String name = stack.what().getDisplayName().getString();
         return stack.amount() > 1 ? name + " ×" + stack.amount() : name;
+    }
+
+    // ── 搜索文本（2026-09-20 sensei：千机 GUI 内的样板搜索） ──
+
+    /**
+     * 检索文本：把一张样板里"人会想起来的字段"全拼成一串**小写纯文本**，供子串匹配。
+     * <p>
+     * 覆盖：配方类型/机器（{@link #machine}）、配方 id、**全部输入**（含备选集合）、主产物、概率产出。
+     * 每个堆取 {@code getDisplayName()} 之外**还带注册名** —— 中文名不好打的时候可以直接搜
+     * {@code mekanism:ingot_steel} 这种 id。
+     * <p>
+     * 与 {@link #describe()} 的分工：那边是给人看的（带 §颜色码、多行）；这边只求"纯文本 + contains"，
+     * 所以**不能**复用 describe，否则颜色码会混进匹配串里。
+     */
+    public String searchText() {
+        var sb = new StringBuilder(160);
+        if (!machine.isEmpty()) sb.append(machine).append(' ');
+        if (!recipeId.isEmpty()) sb.append(recipeId).append(' ');
+        for (var slot : inputs) {
+            for (var option : slot.options()) appendSearch(sb, option);
+        }
+        for (var out : primary) appendSearch(sb, out.stack());
+        for (var chanced : chanced) appendSearch(sb, chanced.stack());
+        return sb.toString().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static void appendSearch(StringBuilder sb, GenericStack stack) {
+        if (stack == null) return;
+        sb.append(stack.what().getDisplayName().getString()).append(' ');
+        String id = registryIdOf(stack.what());
+        if (id != null) sb.append(id).append(' ');
+    }
+
+    /**
+     * 注册名：只对**有物品/流体形态**的键有效（用 BuiltInRegistries 取，仓库里已有同样写法）。
+     * 化学品之类没有对应注册表的返回 {@code null} —— 宁可不带，也不猜一个错的进去。
+     */
+    private static String registryIdOf(appeng.api.stacks.AEKey key) {
+        if (key instanceof appeng.api.stacks.AEItemKey itemKey) {
+            return net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(itemKey.getItem()).toString();
+        }
+        if (key instanceof appeng.api.stacks.AEFluidKey fluidKey) {
+            return net.minecraft.core.registries.BuiltInRegistries.FLUID.getKey(fluidKey.getFluid()).toString();
+        }
+        return null;
     }
 }

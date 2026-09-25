@@ -1,0 +1,17 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "modLoaded":  "mysticalagradditions",
+    "inputs":  [
+                   {
+                       "item":  "mysticalagriculture:awakened_draconium_seeds",
+                       "count":  1,
+                       "catalyst":  true
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "mysticalagriculture:awakened_draconium_essence",
+                        "count":  1
+                    }
+                ]
+}

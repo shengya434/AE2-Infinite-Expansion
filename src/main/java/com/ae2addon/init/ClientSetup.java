@@ -6,6 +6,7 @@ import com.ae2addon.gui.IntegratedCPUScreen;
 import com.ae2addon.gui.AssemblerScreen;
 import com.ae2addon.gui.InfiniteDriveScreen;
 import com.ae2addon.gui.QianJiScreen;
+import com.ae2addon.gui.QianJiTerminalScreen;
 import com.ae2addon.gui.Mode2ConfigScreen;
 import com.ae2addon.gui.ModeSelectScreen;
 import net.minecraft.client.gui.screens.MenuScreens;
@@ -36,6 +37,8 @@ public class ClientSetup {
             MenuScreens.register(ModMenuTypes.ASSEMBLER.get(), AssemblerScreen::new);
             MenuScreens.register(ModMenuTypes.QIAN_JI.get(), QianJiScreen::new);
             MenuScreens.register(ModMenuTypes.INFINITE_DRIVE.get(), InfiniteDriveScreen::new);
+            // 千机·样板终端（线缆面板 part，2026-09-21 v249）
+            MenuScreens.register(ModMenuTypes.QIAN_JI_TERMINAL.get(), QianJiTerminalScreen::new);
 
         });
     }

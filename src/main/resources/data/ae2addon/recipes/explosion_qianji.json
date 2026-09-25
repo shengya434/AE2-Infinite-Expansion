@@ -1,0 +1,21 @@
+{
+  "type": "ae2addon:explosion_recipe",
+  "inputs": [
+    {
+      "item": "ae2:pattern_provider",
+      "count": 64
+    },
+    {
+      "item": "ae2:interface",
+      "count": 64
+    },
+    {
+      "item": "ae2:singularity",
+      "count": 16
+    }
+  ],
+  "result": {
+    "item": "ae2addon:qianji",
+    "count": 1
+  }
+}

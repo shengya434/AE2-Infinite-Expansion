@@ -72,4 +72,21 @@ public class ModBlocks {
             "qianji",
             QianJiBlock::new
     );
+
+    // ── 自建合成方块（2026-09-24 sensei）──
+    // ⚠ 2026-09-25 改：**彻底普通的方块**（无方块实体 / 无 blockstate 属性 / 不进 AE2 任何系统）。
+    //   原先继承 CraftingUnitBlock 带 256k 存储 + formed/powered 属性，sensei 指出
+    //   「不要特殊属性，很容易出问题」——已按此改掉；结构判定只比对方块 id，不受影响。
+
+    /** 巨型存储合成单元 — 替代多方块模板里的 256k 合成存储器（普通方块） */
+    public static final RegistryObject<Block> DENSE_STORAGE_UNIT = BLOCKS.register(
+            "dense_storage_unit",
+            () -> new com.ae2addon.block.CraftingUnitStorageBlock(true)
+    );
+
+    /** 空白存储合成单元 — 替代多方块模板里的合成单元（普通方块） */
+    public static final RegistryObject<Block> BLANK_STORAGE_UNIT = BLOCKS.register(
+            "blank_storage_unit",
+            () -> new com.ae2addon.block.CraftingUnitStorageBlock(false)
+    );
 }

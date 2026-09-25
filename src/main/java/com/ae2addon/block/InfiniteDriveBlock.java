@@ -65,7 +65,7 @@ public class InfiniteDriveBlock extends BaseEntityBlock {
         // 已成型 → 打开 AE2 原版驱动器面板（DriveMenu，10 格细胞槽）
         if (driveBE.isFormed()) {
             driveBE.openMenu(player);
-            ChatLog.info(level, pos, "打开驱动器面板");
+            // 2026-09-22 v286：原来这里还会往聊天栏发"打开驱动器面板"（每开一次一条）→ 去掉
             return InteractionResult.SUCCESS;
         }
         return InteractionResult.FAIL;
@@ -113,14 +113,15 @@ public class InfiniteDriveBlock extends BaseEntityBlock {
                 level, pos, Direction.SOUTH, 5, 5, 5, coreOffset, expector, problems);
         for (var problem : problems) {
             spawnParticles(level, problem.pos(), 0.0, 1.0, 1.0); // 青色：错误
-            if (problem.expected() == null) {
+            String expectedName = problem.expectedName();
+            if ("空气".equals(expectedName)) {
                 player.sendSystemMessage(Component.literal("§b✗ 位置 " + formatPos(problem.pos())
                         + " 应该是空气，但找到了 " + blockName(problem.found())));
                 continue;
             }
             spawnParticles(level, problem.pos(), 1.0, 0.2, 0.2);
             player.sendSystemMessage(Component.literal("§c✗ 位置 " + formatPos(problem.pos())
-                    + " 应该是 §f" + problem.expected().getName().getString()
+                    + " 应该是 §f" + expectedName
                     + "§c，但找到了 " + blockName(problem.found())));
         }
         return null;

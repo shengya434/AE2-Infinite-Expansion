@@ -1,0 +1,31 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "ae2addon:catalyst_basic",
+                       "count":  1
+                   },
+                   {
+                       "item":  "minecraft:iron_block",
+                       "count":  1024
+                   },
+                   {
+                       "item":  "minecraft:gold_block",
+                       "count":  1024
+                   },
+                   {
+                       "item":  "minecraft:copper_block",
+                       "count":  1024
+                   },
+                   {
+                       "fluid":  "minecraft:lava",
+                       "buckets":  1024000
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:catalyst_advanced",
+                        "count":  1
+                    }
+                ]
+}

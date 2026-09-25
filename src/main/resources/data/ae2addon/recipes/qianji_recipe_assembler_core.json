@@ -1,0 +1,35 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "ae2addon:eternal_heart",
+                       "count":  1
+                   },
+                   {
+                       "item":  "ae2:pattern_provider",
+                       "count":  2048
+                   },
+                   {
+                       "item":  "ae2:interface",
+                       "count":  2048
+                   },
+                   {
+                       "item":  "ae2:fluix_smart_dense_cable",
+                       "count":  1024
+                   },
+                   {
+                       "item":  "ae2:dense_energy_cell",
+                       "count":  16
+                   },
+                   {
+                       "fluid":  "minecraft:water",
+                       "buckets":  10240
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:assembler_core",
+                        "count":  1
+                    }
+                ]
+}

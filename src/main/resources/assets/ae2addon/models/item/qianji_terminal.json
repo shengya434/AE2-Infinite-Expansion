@@ -1,0 +1,9 @@
+{
+  "parent": "ae2:item/display_base",
+  "textures": {
+    "front": "ae2addon:part/qianji_terminal",
+    "front_bright": "ae2addon:part/qianji_terminal_bright",
+    "front_medium": "ae2addon:part/qianji_terminal_medium",
+    "front_dark": "ae2addon:part/qianji_terminal_dark"
+  }
+}

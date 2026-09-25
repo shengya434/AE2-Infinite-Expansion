@@ -1,0 +1,20 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "extendedae_plus:infinity_core",
+                       "count":  1
+                   },
+                   {
+                       "item":  "minecraft:nether_star",
+                       "count":  2
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:eternal_heart",
+                        "count":  32
+                    }
+                ],
+    "modLoaded":  "extendedae_plus"
+}

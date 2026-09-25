@@ -13,6 +13,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraftforge.fml.util.ObfuscationReflectionHelper;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * 无限级装配处理器·核心方块（v0.3 M3）。
@@ -52,12 +53,17 @@ public class AssemblerCoreBlock extends CraftingUnitBlock {
         if (!(be instanceof AssemblerCoreBE core)) {
             return InteractionResult.FAIL;
         }
-        if (core.isFormed()) {
-            // 已成型 → 打开样板槽界面（声明虚拟结算白名单）
-            com.ae2addon.gui.AssemblerMenu.open(player, pos);
+        if (!core.isFormed()) {
+            // ⚠ 2026-09-24 sensei：「没在结构里的也能用」—— 门禁已经补在
+            //   ICraftingProvider 与终端库存上（都按 isFormed 过滤），这里只加一句人话提示，
+            //   免得玩家点了半天不知道为什么没反应。
+            player.displayClientMessage(net.minecraft.network.chat.Component.literal(
+                    "§c装配处理器未装入集成 CPU 多方块结构（需放在结构指定的那一格）"), true);
             return InteractionResult.SUCCESS;
         }
-        return super.use(state, level, pos, player, hand, hit);
+        // 已装入结构 → 打开样板槽界面（声明虚拟结算白名单）
+        com.ae2addon.gui.AssemblerMenu.open(player, pos);
+        return InteractionResult.SUCCESS;
     }
 
     /**
@@ -68,5 +74,27 @@ public class AssemblerCoreBlock extends CraftingUnitBlock {
     @Override
     public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
         return new AssemblerCoreBE(pos, state);
+    }
+
+    /** 归属维护间隔（tick）：2 秒。认领逻辑要能跟上"集成 CPU 后成型"的情况 */
+    private static final int OWNER_CHECK_INTERVAL = 40;
+
+    /**
+     * 定期重新认领归属（2026-09-24）：装配处理器是否"已装入结构"完全取决于
+     * "我在哪个已成型的集成 CPU 结构里"，而这个关系会随时间变化
+     * （CPU 后成型 / 结构被拆），所以定期重算一次最稳妥。
+     */
+    @Nullable
+    @Override
+    public <T extends BlockEntity> net.minecraft.world.level.block.entity.BlockEntityTicker<T> getTicker(
+            Level level, BlockState state, net.minecraft.world.level.block.entity.BlockEntityType<T> type) {
+        if (level.isClientSide) {
+            return null;
+        }
+        return (lvl, pos, st, be) -> {
+            if (be instanceof AssemblerCoreBE core && lvl.getGameTime() % OWNER_CHECK_INTERVAL == 0) {
+                core.tickOwnerMaintenance();
+            }
+        };
     }
 }

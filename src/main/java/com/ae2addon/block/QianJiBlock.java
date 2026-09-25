@@ -111,11 +111,12 @@ public class QianJiBlock extends BaseEntityBlock {
                 level, pos, Direction.SOUTH, 3, 3, 3, coreOffset, expector, problems);
         for (var problem : problems) {
             spawnParticles(level, problem.pos());
-            if (problem.expected() == null) {
+            String expectedName = problem.expectedName();
+            if ("空气".equals(expectedName)) {
                 player.sendSystemMessage(Component.literal("§b✗ " + formatPos(problem.pos())
                         + " 应为空气，但找到了 " + blockName(problem.found())));
             } else {
-                ChatLog.err(level, problem.pos(), "应为 " + problem.expected().getName().getString()
+                ChatLog.err(level, problem.pos(), "应为 " + expectedName
                         + "，但找到了 " + blockName(problem.found()));
             }
         }

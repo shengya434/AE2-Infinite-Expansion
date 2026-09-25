@@ -1,0 +1,27 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "ae2addon:catalyst_advanced",
+                       "count":  1
+                   },
+                   {
+                       "item":  "minecraft:dragon_egg",
+                       "count":  1024
+                   },
+                   {
+                       "item":  "minecraft:nether_star",
+                       "count":  2048
+                   },
+                   {
+                       "item":  "minecraft:netherite_ingot",
+                       "count":  2100000
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:catalyst_ultimate",
+                        "count":  1
+                    }
+                ]
+}

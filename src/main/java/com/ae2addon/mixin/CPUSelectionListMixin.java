@@ -18,7 +18,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * <p>
  * 哨兵值：
  * - 存储：Long.MAX_VALUE（IntegratedCPUBE.getStorageBytes / getAvailableStorage）
- * - 并行：Integer.MAX_VALUE−1（getCoProcessors，AE2 内部 +1 不溢出）
+ * - 并行：{@code AE2AddonConfig.SAFE_DISPLAY_THREADS}（= (MAX-1)/16，
+ *   见那里的注释：AE2 侧是 int 累加，必须留出多条 lane 的余量，否则溢出成负数 → 整项不显示）
  * <p>
  * 2026-09-03 sensei：∞ 处读 config cpuDisplayBytes/cpuDisplayThreads——
  * 填了具体值就显示具体值（默认 MAX / 0 保持 ∞）。
@@ -30,6 +31,19 @@ public abstract class CPUSelectionListMixin {
     @Unique
     private static final String AE2ADDON_INFINITE_TEXT = "∞";
 
+    /**
+     * 这个并行数是不是「无限」哨兵。
+     * <p>
+     * ⚠ 2026-09-25：不再用 {@code == Integer.MAX_VALUE-1} 精确匹配。
+     * 一是哨兵值已降到 {@link com.ae2addon.config.AE2AddonConfig#SAFE_DISPLAY_THREADS}，
+     * 二是万一有别的来源把 int 累加溢出成**负数**（这正是"并行数整项消失"的元凶表现），
+     * 也要按无限处理，绝不能把负数原样画到界面上。
+     */
+    @Unique
+    private static boolean ae2addon$isInfiniteThreads(int value) {
+        return value >= com.ae2addon.config.AE2AddonConfig.SAFE_DISPLAY_THREADS || value < 0;
+    }
+
     /** 存储显示值：config 填具体值 → 该值；仍为 MAX → ∞（保持无限语义）。 */
     @Unique
     private static long ae2addon$displayBytes() {
@@ -37,7 +51,7 @@ public abstract class CPUSelectionListMixin {
         return v <= 0 || v == Long.MAX_VALUE ? Long.MAX_VALUE : v;
     }
 
-    /** 并行显示值：config 0（拉满）→ MAX-1 哨兵；填 N → N。 */
+    /** 并行显示值：config 0（拉满）→ 哨兵；填 N → N。 */
     @Unique
     private static int ae2addon$displayThreads() {
         return com.ae2addon.config.AE2AddonConfig.cpuDisplayThreads();
@@ -55,10 +69,10 @@ public abstract class CPUSelectionListMixin {
         return null;
     }
 
-    /** 并行显示：文本覆盖 > config 数值（MAX-1=∞）> 实际值。 */
+    /** 并行显示：文本覆盖 > config 数值（哨兵=∞）> 实际值。 */
     @Unique
     private static String ae2addon$threadsTextOrNull(int sentinelValue) {
-        if (sentinelValue == Integer.MAX_VALUE - 1) {
+        if (ae2addon$isInfiniteThreads(sentinelValue)) {
             String text = com.ae2addon.config.AE2AddonConfig.cpuThreadsText();
             if (!text.isEmpty()) {
                 return text;
@@ -91,15 +105,16 @@ public abstract class CPUSelectionListMixin {
                     target = "Ljava/lang/String;valueOf(I)Ljava/lang/String;"),
             require = 0)
     private String ae2addon$formatInfiniteParallelism(int value) {
-        if (value != Integer.MAX_VALUE - 1) {
+        if (!ae2addon$isInfiniteThreads(value)) {
             return String.valueOf(value);
         }
         String text = ae2addon$threadsTextOrNull(value);
         if (text != null) {
             return text;
         }
-        int disp = ae2addon$displayThreads();
-        return disp == Integer.MAX_VALUE - 1 ? AE2ADDON_INFINITE_TEXT : String.valueOf(disp);
+        return com.ae2addon.config.AE2AddonConfig.cpuDisplayThreadsIsInfinite()
+                ? AE2ADDON_INFINITE_TEXT
+                : String.valueOf(ae2addon$displayThreads());
     }
 
     @Redirect(method = "getTooltip",
@@ -108,17 +123,16 @@ public abstract class CPUSelectionListMixin {
                             + "Lnet/minecraft/network/chat/MutableComponent;"),
             require = 0)
     private MutableComponent ae2addon$tooltipInfiniteParallelism(long value) {
-        if (value != Integer.MAX_VALUE - 1) {
+        if (!ae2addon$isInfiniteThreads((int) value)) {
             return Tooltips.ofNumber(value);
         }
         String text = ae2addon$threadsTextOrNull((int) value);
         if (text != null) {
             return Component.literal(text);
         }
-        int disp = ae2addon$displayThreads();
-        return disp == Integer.MAX_VALUE - 1
+        return com.ae2addon.config.AE2AddonConfig.cpuDisplayThreadsIsInfinite()
                 ? ae2addon$infiniteTooltipValue()
-                : Tooltips.ofNumber(disp);
+                : Tooltips.ofNumber(ae2addon$displayThreads());
     }
 
     @Redirect(method = "getTooltip",

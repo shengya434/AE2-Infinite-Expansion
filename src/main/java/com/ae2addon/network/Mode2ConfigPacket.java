@@ -311,7 +311,9 @@ public class Mode2ConfigPacket {
             buf.writeVarInt(p.panelItems.size());
             for (var entry : p.panelItems) {
                 buf.writeNbt(entry.key.toTagGeneric());
-                buf.writeVarLong(entry.amount);
+                // ⚠ 2026-09-19：数量改传 BigInteger（byte[]），否则真实存储量 > Long.MAX 时
+                //   面板只能显示被截断的 9.2E（sensei 实测）
+                buf.writeByteArray(entry.amount.toByteArray());
                 buf.writeBoolean(entry.isInfinite);
                 buf.writeVarLong(entry.bytes);
             }
@@ -370,7 +372,7 @@ public class Mode2ConfigPacket {
                 if (tag == null) continue;
                 AEKey key = AEKey.fromTagGeneric(tag);
                 if (key == null) continue;
-                long amount = buf.readVarLong();
+                java.math.BigInteger amount = new java.math.BigInteger(buf.readByteArray());
                 boolean isInfinite = buf.readBoolean();
                 long bytes = buf.readVarLong();
                 items.add(new UnlimitedCellInventory.PanelItem(key, amount, isInfinite, bytes));
@@ -707,11 +709,13 @@ public class Mode2ConfigPacket {
 
         boolean wasInfinite = inv.getUl().contains(key) || inv.getWl().contains(key);
         boolean hasCa = inv.hasCommitedAmount(key);
-        long committed = hasCa ? inv.getCommitedAmount(key) : 0;
+        // ⚠ 2026-09-19：用 BigInteger 取真实额度（原来 long + clampToLong → 只剩 9.2E）
+        java.math.BigInteger committed = hasCa
+                ? inv.getCommitedAmount(key) : java.math.BigInteger.ZERO;
 
         inv.togglePanelInfinite(key);
 
-        if (wasInfinite && committed > 0 && key instanceof AEItemKey itemKey) {
+        if (wasInfinite && committed.signum() > 0 && key instanceof AEItemKey itemKey) {
             // 取消无限 → 输出承诺数量。数量过大时打包成物质球，避免海量掉落物卡死
             outputOrBall(player, itemKey, committed);
         }
@@ -722,12 +726,17 @@ public class Mode2ConfigPacket {
     /**
      * 输出物品：优先背包；数量过大（超过背包容量）时打包成物质球交给玩家，
      * 右键物质球可展开取回。绝不产生海量掉落物。
+     * <p>
+     * ⚠ 2026-09-19（sensei：取消无限只排出 9.2E）：数量参数改成 **BigInteger**。
+     * 真实存储量可以远超 Long.MAX，用 long 会在打包/掉落时被截断成 9.2E。
      */
-    private static void outputOrBall(ServerPlayer player, AEItemKey itemKey, long amount) {
+    private static void outputOrBall(ServerPlayer player, AEItemKey itemKey,
+                                     java.math.BigInteger amount) {
         // 背包容量估算（36 格 × 最大堆叠）
-        long capacity = 36L * itemKey.getItem().getMaxStackSize();
+        java.math.BigInteger capacity = java.math.BigInteger.valueOf(
+                36L * Math.max(1, itemKey.getItem().getMaxStackSize()));
 
-        if (amount > capacity) {
+        if (amount.compareTo(capacity) > 0) {
             // 打包成物质球
             ItemStack ball = com.ae2addon.item.MatterBallItem.makeBall(itemKey, amount);
             boolean placed = player.addItem(ball);
@@ -750,8 +759,9 @@ public class Mode2ConfigPacket {
         }
 
         // 数量小 → 原逻辑：优先背包，溢出则掉落
-        int maxStackSize = itemKey.getItem().getMaxStackSize();
-        long remaining = amount;
+        // （走到这里说明 amount ≤ 36×最大堆叠，转 long 一定安全）
+        int maxStackSize = Math.max(1, itemKey.getItem().getMaxStackSize());
+        long remaining = amount.longValue();
         while (remaining > 0) {
             int count = (int) Math.min(remaining, maxStackSize);
             ItemStack outStack = itemKey.toStack(count);

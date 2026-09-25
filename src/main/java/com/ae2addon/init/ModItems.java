@@ -42,6 +42,20 @@ public class ModItems {
             () -> new BlockItem(ModBlocks.INFINITE_CO_PROCESSING.get(), new Item.Properties())
     );
 
+    // ── 自建合成方块（2026-09-24）：与控制器同单元类型，用于和控制器成簇 ──
+
+    /** 巨型存储合成单元（替换 256k 合成存储器） */
+    public static final RegistryObject<Item> DENSE_STORAGE_UNIT_ITEM = ITEMS.register(
+            "dense_storage_unit",
+            () -> new BlockItem(ModBlocks.DENSE_STORAGE_UNIT.get(), new Item.Properties())
+    );
+
+    /** 空白存储合成单元（替换合成单元） */
+    public static final RegistryObject<Item> BLANK_STORAGE_UNIT_ITEM = ITEMS.register(
+            "blank_storage_unit",
+            () -> new BlockItem(ModBlocks.BLANK_STORAGE_UNIT.get(), new Item.Properties())
+    );
+
     // ── 已有元件 ──
 
     public static final RegistryObject<Item> UNIVERSAL_STORAGE_CELL = ITEMS.register(
@@ -141,10 +155,87 @@ public class ModItems {
             com.ae2addon.item.ConfigCardItem::new
     );
 
+    /**
+     * 千机·样板终端（线缆面板 part，2026-09-21 v249）。
+     * <p>
+     * 把"样板管理终端（全网样板长列表 + 搜索）"与"编码终端（空白样板槽 → 编码样板槽）"缝在一起，
+     * 只产出**千机样板**。注册方式与 {@link #INFINITE_INTERFACE_PANEL_ITEM} 完全一致
+     * （AE2 的 {@code PartItem} + part 工厂）。
+     */
+    public static final RegistryObject<Item> QIAN_JI_TERMINAL_ITEM = ITEMS.register(
+            "qianji_terminal",
+            () -> new appeng.items.parts.PartItem<>(
+                    new Item.Properties(),
+                    com.ae2addon.part.QianJiTerminalPart.class,
+                    partItem -> new com.ae2addon.part.QianJiTerminalPart(partItem))
+    );
+
+    /**
+     * 千机·样板终端（**无线形态**，2026-09-21 v272）。
+     * <p>
+     * 与线缆面板共用同一个菜单/界面；区别只是：网络来自绑定的无线访问点、
+     * 两个样板槽存在**物品 NBT** 里、按距离耗电。绑定方式与 AE2 自带无线终端一致。
+     */
+    public static final RegistryObject<Item> QIAN_JI_WIRELESS_TERMINAL_ITEM = ITEMS.register(
+            "qianji_wireless_terminal",
+            () -> com.ae2addon.compat.ae2wtlib.AE2WTLibCompat.isLoaded()
+                    // 装了 AE2WTLib → 用"通用终端感知"的子类（只多实现一个接口，其余一模一样）；
+                    // 没装 → 基础物品，一点 AE2WTLib 的类都不会碰到
+                    ? com.ae2addon.compat.ae2wtlib.AE2WTLibItemFactory.create()
+                    : new com.ae2addon.item.QianJiWirelessTerminalItem()
+    );
+
     /** 千机配方样板（自有样板体系，2026-09-15） */
     public static final RegistryObject<Item> QIAN_JI_PATTERN = ITEMS.register(
             "qianji_pattern",
             com.ae2addon.item.QianJiPatternItem::new
+    );
+
+    /**
+     * 千机样板的**底图渲染模板**（2026-09-20）：纯渲染用，玩家拿不到、**不进创造标签页**。
+     * <p>
+     * 为什么需要一个真实物品：千机样板的渲染器靠"按住 Shift 时显示底图"，
+     * 而底图以前是一个**没被任何物品引用的模型文件**（{@code qianji_pattern_base}）→
+     * 不被烘焙 → {@code ModelManager#getModel} 返回"缺失模型" → 贴图变黑紫方块（sensei 实测）。
+     * 现在底图 = 这个物品的模型（{@code assets/ae2addon/models/item/qianji_pattern_template.json}），
+     * 被真实物品引用 → 一定被烘焙；渲染时把它交给原版 {@code ItemRenderer#renderStatic}，
+     * 位置/缩放/光照与普通物品完全一致。
+     * <p>
+     * ⚠ **不要**把它加进 {@code TAB_AE2ADDON} 的 `displayItems`（那不是它的用途）。
+     */
+    public static final RegistryObject<Item> QIANJI_PATTERN_TEMPLATE = ITEMS.register(
+            "qianji_pattern_template",
+            () -> new Item(new Item.Properties())
+    );
+
+    // ── 无限 xxx 元件体系（2026-09-19 sensei 定稿，见 docs/infinite-essence-cell.md）──
+    // 精华与元件都用「一个物品 + NBT 绑定目标 key」，不注册上万种物品。
+
+    /** 无限 xxx 精华：由千机「输入全是催化剂」的配方额外产出 */
+    public static final RegistryObject<Item> INFINITE_ESSENCE = ITEMS.register(
+            "infinite_essence",
+            com.ae2addon.item.InfiniteEssenceItem::new
+    );
+
+    /** 无限 xxx 元件（物品变体）：精华 + ME物品元件外壳 → 此物 */
+    public static final RegistryObject<Item> INFINITE_ITEM_CELL = ITEMS.register(
+            "infinite_item_cell",
+            () -> new com.ae2addon.item.BoundInfiniteCellItem(
+                    com.ae2addon.item.BoundInfiniteCellItem.Kind.ITEM)
+    );
+
+    /** 无限 xxx 元件（流体变体）：精华 + ME流体元件外壳 → 此物 */
+    public static final RegistryObject<Item> INFINITE_FLUID_CELL = ITEMS.register(
+            "infinite_fluid_cell",
+            () -> new com.ae2addon.item.BoundInfiniteCellItem(
+                    com.ae2addon.item.BoundInfiniteCellItem.Kind.FLUID)
+    );
+
+    /** 无限 xxx 元件（化学品变体）：精华 + ME化学品元件外壳（Applied-Mekanistics）→ 此物 */
+    public static final RegistryObject<Item> INFINITE_CHEMICAL_CELL = ITEMS.register(
+            "infinite_chemical_cell",
+            () -> new com.ae2addon.item.BoundInfiniteCellItem(
+                    com.ae2addon.item.BoundInfiniteCellItem.Kind.CHEMICAL)
     );
 
     // ── 创造模式标签页 ──
@@ -179,8 +270,19 @@ public class ModItems {
                         acceptTabItem(output, CATALYST_ADVANCED.get());
                         acceptTabItem(output, CATALYST_ULTIMATE.get());
                         acceptTabItem(output, QIAN_JI_PATTERN.get());
+                        // 千机·样板终端（2026-09-21：sensei 报"没写进创造标签页"）
+                        acceptTabItem(output, QIAN_JI_TERMINAL_ITEM.get());
+                        // 千机·样板无线终端（2026-09-21 v272）
+                        acceptTabItem(output, QIAN_JI_WIRELESS_TERMINAL_ITEM.get());
                         acceptTabItem(output, CONFIG_CARD.get());
                         acceptTabItem(output, MATTER_BALL.get());
+                        acceptTabItem(output, INFINITE_ESSENCE.get());
+                        // 自建合成方块（2026-09-24）：巨型存储合成单元 / 空白存储合成单元
+                        acceptTabItem(output, DENSE_STORAGE_UNIT_ITEM.get());
+                        acceptTabItem(output, BLANK_STORAGE_UNIT_ITEM.get());
+                        acceptTabItem(output, INFINITE_ITEM_CELL.get());
+                        acceptTabItem(output, INFINITE_FLUID_CELL.get());
+                        acceptTabItem(output, INFINITE_CHEMICAL_CELL.get());
                     })
                     .build()
     );

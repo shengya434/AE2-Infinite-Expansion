@@ -101,7 +101,12 @@ public class CellDataSavedData extends SavedData {
         public final Map<AEKey, BigInteger> s2 = new HashMap<>();
         public final Set<AEKey> wl = new HashSet<>();
         public final Set<AEKey> ul = new HashSet<>();
-        public final Map<AEKey, Long> ca = new HashMap<>();
+        /** 承诺额度（升级为无限时的真实数量）。
+         *  ⚠ 2026-09-19：从 {@code Map<AEKey, Long>} 改成 BigInteger ——
+         *  取消无限时要排出真实数量，用 long 会在持久化这一层又截成 9.2E。
+         *  读写改走 {@link #putBigIntMap}/{@link #getBigIntMap}，
+         *  后者**兼容旧的 long 格式**（"#" 为 TAG_LONG），老存档不会丢数据。 */
+        public final Map<AEKey, BigInteger> ca = new HashMap<>();
         /** Mode 3 已插入的物品（含 NBT 变体），跨存档持久化 */
         public final Set<AEKey> m3 = new HashSet<>();
         /** Mode 2 按 tag 批量无限（如 "minecraft:logs"） */
@@ -120,7 +125,7 @@ public class CellDataSavedData extends SavedData {
             putBigIntMap(tag, "s2", s2);
             putSet(tag, "wl", wl);
             putSet(tag, "ul", ul);
-            putLongMap(tag, "ca", ca);
+            putBigIntMap(tag, "ca", ca);
             putSet(tag, "m3", m3);
             putStringSet(tag, "tags", tags);
             putStringSet(tag, "mods", mods);
@@ -135,7 +140,7 @@ public class CellDataSavedData extends SavedData {
             getBigIntMap(tag, "s2", data.s2);
             getSet(tag, "wl", data.wl);
             getSet(tag, "ul", data.ul);
-            getLongMap(tag, "ca", data.ca);
+            getBigIntMap(tag, "ca", data.ca);
             getSet(tag, "m3", data.m3);
             getStringSet(tag, "tags", data.tags);
             getStringSet(tag, "mods", data.mods);

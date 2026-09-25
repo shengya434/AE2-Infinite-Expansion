@@ -57,4 +57,9 @@ public class ModMenuTypes {
             MENUS.register("infinite_drive",
                     () -> IForgeMenuType.create(InfiniteDriveMenu::new));
 
+    // 千机·样板终端（线缆面板形态，2026-09-21 v249）
+    public static final RegistryObject<MenuType<com.ae2addon.gui.QianJiTerminalMenu>> QIAN_JI_TERMINAL =
+            MENUS.register("qianji_terminal",
+                    () -> IForgeMenuType.create(com.ae2addon.gui.QianJiTerminalMenu::fromNetwork));
+
 }

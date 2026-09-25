@@ -36,13 +36,24 @@ public final class AE2AddonConfig {
 
     // ── 批量推送 ──
 
-    /** 批量推送翻倍上限（1×→2×→4×… 指数暴涨的最大 N）。 */
+    /**
+     * 批量推送翻倍上限（1×→2×→4×… 指数暴涨的最大 N）。
+     * <p>
+     * ⚠ 2026-09-18 sensei：千机样板改走**虚拟结算**（每 tick 结算 round(并行/20) 份）后，
+     * 「批量通道」计划退役 —— 本项属于批量通道，**暂时仍被引用**，退役后即失效。
+     * 新代码不要再依赖它。
+     */
     public static final ForgeConfigSpec.LongValue BATCH_MAX_MULTIPLIER = BUILDER
             .comment("批量推送翻倍上限（N× 指数暴涨的最大值；999999999999999999 ≈ Long.MAX）",
                     "Max batch multiplier for exponential push growth")
             .defineInRange("batchMaxMultiplier", Long.MAX_VALUE, 1L, Long.MAX_VALUE);
 
-    /** 全网格每 tick 成功 push 次数共享预算（0=不限制；防巨型订单独占服务端 tick）。 */
+    /**
+     * 全网格每 tick 成功 push 次数共享预算（0=不限制；防巨型订单独占服务端 tick）。
+     * <p>
+     * ⚠ 2026-09-18：属于**批量通道 / 推送路径**的限流。千机样板改虚拟结算后不再走这条，
+     * 退役批量通道时会一并处理；在此之前仍然生效。
+     */
     public static final ForgeConfigSpec.IntValue DISPATCH_BUDGET_PER_TICK = BUILDER
             .comment("全网格每 tick 成功 push 次数共享预算（0=不限制=旧行为；",
                     "与时间片纳秒预算正交，按成功 push 调用计数，批量大 N 一次推送不受影响；",
@@ -50,6 +61,51 @@ public final class AE2AddonConfig {
                     "Grid-wide successful-push budget per tick (0=unlimited; ",
                     "orthogonal to time-slice ns budget; counts push calls not items)")
             .defineInRange("dispatchBudgetPerTick", 20_000, 0, 10_000_000);
+
+    /**
+     * 千机虚拟结算的每 tick 份数硬上限（**集成型CPU 在线时**生效）。
+     * <p>
+     * ⚠ 2026-09-18 sensei 反馈「下大单严重卡顿、集成型CPU 在线时更明显」：
+     * 原来的口径是「有集成型CPU 就不限」，于是一个 tick 里要掷骰结算整个任务量
+     * （几十万~上千万份）→ 服务端单 tick 卡死。改成**任何情况下都有每 tick 上限**：
+     * 无集成型CPU = round(网络并行数 / 20)；有集成型CPU = 本项（默认 4096）。
+     * <p>
+     * 逐份掷骰是概率正确性的要求（不做期望值取巧），所以这里只能靠"分片"摊到多个 tick。
+     * 调大 = 更快但更卡；调小 = 更平滑但耗时更长。
+     */
+    public static final ForgeConfigSpec.IntValue QIANJI_SETTLE_CAP = BUILDER
+            .comment("千机虚拟结算每 tick 份数上限（集成型CPU 在线时；无集成CPU 时按 网络并行数/20）",
+                    "QianJi virtual-settlement batches per tick (integrated CPU online; ",
+                    "without it, the cap is round(networkParallelSum / 20))")
+            .defineInRange("qianjiSettleCap", 4096, 1, 10_000_000);
+
+    /**
+     * 千机虚拟结算**每 tick 结算次数**上限（默认 8；0 = 不限制）。
+     * <p>
+     * ⚠ 2026-09-18 实测（sensei 日志）：单片 N 有上限也挡不住卡顿 ——
+     * 4.4 万次结算里 2.6 万次是 N=1，一秒上百次，每次都单独往网络 insert 一次产物
+     * （回收路径每次只处理一份），巨型网络里一次 insert = 全存储扫描 → 每 tick 上百次 = 卡死。
+     * 所以必须同时限制「次数」。调大 = 更快但每 tick 干的活更多。
+     * <p>
+     * ⚠ 配置项必须在 {@code SPEC = BUILDER.build()} **之前**定义 ——
+     * 定义在之后的话，别的类静态初始化时读到的是 null，
+     * 抛「Cannot get config value before spec is built」直接把游戏崩在加载阶段（2026-09-18 实际踩过）。
+     */
+    public static final ForgeConfigSpec.IntValue QIANJI_SETTLE_CALLS_PER_TICK = BUILDER
+            .comment("千机虚拟结算每 tick 结算次数上限（0 = 不限制）",
+                    "QianJi virtual-settlement calls per tick (0 = unlimited)")
+            .defineInRange("qianjiSettleCallsPerTick", 512, 0, 100_000);
+
+    /**
+     * 热路径每 tick 日志行数预算（默认 200；0 = 不限制）。
+     * <p>
+     * ⚠ 2026-09-18：开着 debugLogs 时结算路径每次刷 4 行，一秒几百行同步磁盘写，
+     * 本身就能把服务端拖死。超预算的行会被丢弃（信息不丢：有汇总）。
+     */
+    public static final ForgeConfigSpec.IntValue HOT_LOG_BUDGET_PER_TICK = BUILDER
+            .comment("热路径每 tick 日志行数预算（0 = 不限制；防 debugLogs 把服务端写死）",
+                    "Hot-path log lines per tick (0 = unlimited)")
+            .defineInRange("hotLogBudgetPerTick", 200, 0, 1_000_000);
 
     /** 批量经验共享继承上限（新 lane 起步 N，防单次巨量 push）。 */
     public static final ForgeConfigSpec.LongValue SHARED_EXP_CAP = BUILDER
@@ -194,6 +250,24 @@ public final class AE2AddonConfig {
                     "(each pass capped at feederPowerFeCap; N passes = N× cap ceiling)")
             .defineInRange("feederPowerPassesPerTick", 1, 1, 1024);
 
+    // ── 无线千机·样板终端 ──
+
+    /**
+     * 无线千机·样板终端的**能源上限**（AE，2026-09-22 v281 sensei 要求）。
+     * <p>
+     * 基数本来是 AE2 的 config（{@code config/ae2/common.json} 里的 {@code wirelessTerminal}，
+     * 默认 1600000），我们的物品在 {@code getAEMaxPower} 里取 {@code max(AE2 的值, 这个值)}。
+     * <b>0 = 完全跟随 AE2</b>（等于没改）。
+     * <p>
+     * 充电速率会**按同一比例放大**，所以容量变大不会让"充满"变得更慢。
+     * ⚠ 只作用于**我们自己的无线终端物品**；放进 AE2WTLib 通用终端里当一种状态时，
+     * 电量属于通用终端物品本身（那边是 AE2WTLib 的容量）。
+     */
+    public static final ForgeConfigSpec.LongValue WIRELESS_TERMINAL_CAPACITY = BUILDER
+            .comment("无线千机·样板终端的能源上限（AE；0 = 跟随 AE2 的 wirelessTerminal）",
+                    "Energy capacity (AE) for the QianJi wireless terminal; 0 = follow AE2's wirelessTerminal")
+            .defineInRange("wirelessTerminalCapacity", 8_000_000L, 0L, Long.MAX_VALUE);
+
     // ── 调试 ──
 
     /** 热路径调试日志（submitJob/批次进度/批量推送等高频日志）。 */
@@ -271,6 +345,18 @@ public final class AE2AddonConfig {
         return Math.max(0L, SHARED_EXP_CAP.get());
     }
 
+    public static int qianjiSettleCap() {
+        return Math.max(1, QIANJI_SETTLE_CAP.get());
+    }
+
+    public static int qianjiSettleCallsPerTick() {
+        return Math.max(0, QIANJI_SETTLE_CALLS_PER_TICK.get());
+    }
+
+    public static int hotLogBudgetPerTick() {
+        return Math.max(0, HOT_LOG_BUDGET_PER_TICK.get());
+    }
+
     /** CPU 调度时间片目标（毫秒；巨型订单提速旋钮）。 */
     public static int cpuTimeSliceTargetMs() {
         return Math.max(1, CPU_TIME_SLICE_TARGET_MS.get());
@@ -297,10 +383,30 @@ public final class AE2AddonConfig {
         return Math.max(1L, CPU_DISPLAY_BYTES.get());
     }
 
-    /** 显示线程数（0 = Integer.MAX_VALUE-1 拉满）。 */
+    /**
+     * 「无限并行」的显示哨兵值。
+     * <p>
+     * ⚠ 2026-09-25 修「重新成型后 AE2 合成 CPU 列表里并行数不显示」：
+     * AE2 的并行数是 {@code CraftingCPUCluster.accelerator}（**int**），
+     * 由 {@code addBlockEntity} 里的 {@code accelerator += be.getAcceleratorThreads()} 累加。
+     * 我们按 {@code idleLaneTarget} 建多条 lane，每条都把自己那个控制器 addBlockEntity 一次
+     * → 旧哨兵 {@code Integer.MAX_VALUE-1} 只要累加 ≥2 次就**溢出成负数**，
+     * AE2 列表于是只显示存储字节、并行数整项消失。
+     * <p>
+     * 取 {@code (Integer.MAX_VALUE-1)/16}：累加 16 条 lane 也不会溢出，
+     * 数值上仍是"天文数字"，显示层再把它渲染成 ∞。
+     */
+    public static final int SAFE_DISPLAY_THREADS = (Integer.MAX_VALUE - 1) / 16;
+
+    /** @return config 里是否配的是"拉满/无限"（0 或负数） */
+    public static boolean cpuDisplayThreadsIsInfinite() {
+        return CPU_DISPLAY_THREADS.get() <= 0;
+    }
+
+    /** 显示线程数（0 = {@link #SAFE_DISPLAY_THREADS}；防多条 lane 累加时 int 溢出）。 */
     public static int cpuDisplayThreads() {
         int v = CPU_DISPLAY_THREADS.get();
-        return v <= 0 ? Integer.MAX_VALUE - 1 : v;
+        return v <= 0 ? SAFE_DISPLAY_THREADS : v;
     }
 
     /** 存储显示文本覆盖（去空格；空 = 未设置）。 */
@@ -379,5 +485,23 @@ public final class AE2AddonConfig {
     /** 感应卡每 tick 供电轮数（每轮上限 feederPowerFeCap）。 */
     public static int feederPowerPasses() {
         return Math.max(1, FEEDER_POWER_PASSES.get());
+    }
+
+    /** 无线千机·样板终端的能源上限（AE）；0 = 跟随 AE2 自己的 wirelessTerminal。 */
+    public static long wirelessTerminalCapacity() {
+        try {
+            return Math.max(0L, WIRELESS_TERMINAL_CAPACITY.get());
+        } catch (Throwable t) {
+            return 0L;   // 配置还没加载时按"跟随 AE2"处理，绝不让物品取值抛异常
+        }
+    }
+
+    /** AE2 那一档无线终端容量（拿不到就给默认 1600000，与 AE2 的默认 config 一致）。 */
+    public static double ae2WirelessTerminalCapacity() {
+        try {
+            return Math.max(1.0, appeng.core.AEConfig.instance().getWirelessTerminalBattery().getAsDouble());
+        } catch (Throwable t) {
+            return 1_600_000.0;
+        }
     }
 }

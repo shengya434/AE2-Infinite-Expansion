@@ -56,6 +56,40 @@ public class CatalystItem extends Item {
         };
     }
 
+    /**
+     * 本催化剂一次掷骰会产生几种**不同**的倍率值（0/1 = 没有随机性）。
+     * <p>
+     * ⚠ 2026-09-18 晚：给"超大订单免逐份掷骰"用。倍数无随机性的催化剂（高级 ×2）不必掷骰；
+     * 有随机性的（基础 50%×2、终极 50%×4）可以用**二项分布抽样**一次性算出
+     * 「N 份里有多少份翻倍」，分布与逐份掷骰完全等价、但代价 O(1)。
+     */
+    public int distinctMultiplierCount() {
+        return switch (tier) {
+            case 1, 3 -> 2; // 50/50
+            case 2 -> 1;    // 恒定 ×2
+            default -> 0;   // 无催化剂 → 恒定 ×1
+        };
+    }
+
+    /** 50% 翻倍那两档的「翻倍时的倍数」（基础 ×2 / 终极 ×4）；无随机性或 0 档返回 0 */
+    public int doubledMultiplier() {
+        return switch (tier) {
+            case 1 -> 2;
+            case 3 -> 4;
+            default -> 0;
+        };
+    }
+
+    /** 不翻倍时的倍数（基础 ×1 / 终极 ×3 / 高级 ×2） */
+    public int baseMultiplier() {
+        return switch (tier) {
+            case 1 -> 1;
+            case 2 -> 2;
+            case 3 -> 3;
+            default -> 1;
+        };
+    }
+
     @Override
     public Component getName(ItemStack stack) {
         return switch (tier) {

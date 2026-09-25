@@ -125,6 +125,10 @@ dependencies {
 
     // Jade（玉）— 可选集成：供料站蓄水池/面板信息显示
     compileOnly fg.deobf("maven.modrinth:jade:11.13.3+forge")
+
+    // AE2WTLib — 可选集成（2026-09-21 v273）：把千机·样板终端做成"无线通用终端"的一种状态。
+    // 只用 compileOnly（不随包发布、不进 jarJar），运行时靠 ModList 探测；没装就整段跳过。
+    compileOnly fg.deobf(files("libs/ae2wtlib-15.3.3-forge.jar"))
 }
 
 jar {

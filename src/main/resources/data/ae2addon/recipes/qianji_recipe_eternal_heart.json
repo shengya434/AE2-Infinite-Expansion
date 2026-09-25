@@ -1,0 +1,39 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "ae2:not_so_mysterious_cube",
+                       "count":  1
+                   },
+                   {
+                       "item":  "minecraft:nether_star",
+                       "count":  16
+                   },
+                   {
+                       "item":  "ae2:singularity",
+                       "count":  8
+                   },
+                   {
+                       "item":  "minecraft:heart_of_the_sea",
+                       "count":  4
+                   },
+                   {
+                       "item":  "minecraft:conduit",
+                       "count":  2
+                   },
+                   {
+                       "item":  "minecraft:dragon_egg",
+                       "count":  1
+                   },
+                   {
+                       "fluid":  "minecraft:lava",
+                       "buckets":  1280
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:eternal_heart",
+                        "count":  1
+                    }
+                ]
+}

@@ -22,9 +22,12 @@ import com.ae2addon.AE2Addon;
 import com.ae2addon.compat.CreateSequencedCompat;
 import com.ae2addon.compat.EMCCompat;
 import com.ae2addon.compat.GregTechCompat;
+import com.ae2addon.compat.ProductiveBeesCompat;
+import com.ae2addon.compat.ThermalCompat;
 import com.ae2addon.gui.QianJiMenu;
 import com.ae2addon.init.ModBlockEntities;
 import com.ae2addon.item.CatalystItem;
+import com.ae2addon.crafting.QianJiByproducts;
 import com.ae2addon.crafting.QianJiPatternDetails;
 import com.ae2addon.recipe.QianJiPatternData;
 import com.ae2addon.util.ChatLog;
@@ -67,7 +70,7 @@ import java.util.Set;
  * - 处理流程：CPU 请求 → 瞬间处理 → 产物（+副产物）注入 ME 网络
  */
 public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICraftingProvider, ICraftingMachine, Formable,
-        appeng.helpers.patternprovider.PatternContainer {
+        appeng.helpers.patternprovider.PatternContainer, com.ae2addon.crafting.QianJiByproducts.RecipeLookup {
 
     private static final int PATTERN_SLOTS = 1280;
     private static final int CATALYST_SLOTS = 1;
@@ -120,6 +123,18 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     /** 有配方但输入未知（自定义 RecipeType 如 ProjectE/Mekanism）的输出物品 */
     private static Set<Item> customRecipeOutputs = null;
 
+    /**
+     * 兼容层配方的输入槽缓存（**按配方实例**，见 {@link RecipeByproducts} 同类注释：
+     * 同一类不同实例的输入完全不同，绝不能按类缓存）。
+     * <p>
+     * 为什么要缓存：建索引时每个 Thermal/PB 配方要调一次 {@code inputSlots}（纯反射，里面会读
+     * {@code getInputItems/getInputFluids/getBeeType/…}），而校验每张样板又要把候选配方的槽遍历一遍；
+     * 不缓存的话每次校验都要重跑一遍反射（30 个 Thermal 类型 + 8 个 PB 类型）。
+     */
+    private static final Map<Recipe<?>, List<List<GenericStack>>> COMPAT_INPUT_CACHE =
+            java.util.Collections.synchronizedMap(new java.util.IdentityHashMap<>());
+    private static final int COMPAT_INPUT_CACHE_LIMIT = 20_000;
+
     private static Map<Item, List<Set<Item>>> getRecipeIndex(Level level) {
         if (recipeIndex != null) return recipeIndex;
         var index = new HashMap<Item, List<Set<Item>>>();
@@ -127,11 +142,11 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         var custom = new HashSet<Item>();
         try {
             for (var recipe : level.getRecipeManager().getRecipes()) {
-                // 产出物品：标准 API + GT 多产出（GT 的 getResultItem 返回空，产出全在 outputs 映射里）
+                // 产出物品：标准 API + GT 多产出 + 兼容层（见 outputItemsOf 注释）
                 var outputs = outputItemsOf(recipe, level);
                 if (outputs.isEmpty()) continue;
 
-                // 输入物品：GT 走 inputs 映射，其余走标准 getIngredients()
+                // 输入物品：GT 走 inputs 映射，Thermal/PB 走兼容层，其余走标准 getIngredients()
                 var inputs = standardInputItems(recipe);
                 boolean sequenced = CreateSequencedCompat.isSequencedAssembly(recipe);
 
@@ -144,6 +159,10 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                     // ⚠ 序列装配例外（2026-09-15）：Create 序列装配的 getIngredients() 只报
                     // 基础原料甚至为空，它**有完整可校验的需求**（CreateSequencedCompat）
                     // → 绝不能落入「自定义→放行」，否则「1 份原料→成品」直接被放行
+                    //
+                    // ⚠ 2026-09-20：兼容层配方（Thermal/PB）**已经走上面两条 compat 分支**把输入读出来了，
+                    // 所以正常情况下不该再落到这里；真落进来（反射没打通 → 输入恒空）时，
+                    // 至少不会把「本来能认的产出」直接退化成「输入未知 → 放行」。
                     if (!sequenced) {
                         custom.addAll(outputs);
                     }
@@ -154,7 +173,13 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                 }
             }
         } catch (Exception e) {
-            AE2Addon.LOGGER.warn("QianJi: recipe index build failed: {}", e.getMessage());
+            // 日志兜底：LOGGER 是 AE2Addon 里第一个赋值的静态字段，正常情况下一直可用；
+            // 这里仍然兜一层 Throwable，避免"日志本身出问题"把整台机器的索引构建带崩（离线/异常期自保）
+            try {
+                AE2Addon.LOGGER.warn("QianJi: recipe index build failed: {}", e.getMessage());
+            } catch (Throwable ignored) {
+                // 连日志都打不出来 → 只能算了
+            }
         }
         recipeIndex = index;
         recipeObjects = objects;
@@ -257,7 +282,31 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return new ItemStack(item).getHoverName().getString();
     }
 
-    /** 配方的产出物品集合：标准 API + GT 多产出 + Create 序列装配结果池 */
+    /**
+     * 配方的产出物品集合：标准 API + GT 多产出 + 兼容层（Thermal / Productive Bees）。
+     * <p>
+     * ⚠ 2026-09-20 修本 bug（sensei 实机证据 16:18:31，v221）：
+     * {@code [ae2addon][settle] 结算被拒: 经验蜜蜂蜜脾 ×36 (输出「蜜脾」既无匹配配方，也不是该配方的次级产出)}。
+     * <p>
+     * <b>为什么必须带上兼容层</b>：Thermal 与 PB 的配方把数据放在**自己的字段**里，标准 API 全是空的 ——
+     * 已用 javap 逐条证实（本次复核，不是推断）：
+     * <ul>
+     *   <li>PB {@code AdvancedBeehiveRecipe.m_8043_}（= getResultItem）直接 {@code return ItemStack.EMPTY}；
+     *       产出在 {@code TagOutputRecipe.itemOutput} / {@code getRecipeOutputs()} 里
+     *       （实机那条 = {@code data/productivebees/recipes/bee_produce/experience_bee.json}：
+     *        {@code productivebees:configurable_honeycomb} + {@code {EntityTag:{type:"productivebees:experience"}}}，chance 40）</li>
+     *   <li>Thermal {@code SerializableRecipe.m_8043_} 同样直接 {@code return ItemStack.EMPTY}，
+     *       产出在 {@code getOutputItems()} / {@code getOutputItemChances()}</li>
+     * </ul>
+     * 于是索引里**根本没有这些产出物品** → 从这两个 mod 提取出来的样板，一律被自己的反作弊校验
+     * 判成「无匹配配方」而拒掉（settle / 推送 / 样板槽解码三条路都会中招）。取兼容层的
+     * {@code outputs()} 就解决了，而且**不需要动兼容层本身**。
+     * <p>
+     * <b>为什么不能简单把这类配方丢进 {@code custom}（"输入未知 → 放行"）</b>：那等于把这两个 mod
+     * 的**全部输入校验关掉** —— 「1 个泥土 → 1 个铁板」这种样板也会被放行（只要有人把输入编成泥土）。
+     * 本条只补"产出认得出来"，输入侧另由 {@link #coversRecipeInputs} 用兼容层的 {@code inputSlots()}
+     * 真校验（那一处必须一起改，否则 {@link #hasAnyIngredient} 会认为"输入未知"而整条跳过覆盖判定）。
+     */
     private static Set<Item> outputItemsOf(Recipe<?> recipe, Level level) {
         var items = new java.util.LinkedHashSet<Item>();
         var standard = recipe.getResultItem(level.registryAccess());
@@ -265,15 +314,56 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         for (var chanced : GregTechCompat.itemOutputs(recipe)) {
             if (!chanced.stack().isEmpty()) items.add(chanced.stack().getItem());
         }
+        // 兼容层产出（按**物品**入索引；流体产出天然被 `instanceof AEItemKey` 滤掉，与既有粒度一致）
+        for (var key : compatOutputItems(recipe)) {
+            if (key != null) items.add(key);
+        }
         return items;
     }
 
-    /** 配方所需输入物品集合：GT 走 inputs 映射，其余走标准 getIngredients() */
+    /**
+     * 兼容层（Thermal / Productive Bees）产出里的**物品**部分。
+     * <p>
+     * 判据与 {@code QianJiRecipeModel.fromRecipe} 里那两条分支**同一个**（{@code isThermalRecipe} /
+     * {@code isProductiveBeesRecipe}），避免"提取时认、校验时不认"这种自相矛盾再次出现。
+     * 用 {@code LinkedHashSet} 去重：{@code productivebees} 命名空间下也有 Thermal 配方
+     * （thermal:smelter / chiller / bottler），两个 compat 可能都认。
+     * <p>
+     * 注意 {@link GenericStack#what()} 可能是物品也可能是流体 → **只有 {@link AEItemKey} 才取
+     * {@link AEItemKey#getItem()}**（流体产出按现状不进物品索引）。
+     */
+    private static Set<Item> compatOutputItems(Recipe<?> recipe) {
+        var items = new java.util.LinkedHashSet<Item>();
+        try {
+            if (ThermalCompat.isThermalRecipe(recipe)) {
+                for (var stat : ThermalCompat.outputs(recipe)) {
+                    if (stat != null && stat.stack() != null && stat.stack().what() instanceof AEItemKey k) {
+                        items.add(k.getItem());
+                    }
+                }
+            }
+            if (ProductiveBeesCompat.isProductiveBeesRecipe(recipe)) {
+                for (var stat : ProductiveBeesCompat.outputs(recipe)) {
+                    if (stat != null && stat.stack() != null && stat.stack().what() instanceof AEItemKey k) {
+                        items.add(k.getItem());
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // 兼容层自己已经把反射异常吞干净了；这里再兜一层，绝不让校验路径把异常抛给调用方
+            AE2Addon.LOGGER.warn("QianJi: compat outputs failed for {}: {}", recipe, t.toString());
+        }
+        return items;
+    }
+
+    /** 配方所需输入物品集合：GT 走 inputs 映射，Thermal/PB 走兼容层，其余走标准 getIngredients() */
     private static Set<Item> standardInputItems(Recipe<?> recipe) {
         if (GregTechCompat.isGtRecipe(recipe)) {
             var gt = GregTechCompat.itemInputs(recipe);
             if (!gt.isEmpty()) return gt;
         }
+        var compat = compatInputItems(recipe);
+        if (!compat.isEmpty()) return compat;
         var items = new HashSet<Item>();
         for (var ing : recipe.getIngredients()) {
             for (var stack : ing.getItems()) {
@@ -281,6 +371,112 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             }
         }
         return items;
+    }
+
+    /**
+     * 兼容层配方的输入物品集合（**入索引 + 覆盖判定共用同一份**）。
+     * <p>
+     * 与 {@link #compatOutputItems} 同一天同一条实机证据（16:18:31 的 settle 被拒）：
+     * Thermal/PB 配方的 {@code getIngredients()} 也是空的（PB {@code TagOutputRecipe} 根本没覆写它，
+     * CoFH {@code SerializableRecipe} 也没有）→ 光补产出、不补输入的话，
+     * {@link #hasAnyIngredient} 仍判"输入未知"→ 覆盖判定被整条跳过 → 等于没校验。
+     * <p>
+     * 流体槽、设备环境方块槽都会出现在兼容层的 slot 列表里（见各 compat 的 {@code inputSlots}），
+     * 这里取它们的 **{@link AEItemKey} 候选**；纯流体槽没有物品候选 → 该槽为空集合
+     * （覆盖判定按"该槽不参与"处理，与既有 {@code coversAllIngredients} 里"空 Ingredient 跳过"同义）。
+     */
+    private static Set<Item> compatInputItems(Recipe<?> recipe) {
+        var items = new java.util.LinkedHashSet<Item>();
+        for (var slot : compatInputSlots(recipe)) {
+            for (var option : slot) {
+                if (option != null && option.what() instanceof AEItemKey k) items.add(k.getItem());
+            }
+        }
+        return items;
+    }
+
+    /**
+     * 兼容层配方的输入槽（与兼容层 {@code inputSlots(recipe)} 完全同序、同粒度）——索引与覆盖判定
+     * 都从这一个方法取，保证"进索引的那一份"和"校验用的那一份"永远一致。
+     */
+    private static List<List<GenericStack>> compatInputSlots(Recipe<?> recipe) {
+        var cached = COMPAT_INPUT_CACHE.get(recipe);
+        if (cached != null) return cached;
+        var slots = new ArrayList<List<GenericStack>>();
+        try {
+            if (ThermalCompat.isThermalRecipe(recipe)) {
+                slots.addAll(ThermalCompat.inputSlots(recipe));
+            }
+            if (ProductiveBeesCompat.isProductiveBeesRecipe(recipe)) {
+                slots.addAll(ProductiveBeesCompat.inputSlots(recipe));
+            }
+        } catch (Throwable t) {
+            AE2Addon.LOGGER.warn("QianJi: compat inputSlots failed for {}: {}", recipe, t.toString());
+        }
+        // 与 RecipeByproducts 的缓存同款用法：按实例身份缓存（不依赖 equals），超上限整表清空
+        if (COMPAT_INPUT_CACHE.size() > COMPAT_INPUT_CACHE_LIMIT) COMPAT_INPUT_CACHE.clear();
+        COMPAT_INPUT_CACHE.put(recipe, slots);
+        return slots;
+    }
+
+    /**
+     * 兼容层配方的覆盖判定：样板输入必须覆盖**所有非催化剂槽**。
+     * <p>
+     * ① 为什么跳过催化剂槽：{@link ThermalCompat#isCatalystSlot} / {@link ProductiveBeesCompat#isCatalystSlot}
+     * 认的是"模具 / 设备环境方块 / 留在箱子里的蜜蜂" —— 这些在千机自用样板里是 {@code catalyst=true} 槽
+     * （见 {@code QianJiPatternDetails}：非消耗槽**不向 AE2 声明**，但 {@link #collectPatternInputs}
+     * 对自有样板会把它们并回来）。若对"非自有样板"（直接从 AE2 编码器来的）也要求它们，
+     * 就会因为"我们自己的执行层不消耗它"而拒掉一张本来正确的样板。
+     * <p>
+     * ② 其余槽一律**逐个要求命中**（标签只要求命中其一）—— 这条就是反作弊的本体：
+     * 任何"少给原料"的样板都过不了，不存在"输入未知 → 放行"的后门。
+     */
+    private static boolean coversCompatInputs(Recipe<?> recipe, Set<Item> patternInputs) {
+        var slots = compatInputSlots(recipe);
+        for (int i = 0; i < slots.size(); i++) {
+            var options = slots.get(i);
+            var items = new ArrayList<Item>();
+            for (var option : options) {
+                if (option != null && option.what() instanceof AEItemKey k) items.add(k.getItem());
+            }
+            if (items.isEmpty()) continue;                 // 纯流体槽：不参与物品校验（与既有语义一致）
+            if (isCompatCatalystSlot(recipe, i, options)) continue; // 不消耗的槽：不要求样板声明
+            boolean hit = false;
+            for (var item : items) {
+                if (patternInputs.contains(item)) { hit = true; break; }
+            }
+            if (!hit) return false;
+        }
+        // 全部槽都是"不消耗"（或没有物品槽）→ 没有可要求的物品输入，判为满足。
+        // ⚠ 这一条是按**执行语义**定的：不消耗的槽本来就不参与千机的提取/消耗，样板里有没有它
+        //   都不影响能不能合成（如 rock_gen：环境方块是设备旁边的一个方块，千机是虚拟执行的）。
+        //   若这里返回 false，设备映射那 2 类（rock_gen / tree_extractor）会**整类**被判成"输入不覆盖"而拒掉。
+        //   ⚠ 它只对"全是催化剂槽"的配方生效；只要有一个真消耗的物品槽，就必须逐个命中（反作弊主体）。
+        return true;
+    }
+
+    /**
+     * 该兼容层槽是不是「不消耗」（模具 / 设备环境方块 / 留在原地的蜜蜂）。
+     * 分别问两个 compat 自己的判据 —— **不在这里重写一套启发式**（各自的语义差异见它们的 javadoc：
+     * Thermal 只有 {@code _die} 与设备映射环境方块不消耗；PB 按槽序号区分"蜜蜂留下来"与"蜜蜂被换掉"）。
+     */
+    private static boolean isCompatCatalystSlot(Recipe<?> recipe, int slotIndex, List<GenericStack> options) {
+        try {
+            if (ThermalCompat.isThermalRecipe(recipe) && ThermalCompat.isCatalystSlot(recipe, slotIndex, options)) {
+                return true;
+            }
+        } catch (Throwable ignored) {
+            // 反射层异常 → 保守当"消耗"处理（宁可要求样板声明，也不放过刷物品）
+        }
+        try {
+            if (ProductiveBeesCompat.isProductiveBeesRecipe(recipe)
+                    && ProductiveBeesCompat.isCatalystSlot(recipe, slotIndex, options)) {
+                return true;
+            }
+        } catch (Throwable ignored) {
+            // 同上
+        }
+        return false;
     }
 
     /**
@@ -341,6 +537,10 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         if (GregTechCompat.isGtRecipe(recipe)) {
             if (!GregTechCompat.itemInputIngredients(recipe).isEmpty()) return true;
         }
+        // 2026-09-20：Thermal / PB 的标准 getIngredients() 是空的（数据在自己字段里），
+        // 但兼容层能给出真实输入槽 → 这里必须认，否则下面 coversRecipeInputs 会被整条跳过，
+        // 等于这两个 mod 的配方**根本没有输入校验**（"1 泥土 → 1 铁板"照样放行）。
+        if (!compatInputSlots(recipe).isEmpty()) return true;
         return !recipe.getIngredients().isEmpty();
     }
 
@@ -350,6 +550,9 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             var gt = GregTechCompat.itemInputIngredients(recipe);
             if (!gt.isEmpty()) return coversAllIngredients(gt, patternInputs);
         }
+        // 兼容层配方（Thermal/PB）：走它们自己的 inputSlots（非催化剂槽逐个必须命中）
+        var compatSlots = compatInputSlots(recipe);
+        if (!compatSlots.isEmpty()) return coversCompatInputs(recipe, patternInputs);
         return coversAllIngredients(recipe.getIngredients(), patternInputs);
     }
 
@@ -593,8 +796,11 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         if (!formed) return Collections.emptyList();
         if (cachedPatterns == null) {
             cachedPatterns = decodePatterns();
-            ChatLog.info(level, worldPosition, "千机向网络暴露 " + cachedPatterns.size() + " 个样板");
-            AE2Addon.LOGGER.info("QianJi: Decoded {} patterns", cachedPatterns.size());
+            // 2026-09-22 v286：原来这里往聊天栏广播"千机向网络暴露 N 个样板"（sensei：放/取样板时
+            // 聊天栏会冒数字），每次样板槽变化都会触发 → 聊天栏消息整个去掉，日志收进 debugLogs。
+            if (com.ae2addon.config.AE2AddonConfig.debugLogs()) {
+                AE2Addon.LOGGER.info("QianJi: Decoded {} patterns", cachedPatterns.size());
+            }
         }
         return cachedPatterns;
     }
@@ -632,7 +838,20 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             ChatLog.err(level, worldPosition, "任务被拒(" + source + "): " + rejectReason);
             return false;
         }
-        ChatLog.info(level, worldPosition, "收到合成任务(" + source + "): " + describeOutputs(pattern));
+        // ⚠ 2026-09-19（sensei：「网络内没有催化剂物品时无法合成」）：
+        // 「输入全是催化剂（不消耗）」的配方**必须确认网络里真有这些催化剂**才能合成。
+        // 原因：催化剂槽刻意不参与提取（免得 CPU 吞掉模具）⇒ 本来"没有催化剂也能白跑"，
+        // 这类配方就成了纯粹的白拿（精华更是白送）。这里直接拒绝并说明缺什么。
+        var gateData = ownDataOf(pattern);
+        if (gateData != null && QianJiByproducts.looksAllCatalyst(gateData)
+                && !networkHasAllCatalysts(gateData)) {
+            warnMissingCatalysts(gateData, source);
+            return false;
+        }
+        // 2026-09-22 v286：每条任务都往聊天栏报一句太吵 → 只在诊断开关下说
+        if (craftDiagnostics()) {
+            ChatLog.info(level, worldPosition, "收到合成任务(" + source + "): " + describeOutputs(pattern));
+        }
 
         // 关键时序：产物必须延迟 1 tick 注入！
         // CPU 在 pushPattern 返回后才把预期产物登记进 waitingFor，
@@ -679,6 +898,274 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             }
         });
         return true;
+    }
+
+    // ── 虚拟结算（2026-09-18 sensei 定：千机样板由**插了该样板的那台千机**结算）──
+
+    /**
+     * 这台千机自己插了该样板吗（按样板定义比对）。
+     * <p>
+     * sensei 定稿：**只有插入了该千机样板的千机可以执行结算** —— 不允许"样板在 A 机、
+     * 借用 B 机身份结算"。
+     */
+    public boolean declaresPattern(IPatternDetails pattern) {
+        if (pattern == null || !formed) return false;
+        var want = pattern.getDefinition();
+        if (want == null) return false;
+        return ownPatternKeys().contains(want);
+    }
+
+    /**
+     * 本机样板槽的**定义 key 集合**（缓存）。
+     * <p>
+     * ⚠ 2026-09-18：原来 {@code declaresPattern} 每次遍历 1280 个槽并逐个 {@code AEItemKey.of}，
+     * 而归属查表（{@code settleOwner}）在网络里每台千机上都要调一次 ——
+     * 策划阶段对每个样板 × 每台千机各扫一遍槽位，直接把「计划合成」卡死（sensei 实测）。
+     * 现在只扫一次并缓存；样板装/卸时（{@code cachedPatterns} 置 null）跟着失效。
+     */
+    private final java.util.Set<AEItemKey> ownPatternKeyCache = new HashSet<>();
+
+    private java.util.Set<AEItemKey> ownPatternKeys() {
+        if (!ownPatternKeyCache.isEmpty()) return ownPatternKeyCache;
+        for (int i = 0; i < patternHandler.getSlots(); i++) {
+            var stack = patternHandler.getStackInSlot(i);
+            if (stack.isEmpty()) continue;
+            var key = AEItemKey.of(stack);
+            if (key != null) ownPatternKeyCache.add(key);
+        }
+        return ownPatternKeyCache;
+    }
+
+    /** 结算机器查表缓存：样板定义 → 机器（含"没有"的否定结果），每 tick 清一次 */
+    private static final Map<AEItemKey, Object> SETTLE_OWNER_CACHE = new HashMap<>();
+    private static final Object SETTLE_NONE = new Object();
+    private static long settleCacheTick = Long.MIN_VALUE;
+
+    /**
+     * 找出「插了该样板的那台成型千机」——虚拟结算的执行者。
+     * <p>
+     * 找不到 → 返回 null，判定处即拒绝虚拟结算（避免样板在网络里、机器不在时凭空结算）。
+     * 结果按 tick 缓存：同一 tick 内同一个样板只扫一遍。
+     */
+    @Nullable
+    public static QianJiBE settleOwner(IPatternDetails pattern) {
+        if (pattern == null) return null;
+        var key = pattern.getDefinition();
+        if (key == null) return null;
+        long now = TickHandler.instance().getCurrentTick();
+        if (now != settleCacheTick) {
+            SETTLE_OWNER_CACHE.clear();
+            settleCacheTick = now;
+        }
+        var cached = SETTLE_OWNER_CACHE.get(key);
+        if (cached != null) return cached == SETTLE_NONE ? null : (QianJiBE) cached;
+
+        QianJiBE found = null;
+        for (var be : ACTIVE) {
+            if (be.isRemoved() || be.level == null || be.level.isClientSide) continue;
+            try {
+                if (be.declaresPattern(pattern)) {
+                    found = be;
+                    break;
+                }
+            } catch (RuntimeException ignored) {
+                // 单台异常不影响其余
+            }
+        }
+        SETTLE_OWNER_CACHE.put(key, found == null ? SETTLE_NONE : found);
+        return found;
+    }
+
+    /**
+     * 虚拟结算 N 份：**只算不注入**（CPU 侧模拟，材料由调用方在同一步提取并消耗）。
+     * <p>
+     * 与 {@link #instantCraft} 共用同一份 {@link QianJiByproducts} 逻辑，所以
+     * 主产物、概率副产（逐份掷骰）、催化剂倍数、副产开关的口径完全一致。
+     *
+     * @return 掷骰结果（可能为空）；样板不合法或不在本机 → null（调用方应回退真实推送）
+     */
+    @Nullable
+    public QianJiByproducts.Outcome settle(IPatternDetails pattern, long batches) {
+        if (!formed || level == null) return null;
+        var reason = validatePattern(pattern);
+        if (reason != null) {
+            // ⚠ 2026-09-19（sensei：化学品千机配方卡住）：把拒绝原因**无条件**打出来
+            // （原来只在 craftDiagnostics() 下打，导致"卡住但日志无声"）
+            AE2Addon.LOGGER.info("[ae2addon][settle] 结算被拒: {} ({})",
+                    describeOutputs(pattern), reason);
+            return null;
+        }
+        var ownData = pattern instanceof QianJiPatternDetails qp ? qp.data() : null;
+        // 「输入全是催化剂」的配方要额外确认**催化剂真的在网络里**（sensei 2026-09-19）。
+        // 只在真判成这种配方时才查网络 —— 其它配方不必多花这次存储查询。
+        boolean missingCatalysts = false;
+        boolean catalystsPresent = false;
+        if (ownData != null && QianJiByproducts.looksAllCatalyst(ownData)) {
+            catalystsPresent = networkHasAllCatalysts(ownData);
+            missingCatalysts = !catalystsPresent;
+        }
+        if (missingCatalysts) {
+            // ⚠ sensei：「网络内没有催化剂物品时无法合成」——虚拟结算这条路也拒绝
+            // （handlePush 那条路另有一道同样的门，两条路都堵上）
+            warnMissingCatalysts(ownData, "虚拟结算");
+            return null;
+        }
+        var ctx = new QianJiByproducts.Context(settleRandom(), level, byproductEnabled,
+                Math.max(1, batches), this::rollCatalystMultiplier, catalystKind(), catalystsPresent);
+        return ownData != null
+                ? QianJiByproducts.roll(ownData, ctx)
+                : QianJiByproducts.rollCompat(pattern, this, ctx);
+    }
+
+    /**
+     * 「输入全是催化剂」的配方：**网络里必须真的有这些催化剂物品**（sensei 2026-09-19）。
+     * <p>
+     * 为什么需要：催化剂槽（GT notConsumable / 模具 / AE2 压印模板）**刻意不参与提取**
+     * （{@code QianJiPatternDetails} 构造里跳过它们，免得 CPU 把模具吞掉），
+     * 于是机器本来可以"网络里没有催化剂也照跑" —— 那精华就等于白送。
+     * <p>
+     * 用 **SIMULATE** 探测：网络里一点东西都不会被抽走；每个催化剂槽只要**任一候选**
+     * 满足所需数量即可（与配方"多候选任选其一"的语义一致）。
+     */
+    private boolean networkHasAllCatalysts(QianJiPatternData data) {
+        if (data == null || data.inputs() == null || data.inputs().isEmpty()) {
+            return false;
+        }
+        var grid = getGrid();
+        if (grid == null) {
+            return false;
+        }
+        var storage = grid.getStorageService().getInventory();
+        var src = appeng.api.networking.security.IActionSource.ofMachine(this);
+        for (var slot : data.inputs()) {
+            if (slot == null || !slot.catalyst()) {
+                continue;
+            }
+            boolean found = false;
+            for (var option : slot.options()) {
+                if (option == null || option.what() == null || option.amount() <= 0) {
+                    continue;
+                }
+                if (networkHasCatalyst(storage, src, option.what(), option.amount())) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** 本 tick 的网络可提取内容快照（按 tick 缓存：一个 tick 里可能结算很多批） */
+    private appeng.api.stacks.KeyCounter catalystSnapshot;
+    private long catalystSnapshotTick = Long.MIN_VALUE;
+
+    private appeng.api.stacks.KeyCounter networkSnapshot(
+            appeng.api.storage.MEStorage storage) {
+        long tick = TickHandler.instance().getCurrentTick();
+        if (catalystSnapshot == null || catalystSnapshotTick != tick) {
+            var snap = new appeng.api.stacks.KeyCounter();
+            storage.getAvailableStacks(snap);
+            catalystSnapshot = snap;
+            catalystSnapshotTick = tick;
+        }
+        return catalystSnapshot;
+    }
+
+    /**
+     * 网络里有没有这个催化剂（**按数量**）。
+     * <p>
+     * ⚠ 2026-09-19 sensei：「匹配是不是写得太死了？NBT 也要算吧」——
+     * 原来只做 `extract(精确 key, SIMULATE)`，而 AE2 的 key **把 NBT 算在内**：
+     * 模具换过一次耐久、工具带点损伤、同名不同变体，就全被判成"网络里没有" ⇒ 误拒。
+     * 现在两级判定：
+     * <ol>
+     *   <li>精确 key（含 NBT）—— 最准，先试；</li>
+     *   <li>**同物品、任意 NBT 合计** —— 只对物品键做这一步（流体/化学品本就是无 NBT 语义，
+     *       它们的"变体"体现在 key 自身，精确匹配即可）。</li>
+     * </ol>
+     * 第二级是**放宽**：宁可让"手里有同类催化剂"通过，也不要把玩家的模具/工具卡在门外。
+     * 目录快照按 tick 缓存（一个 tick 里可能结算很多批，别每批都枚举一遍网络）。
+     */
+    private boolean networkHasCatalyst(appeng.api.storage.MEStorage storage,
+                                       appeng.api.networking.security.IActionSource src,
+                                       appeng.api.stacks.AEKey want, long need) {
+        // ① 精确匹配（含 NBT）
+        if (storage.extract(want, need, appeng.api.config.Actionable.SIMULATE, src) >= need) {
+            return true;
+        }
+        // ② 同物品、忽略 NBT 累加
+        if (want instanceof appeng.api.stacks.AEItemKey wantItem) {
+            long sum = 0;
+            for (var e : networkSnapshot(storage)) {
+                if (e.getKey() instanceof appeng.api.stacks.AEItemKey k
+                        && k.getItem() == wantItem.getItem()) {
+                    sum += e.getLongValue();
+                    if (sum >= need) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /** 自有样板的查询数据（批量包装 {@code ScaledPattern} 先拆包；非自有样板返回 null） */
+    @Nullable
+    private static QianJiPatternData ownDataOf(IPatternDetails pattern) {
+        if (pattern instanceof com.ae2addon.crafting.ScaledPattern scaled && scaled.base() != null) {
+            pattern = scaled.base();
+        }
+        return pattern instanceof QianJiPatternDetails qp ? qp.data() : null;
+    }
+
+    /** 缺催化剂警告的节流游标（哨兵 Long.MIN_VALUE = 还没警告过） */
+    private long lastCatalystWarnTick = Long.MIN_VALUE;
+
+    /**
+     * 「缺催化剂」拒绝提示（写入聊天栏 + 日志；**节流 5 秒一条**，避免每 tick 刷屏）。
+     * <p>
+     * ⚠ 节流判定用哨兵安全写法：别写成 {@code tick - Long.MIN_VALUE < 100}
+     * （会整数溢出成负数、永远为真 —— 今天在别的诊断上刚栽过）。
+     */
+    private void warnMissingCatalysts(QianJiPatternData data, String source) {
+        long tick = TickHandler.instance().getCurrentTick();
+        if (lastCatalystWarnTick != Long.MIN_VALUE && tick - lastCatalystWarnTick < 100L) {
+            return;
+        }
+        lastCatalystWarnTick = tick;
+        StringBuilder need = new StringBuilder();
+        for (var slot : data.inputs()) {
+            if (slot == null || !slot.catalyst() || slot.options().isEmpty()) {
+                continue;
+            }
+            var first = slot.options().get(0);
+            if (first == null || first.what() == null) {
+                continue;
+            }
+            if (need.length() > 0) {
+                need.append('、');
+            }
+            need.append(first.what().getDisplayName().getString());
+        }
+        ChatLog.warn(level, worldPosition,
+                "缺少催化剂，无法合成（" + source + "）：网络里需要 " + need);
+        AE2Addon.LOGGER.info("[ae2addon] 千机因缺少催化剂拒绝合成（{}）：需要 {}", source, need);
+    }
+
+    /** 当前催化剂档位（供 O(1) 抽样判定；无则 null） */    @Nullable
+    private CatalystItem catalystKind() {
+        if (level == null || catalystHandler == null) return null;
+        ItemStack stack = catalystHandler.getStackInSlot(0);
+        return stack.getItem() instanceof CatalystItem catalyst ? catalyst : null;
+    }
+
+    /** 批量掷骰的随机源（每 tick 从世界随机源取一次种子；见 {@code QianJiByproducts.threadRandom}） */
+    private net.minecraft.util.RandomSource settleRandom() {
+        long tick = TickHandler.instance().getCurrentTick();
+        return QianJiByproducts.threadRandom(level.random, tick);
     }
 
     // ── 推送账 ──
@@ -808,95 +1295,35 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         }
         var netInv = storage.getInventory();
         var src = IActionSource.ofMachine(this);
-        int outputMult = catalystOutputMultiplier();
-        var produced = new ArrayList<GenericStack>();
 
+        // 产出统一走 QianJiByproducts（与虚拟结算共用一份逻辑，勿在这里另写）
+        // 「输入全是催化剂」时同样要确认催化剂在网络里（与 settle 口径一致）
+        boolean catalystsPresent = ownData != null
+                && QianJiByproducts.looksAllCatalyst(ownData)
+                && networkHasAllCatalysts(ownData);
+        var ctx = new QianJiByproducts.Context(settleRandom(), level, byproductEnabled, scale,
+                this::rollCatalystMultiplier, catalystKind(), catalystsPresent);
+        QianJiByproducts.Outcome outcome;
         if (ownData != null) {
-            // ══ 自有样板：精确执行（不猜配方）══
-            for (var p : ownData.primary()) {
-                long amount = multipliedAmount(scaledAmount(p.stack().amount(), scale), outputMult);
-                produced.add(new GenericStack(p.stack().what(), amount));
-                if (outputMult > 1) {
-                    ChatLog.ok(level, worldPosition, "主产物: " + p.stack().what().getDisplayName().getString()
-                            + " ×" + amount + "（催化剂产出 ×" + outputMult + "）");
-                }
+            outcome = QianJiByproducts.roll(ownData, ctx);
+            // 2026-09-22 v285：每次合成都打一行太吵 → 收进 debugLogs
+            if (com.ae2addon.config.AE2AddonConfig.debugLogs()) {
+                AE2Addon.LOGGER.info("QianJi craft(自有样板): recipe={} primary={} chanced={} batches={}",
+                        ownData.recipeId(), ownData.primary().size(), ownData.chanced().size(), scale);
             }
-            for (var c : ownData.chanced()) {
-                float effective = c.chance() > 0f ? c.chance() : 1.0f;
-                var key = c.stack().what();
-                if (level.random.nextFloat() >= effective) {
-                    ChatLog.info(level, worldPosition, "概率产出未触发: " + key.getDisplayName().getString()
-                            + " ×" + c.stack().amount() + "（概率 " + Math.round(effective * 100) + "%）");
-                    continue;
-                }
-                long amount = multipliedAmount(scaledAmount(c.stack().amount(), scale), outputMult);
-                produced.add(new GenericStack(key, amount));
-                ChatLog.ok(level, worldPosition, "概率产出: " + key.getDisplayName().getString()
-                        + " ×" + amount + "（概率 " + Math.round(effective * 100) + "%"
-                        + (outputMult > 1 ? "，催化剂产出 ×" + outputMult : "") + "）");
-            }
-            AE2Addon.LOGGER.info("QianJi craft(自有样板): recipe={} primary={} chanced={}",
-                    ownData.recipeId(), ownData.primary().size(), ownData.chanced().size());
         } else {
-            // ══ 兼容通道：普通 AE2 处理样板 → 用兼容层反推配方的概率产出 ══
-            var recipe = findRecipeFor(pattern);
-            var chanced = (byproductEnabled && recipe != null)
-                    ? RecipeByproducts.extract(recipe, level)
-                    : List.<RecipeByproducts.Chanced> of();
-
-            if (recipe != null) {
-                var summary = new StringBuilder();
-                for (var c : chanced) {
-                    if (!summary.isEmpty()) summary.append("、");
-                    summary.append(c.stack().getHoverName().getString()).append(' ')
-                            .append(c.chance() > 0f ? Math.round(c.chance() * 100) + "%" : "几率未知");
-                }
-                ChatLog.info(level, worldPosition, "配方命中 " + recipe.getClass().getSimpleName()
-                        + " · 概率产出[" + (summary.isEmpty() ? "无" : summary) + "]");
-                AE2Addon.LOGGER.info("QianJi craft(兼容): recipe={} chanced={}",
-                        recipe.getClass().getName(), summary);
-            } else {
+            var recipe = findRecipeFor(pattern); // 只用于日志（rollCompat 内部会自己再查一次，索引有缓存，开销可忽略）
+            outcome = QianJiByproducts.rollCompat(pattern, this, ctx);
+            if (recipe == null) {
                 ChatLog.warn(level, worldPosition, "未匹配到真实配方 → 产出按样板声明直接给（不掷骰）");
-            }
-
-            var declaredItems = new HashSet<Item>();
-            for (var out : pattern.getOutputs()) {
-                if (out == null || out.amount() <= 0) continue;
-                AEItemKey key = out.what() instanceof AEItemKey k ? k : null;
-                float chance = -1f;
-                if (key != null) {
-                    declaredItems.add(key.getItem());
-                    chance = recipeChanceFor(key.getItem(), chanced);
-                }
-                // ⚠ 2026-09-15 修「巨型订单成品不到网」：**样板声明的产出一律照给**。
-                //
-                // 旧行为：声明产出若被配方标为概率产 → 也掷骰，未中就 continue。
-                // 后果：CPU 已在 waitingFor 里登记了该产出 → 永远差 N → 任务永不完成，
-                // 已产出的部分被 CPU 认领进它自己的库存（巨量订单时大量积压、网络里查不到）。
-                // 现在只对「配方里有、样板**没声明**」的额外副产掷骰 —— 任务永不会为副产等待。
-                long amount = multipliedAmount(scaledAmount(out.amount(), scale), outputMult);
-                produced.add(new GenericStack(out.what(), amount));
-                if (chance >= 0f && craftDiagnostics()) {
-                    ChatLog.info(level, worldPosition, "声明产出 " + out.what().getDisplayName()
-                            + " ×" + amount + "（配方自带几率 " + Math.round(chance * 100)
-                            + "%，按「声明照给」直接交付）");
-                }
-            }
-
-            for (var bp : chanced) {
-                if (bp.stack().isEmpty()) continue;
-                if (declaredItems.contains(bp.stack().getItem())) continue;
-                float effective = bp.chance() > 0f ? bp.chance() : 1.0f;
-                if (level.random.nextFloat() >= effective) continue;
-                var key = AEItemKey.of(bp.stack());
-                long amount = multipliedAmount(scaledAmount(bp.stack().getCount(), scale), outputMult);
-                produced.add(new GenericStack(key, amount));
-                ChatLog.ok(level, worldPosition, "副产物: " + key.getDisplayName().getString()
-                        + " ×" + amount + "（概率 " + Math.round(effective * 100) + "%"
-                        + (outputMult > 1 ? "，催化剂产出 ×" + outputMult : "") + "）");
+            } else if (scale <= 1) {
+                // 2026-09-22 v286：每次合成都往聊天栏报"配方命中…"太吵 → 去掉（要排查开 debugLogs）
             }
         }
+        reportOutcome(ownData, scale, outcome);
 
+        var produced = new ArrayList<GenericStack>();
+        outcome.addInto(produced);
         if (produced.isEmpty()) {
             ChatLog.info(level, worldPosition, "本次没有任何产出（概率全未触发）");
             return true;
@@ -924,56 +1351,66 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
         return true;
     }
 
+    /** 把这次掷骰结果写进聊天栏/日志（单份时逐条；批量时只报汇总，避免刷屏） */
+    private void reportOutcome(@Nullable QianJiPatternData ownData, long scale,
+                               QianJiByproducts.Outcome outcome) {
+        boolean verbose = scale <= 1 || craftDiagnostics();
+        if (!verbose) {
+            var sb = new StringBuilder();
+            for (var e : outcome.byproductLog().values()) {
+                if (!sb.isEmpty()) sb.append("、");
+                sb.append(e.key().getDisplayName().getString())
+                        .append(' ').append(e.hits()).append('/').append(e.rolls());
+            }
+            ChatLog.ok(level, worldPosition, "批量 ×" + scale + " 产出汇总: 主产物 "
+                    + outcome.stacks().size() + " 种 · 概率产出[" + (sb.isEmpty() ? "无" : sb) + "]");
+            return;
+        }
+        for (var e : outcome.byproductLog().values()) {
+            String name = e.key().getDisplayName().getString();
+            if (e.hits() <= 0) {
+                ChatLog.info(level, worldPosition, (ownData != null ? "概率产出未触发: " : "副产未触发: ")
+                        + name + "（概率 " + Math.round(e.chance() * 100) + "%）");
+                continue;
+            }
+            ChatLog.ok(level, worldPosition, (ownData != null ? "概率产出: " : "副产物: ") + name
+                    + " ×" + e.amount()
+                    + "（概率 " + Math.round(e.chance() * 100) + "%）");
+        }
+    }
+
+    /** 该配方抽出的概率副产摘要（仅日志） */
+    private String describeChanced(Recipe<?> recipe) {
+        var chanced = RecipeByproducts.extract(recipe, level);
+        if (chanced.isEmpty()) return "无";
+        var sb = new StringBuilder();
+        for (var c : chanced) {
+            if (!sb.isEmpty()) sb.append('、');
+            sb.append(c.stack().getHoverName().getString()).append(' ')
+                    .append(c.chance() > 0f ? Math.round(c.chance() * 100) + "%" : "几率未知");
+        }
+        return sb.toString();
+    }
+
     /**
-     * 催化剂 → 本次合成的**产出数量倍数**（每次合成掷一次；无催化剂 = 1）。
+     * 催化剂槽 → **本份**的产出数量倍数（虚拟结算路径与推送路径共用）。
      * <p>
-     * ⚠ 2026-09-15 sensei 定稿：从「加法百分点（+2%/+5%/+10%）」**改回倍数制**，
-     * 且倍数乘在**产出数量**上：基础 50% ×2 / 50% ×1（期望 1.5）· 高级 ×2 ·
-     * 终极 50% ×4 / 50% ×3（期望 3.5）。配方自带的概率不被催化剂改动。
-     * <p>
-     * 主产物与副产物**都生效**（sensei 2026-09-15 11:56 明确）。
+     * ⚠ 2026-09-15 定稿改成倍数制且乘在产出数量上（基础 50%×2 / 高级 ×2 / 终极 50%×4），
+     * 由 {@link CatalystItem#rollOutputMultiplier(net.minecraft.util.RandomSource)} 掷骰；
+     * 逐份调用（批量 N 份 = 掷 N 次）。无催化剂 = 1，不掷骰。
      */
-    private int catalystOutputMultiplier() {
+    private int rollCatalystMultiplier(net.minecraft.util.RandomSource random) {
+        if (level == null) return 1;
         ItemStack stack = catalystHandler.getStackInSlot(0);
         if (stack.getItem() instanceof CatalystItem catalyst) {
-            return catalyst.rollOutputMultiplier(level.random);
+            return catalyst.rollOutputMultiplier(random);
         }
         return 1;
-    }
-
-    /** 批量倍数（ScaledPattern 的 N）：溢出时保守回退为原值（AE2 侧构造时已验过溢） */
-    private static long scaledAmount(long amount, long scale) {
-        if (scale <= 1 || amount <= 0) return amount;
-        try {
-            return Math.multiplyExact(amount, scale);
-        } catch (ArithmeticException e) {
-            return amount;
-        }
-    }
-
-    /** 产出数量 × 催化剂倍数（倍数 ≤1 = 原样；至少留 1 份） */
-    private static long multipliedAmount(long amount, int multiplier) {
-        if (multiplier <= 1 || amount <= 0) return amount;
-        return amount * multiplier;
     }
 
     /** 合成细节日志开关（跟全局 debug 开关走；默认关，避免巨型订单刷屏） */
     private static boolean craftDiagnostics() {
         return com.ae2addon.crafting.CraftingCompat.debugLogs;
-    }
-
-    /**
-     * 该物品在「配方的概率产出」里的几率。
-     *
-     * @return &lt;0 表示配方没把它列为概率产出（= 必出）
-     */
-    private static float recipeChanceFor(Item item, List<RecipeByproducts.Chanced> chanced) {
-        for (var c : chanced) {
-            if (!c.stack().isEmpty() && c.stack().getItem() == item) {
-                return c.chance() > 0f ? c.chance() : 1.0f;
-            }
-        }
-        return -1f;
     }
 
     /**
@@ -985,7 +1422,8 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      * 现在在候选里按**能解释样板声明产出的条数**打分，取最高分。
      */
     @Nullable
-    private Recipe<?> findRecipeFor(IPatternDetails details) {
+    @Override
+    public Recipe<?> findRecipeFor(IPatternDetails details) {
         if (level == null) return null;
         getRecipeIndex(level);
         if (recipeObjects == null) return null;
@@ -1060,6 +1498,15 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
 
                 @Override
                 public void setItemDirect(int slot, ItemStack stack) {
+                    // ⚠ 2026-09-21 sensei 实测「别的样板也能塞进千机样板槽」：
+                    // 这个方法以前**不做任何校验**直接把栈写进槽位，而 AE2 的样板管理终端
+                    // 正是走 setItemDirect/直接写入那一条（不走 isItemValid）→ 漏洞就在这里。
+                    // 现在与 GUI 槽位用同一条规则（PatternHandler#isItemValid）：只放行千机样板。
+                    if (!stack.isEmpty() && !patternHandler.isItemValid(slot, stack)) {
+                        AE2Addon.LOGGER.info("[ae2addon][gate] 拒绝非千机样板进入千机槽 {}：{}",
+                                slot, stack.getItem());
+                        return;
+                    }
                     patternHandler.setStackInSlot(slot, stack);
                     invalidatePatternCache();
                     setChanged();
@@ -1196,7 +1643,43 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     public ItemStackHandler getPatternHandler() { return patternHandler; }
     public ItemStackHandler getCatalystHandler() { return catalystHandler; }
 
-    private void invalidatePatternCache() { cachedPatterns = null; }
+    /** 搜索命中一行：槽位号 + 该槽样板的数据（2026-09-20 千机自有搜索） */
+    public record PatternHit(int slot, QianJiPatternData data) {}
+
+    /**
+     * 2026-09-20 sensei：**在千机里自写一套"专门对千机样板"的搜索**。
+     * <p>
+     * 为什么不是修 AE2 的搜索：样板管理终端的匹配只读样板 NBT 里的 {@code out} 列表
+     * （AE2 自己样板的产物格式），我们补写过也没用 —— 那条路已放弃（耗了 sensei 6+ 次重启）。
+     * 千机的数据（机器/配方 id/输入/主产物/概率产出）全在我们手里，所以自己做更准。
+     * <p>
+     * **做法：服务端扫全部 1280 槽，只回"命中的槽位 + 数据"。** 客户端不参与、不整包同步 →
+     * 不违反本项目"大槽位 GUI 绝不全量同步"的铁律（GUI 那步只拿命中结果，见 v244）。
+     *
+     * @param term  关键词；空白 → 返回空表（**不做**"空词全命中"这种容易误伤的行为）
+     * @param limit 条数上限；{@code <=0} = 不限（命令要总数，GUI 只要前 N 条）
+     */
+    public List<PatternHit> searchPatterns(String term, int limit) {
+        var hits = new ArrayList<PatternHit>();
+        String needle = term == null ? "" : term.trim().toLowerCase(java.util.Locale.ROOT);
+        if (needle.isEmpty()) return hits;
+        for (int i = 0; i < patternHandler.getSlots(); i++) {
+            ItemStack stack = patternHandler.getStackInSlot(i);
+            if (stack.isEmpty()) continue;
+            var data = QianJiPatternData.of(stack);
+            if (data == null || data.isEmpty()) continue;
+            if (data.searchText().contains(needle)) {
+                hits.add(new PatternHit(i, data));
+                if (limit > 0 && hits.size() >= limit) break;
+            }
+        }
+        return hits;
+    }
+
+    private void invalidatePatternCache() {
+        cachedPatterns = null;
+        ownPatternKeyCache.clear(); // 归属查表缓存同步失效（见 ownPatternKeys）
+    }
 
     private List<IPatternDetails> decodePatterns() {
         if (level == null) return Collections.emptyList();
@@ -1233,7 +1716,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             result.add(details);
         }
         if (skipped > 0) {
-            ChatLog.info(level, worldPosition, "样板解码: " + result.size() + " 个处理样板可用，跳过 " + skipped + " 个不适用样板");
+            // 2026-09-22 v286：这两条（"样板解码: N 个…"）每次样板槽变化都刷聊天栏 → 去掉
         }
         return result;
     }
@@ -1292,6 +1775,16 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             // 自有样板（2026-09-15）：我们的样板物品，或 AE2 样板 + 我们的元数据
             // （ME 样板编码器编码千机配方时会挂上元数据，见 ProcessingPatternEncodingMixin）
             var own = QianJiPatternData.of(stack);
+            // 2026-09-21 sensei 定调：**只认我们自己的样板物品**（ae2addon:qianji_pattern）。
+            // 起因：AE2 处理样板外壳 + 我们元数据（ME 编码器产物）以前被当成"千机样板换了个壳"放行，
+            // 从 GUI 看就是"处理样板也能塞进千机槽"。现在**外壳不对一律不收**（数据对不对都不看）。
+            // 代价（sensei 知情并同意）：ME 编码器那条编千机样板的路等于退役，改用我们自己的终端/JEI 编码。
+            if (own != null && stack.getItem() != com.ae2addon.init.ModItems.QIAN_JI_PATTERN.get()) {
+                ChatLog.warn(level, worldPosition,
+                        "千机只收千机样板物品（ae2addon:qianji_pattern）：AE2 样板外壳不再接收，"
+                                + "请用千机终端或 JEI 千机配方页的「编码」");
+                return false;
+            }
             if (own != null) {
                 if (own.isEmpty()) {
                     ChatLog.warn(level, worldPosition, "空千机样板（未写入配方数据），已拒收");
@@ -1326,10 +1819,35 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             return false;
         }
 
+        /**
+         * 2026-09-21 **真正的最后一道闸**：sensei 实测"处理样板还能过"、而 `insertItem` 探针**没响**
+         * → 说明它根本没走 insertItem，而是**直接调 `setStackInSlot`**（Forge 这个方法不做任何校验，
+         * 谁都能写）。所以校验必须放在这里 —— 非千机样板一律不写进槽。
+         */
+        @Override
+        public void setStackInSlot(int slot, ItemStack stack) {
+            if (!stack.isEmpty() && !isItemValid(slot, stack)) {
+                AE2Addon.LOGGER.info("[ae2addon][gate] setStackInSlot 拒绝 {}（槽 {}）",
+                        stack.getItem(), slot);
+                return;
+            }
+            super.setStackInSlot(slot, stack);
+        }
+
+        /** 2026-09-21 诊断探针（sensei：处理样板还是可以放过）；2026-09-22 v285 把取证日志清了，校验保留 */
+        @Override
+        public ItemStack insertItem(int slot, ItemStack stack, boolean simulate) {
+            if (!stack.isEmpty() && !isItemValid(slot, stack)) {
+                return stack;
+            }
+            return super.insertItem(slot, stack, simulate);
+        }
+
         @Override
         protected void onContentsChanged(int slot) {
             invalidatePatternCache();
-            ChatLog.info(level, worldPosition, "样板槽更新，准备刷新网络样板列表");
+            // 2026-09-22 v286：原来这里每次都往聊天栏广播"样板槽更新，准备刷新网络样板列表"
+            // （放/取一张样板就冒一条）→ 去掉
             if (formed && getMainNode().isReady()) {
                 getMainNode().ifPresent((grid, node) -> {
                     var cs = grid.getService(appeng.api.networking.crafting.ICraftingService.class);

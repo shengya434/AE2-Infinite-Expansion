@@ -1,0 +1,35 @@
+{
+    "type":  "ae2addon:qianji_recipe",
+    "inputs":  [
+                   {
+                       "item":  "ae2:crafting_accelerator",
+                       "count":  1024
+                   },
+                   {
+                       "item":  "ae2addon:eternal_heart",
+                       "count":  1
+                   },
+                   {
+                       "item":  "ae2:singularity",
+                       "count":  24
+                   },
+                   {
+                       "item":  "ae2:sky_stone_chest",
+                       "count":  128
+                   },
+                   {
+                       "item":  "ae2:sky_stone_tank",
+                       "count":  128
+                   },
+                   {
+                       "fluid":  "minecraft:water",
+                       "buckets":  100
+                   }
+               ],
+    "primary":  [
+                    {
+                        "item":  "ae2addon:infinite_co_processing",
+                        "count":  1
+                    }
+                ]
+}

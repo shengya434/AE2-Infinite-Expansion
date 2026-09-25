@@ -1,0 +1,17 @@
+{
+  "conditions": [
+    {
+      "type": "forge:mod_loaded",
+      "modid": "ae2wtlib"
+    }
+  ],
+  "type": "ae2wtlib:combine",
+  "terminalA": {
+    "item": "ae2addon:qianji_wireless_terminal"
+  },
+  "terminalB": {
+    "item": "ae2wtlib:wireless_pattern_access_terminal"
+  },
+  "terminalAName": "qianji",
+  "terminalBName": "pattern_access"
+}

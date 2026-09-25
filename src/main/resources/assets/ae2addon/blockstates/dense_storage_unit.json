@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "ae2addon:block/dense_storage_unit" }
+  }
+}
