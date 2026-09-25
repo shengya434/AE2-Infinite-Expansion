@@ -1,0 +1,33 @@
+{
+    "type": "forge:conditional",
+    "recipes": [
+        {
+            "conditions": [
+                {
+                    "type": "forge:mod_loaded",
+                    "modid": "bluearchive"
+                }
+            ],
+            "recipe": {
+                "type": "minecraft:crafting_shaped",
+                "pattern": [
+                    "H",
+                    "H",
+                    "S"
+                ],
+                "key": {
+                    "H": {
+                        "item": "ae2addon:eternal_heart"
+                    },
+                    "S": {
+                        "item": "minecraft:stick"
+                    }
+                },
+                "result": {
+                    "item": "bluearchive:mika",
+                    "count": 1
+                }
+            }
+        }
+    ]
+}
