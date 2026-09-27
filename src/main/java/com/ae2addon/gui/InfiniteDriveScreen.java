@@ -1,11 +1,15 @@
 package com.ae2addon.gui;
 
+import com.ae2addon.AE2Addon;
+import com.ae2addon.network.CellEditorPickPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.ClickType;
+import net.minecraft.world.inventory.Slot;
 
 /**
  * 驱动器（无限级）面板 —— 512 格元件，54 格/页翻页（2026-09-14 重写）。
@@ -43,6 +47,18 @@ public class InfiniteDriveScreen extends AbstractContainerScreen<InfiniteDriveMe
     }
 
     @Override
+    protected void slotClicked(Slot slot, int slotId, int mouseButton, ClickType clickType) {
+        if (menu.isEditorMode()) {
+            if (slot != null && slotId >= 0 && slotId < 54) {
+                AE2Addon.NETWORK.sendToServer(new CellEditorPickPacket(menu.getDrivePos(),
+                        menu.getCurrentPage() * 54 + slotId));
+            }
+            return;
+        }
+        super.slotClicked(slot, slotId, mouseButton, clickType);
+    }
+
+    @Override
     protected void renderBg(GuiGraphics g, float partialTick, int mouseX, int mouseY) {
         renderBackground(g);
     }
@@ -62,6 +78,12 @@ public class InfiniteDriveScreen extends AbstractContainerScreen<InfiniteDriveMe
         int to = Math.min(page * 54 + 54, 512);
         String rangeText = "§8#" + from + " – " + to;
         g.drawString(font, Component.literal(rangeText), leftPos + 6, topPos + 7, 0x808080, false);
+
+        if (menu.isEditorMode()) {
+            Component hint = Component.translatable("gui.ae2addon.cell_editor.pick_hint");
+            g.drawString(font, hint, leftPos + W / 2 - font.width(hint) / 2,
+                    topPos - 12, 0xAAAAAA, false);
+        }
 
         renderTooltip(g, mouseX, mouseY);
     }

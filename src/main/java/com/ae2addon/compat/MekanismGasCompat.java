@@ -1,6 +1,8 @@
 package com.ae2addon.compat;
 
 import appeng.api.stacks.AEKey;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraftforge.fml.ModList;
 
 /**
@@ -41,5 +43,15 @@ public final class MekanismGasCompat {
     /** 该 AEKey 是否为可喂出的化学物（MekanismKey 任意形态：气体/灌注/颜料/泥浆）。 */
     public static boolean isFeedable(AEKey key) {
         return isLoaded() && isMekKey(key);
+    }
+
+    /** 容器是否有该化学形态对应的能力；保持门面无可选模组类引用。 */
+    public static boolean supports(BlockEntity target, Direction side, AEKey key) {
+        return isFeedable(key) && MekanismChemCompat.supports(target, side, key);
+    }
+
+    /** 向容器灌入化学物，返回实际收下的数量。 */
+    public static long insert(BlockEntity target, Direction side, AEKey key, long amount) {
+        return isFeedable(key) ? MekanismChemCompat.feed(target, side, key, amount) : 0;
     }
 }

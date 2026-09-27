@@ -6,6 +6,7 @@ import com.ae2addon.item.EternalHeartItem;
 import com.ae2addon.item.FormedBlockItem;
 import com.ae2addon.item.MatterBallItem;
 import com.ae2addon.item.UniversalStorageCell;
+import com.ae2addon.item.CellEditorItem;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.BlockItem;
@@ -61,6 +62,11 @@ public class ModItems {
     public static final RegistryObject<Item> UNIVERSAL_STORAGE_CELL = ITEMS.register(
             "universal_storage_cell",
             UniversalStorageCell::new
+    );
+
+    public static final RegistryObject<Item> CELL_EDITOR = ITEMS.register(
+            "cell_editor",
+            CellEditorItem::new
     );
 
     // ── 物质球（取消无限时大量物品临时存放） ──
@@ -250,6 +256,7 @@ public class ModItems {
                         // 单个物品失败不影响其余（ForgeHooks 对 count≠1 会硬抛）
                         acceptTabItem(output, ETERNAL_HEART.get());
                         acceptTabItem(output, UNIVERSAL_STORAGE_CELL.get());
+                        acceptTabItem(output, CELL_EDITOR.get());
                         acceptTabItem(output, INFINITE_CRAFTING_STORAGE_ITEM.get());
                         acceptTabItem(output, INFINITE_CO_PROCESSING_ITEM.get());
                         // 集成型CPU：**两个物品共用同一方块 id**，Block.asItem() 解析到的是

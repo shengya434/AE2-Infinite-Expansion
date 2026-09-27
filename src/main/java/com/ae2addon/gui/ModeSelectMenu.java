@@ -1,5 +1,6 @@
 package com.ae2addon.gui;
 
+import com.ae2addon.block.InfiniteDriveBE;
 import com.ae2addon.init.ModMenuTypes;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.entity.player.Inventory;
@@ -15,10 +16,19 @@ import net.minecraft.world.item.ItemStack;
 public class ModeSelectMenu extends AbstractContainerMenu {
 
     private final ItemStack cellStack;
+    private final InfiniteDriveBE drive;
+    private final int driveSlot;
 
     public ModeSelectMenu(int id, Inventory playerInventory, ItemStack cellStack) {
+        this(id, playerInventory, cellStack, null, -1);
+    }
+
+    public ModeSelectMenu(int id, Inventory playerInventory, ItemStack cellStack,
+                          InfiniteDriveBE drive, int driveSlot) {
         super(ModMenuTypes.MODE_SELECT.get(), id);
         this.cellStack = cellStack;
+        this.drive = drive;
+        this.driveSlot = driveSlot;
     }
 
     /**
@@ -41,6 +51,25 @@ public class ModeSelectMenu extends AbstractContainerMenu {
         return cellStack;
     }
 
+    public boolean isCellPresent(Player player) {
+        return drive == null || (driveSlot >= 0 && drive.isFormed()
+                && player.level().hasChunkAt(drive.getBlockPos())
+                && player.level().getBlockEntity(drive.getBlockPos()) == drive
+                && drive.getInternalInventory().getStackInSlot(driveSlot) == cellStack);
+    }
+
+    public void markCellChanged() {
+        if (drive != null) drive.setChanged();
+    }
+
+    @Override
+    public void removed(Player player) {
+        super.removed(player);
+        if (drive != null && !player.level().isClientSide && isCellPresent(player)) {
+            drive.onChangeInventory(drive.getInternalInventory(), driveSlot);
+        }
+    }
+
     @Override
     public ItemStack quickMoveStack(Player player, int slot) {
         return ItemStack.EMPTY;
@@ -48,6 +77,6 @@ public class ModeSelectMenu extends AbstractContainerMenu {
 
     @Override
     public boolean stillValid(Player player) {
-        return !cellStack.isEmpty();
+        return !cellStack.isEmpty() && isCellPresent(player);
     }
 }

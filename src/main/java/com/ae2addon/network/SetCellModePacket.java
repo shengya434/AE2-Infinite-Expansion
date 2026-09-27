@@ -36,7 +36,13 @@ public class SetCellModePacket {
             ServerPlayer player = ctx.get().getSender();
             if (player == null) return;
 
-            ItemStack stack = player.getMainHandItem();
+            ItemStack stack = ItemStack.EMPTY;
+            if (player.containerMenu instanceof com.ae2addon.gui.ModeSelectMenu menu) {
+                if (!menu.isCellPresent(player)) return;
+                stack = menu.getCellStack();
+                menu.markCellChanged();
+            }
+            if (stack.isEmpty()) stack = player.getMainHandItem();
             if (!(stack.getItem() instanceof UniversalStorageCell)) {
                 stack = player.getOffhandItem();
                 if (!(stack.getItem() instanceof UniversalStorageCell)) return;

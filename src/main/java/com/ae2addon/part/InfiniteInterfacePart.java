@@ -485,9 +485,11 @@ public class InfiniteInterfacePart extends AEBasePart
         if ((t % InfiniteInterfaceBE.EXTRACT_INTERVAL) == 0) {
             extractFromMachine();
         }
-        if ((t % 10) == 0) {
-            pushPendingToNetwork();
-        }
+        // ⚠ 2026-09-27（sensei：「线缆面板同步了嘛？」）：与方块版保持一致 ——
+        // 原来是 `if ((t % 10) == 0) pushPendingToNetwork();`，每 10 tick 才推一次、
+        // 且单 key 封顶 21.5 亿 ⇒ 1e12 要 466 趟 ≈ 3.9 分钟。
+        // 现在**每 tick 都推**（每次送剩余全量），限流改由 key 预算承担。
+        pushPendingToNetwork(InfiniteInterfaceBE.NETWORK_PUSH_KEYS);
         if ((t % 20) == 0) {
             retryPendingReturns(); // 取消回退滞留重试（断网/拒收恢复后自动补退，2026-09-08）
         }
@@ -1028,8 +1030,18 @@ public class InfiniteInterfacePart extends AEBasePart
 
     // ── 待入网缓存自动补送 ──
 
-    private void pushPendingToNetwork() {
-        if (pendingNetworkKeys.isEmpty()) {
+    /**
+     * 自动补送：把待入网缓存送进网络（网络有空间即出；每 tick 由 serverTick 调）。
+     * <p>
+     * ⚠ 2026-09-27（sensei：「线缆面板同步了嘛？」）：方块版 {@code InfiniteInterfaceBE}
+     * 已改为「单次送剩余全量 + 每 tick 推 + 每 tick 限 key 数」，**面板 part 是另一套独立实现，
+     * 必须同步改**，否则面板形态的蓄水池照样要 466 趟 ≈ 3.9 分钟才归完网。
+     * 预算共用 {@code InfiniteInterfaceBE.NETWORK_PUSH_KEYS}（一个配置管两种形态）。
+     *
+     * @param keyBudget 本 tick 最多处理多少个待入网 key（&le;0 表示本 tick 不处理）
+     */
+    private void pushPendingToNetwork(int keyBudget) {
+        if (pendingNetworkKeys.isEmpty() || keyBudget <= 0) {
             return;
         }
         IGrid grid = getMainNode().getGrid();
@@ -1037,13 +1049,22 @@ public class InfiniteInterfacePart extends AEBasePart
             return;
         }
         var storage = grid.getStorageService().getInventory();
+        int done = 0;
         for (AEKey key : new java.util.ArrayList<>(pendingNetworkKeys)) {
+            if (done >= keyBudget) {
+                break;
+            }
             BigInteger amt = reservoir.get(key);
             if (amt == null || amt.signum() <= 0) {
                 pendingNetworkKeys.remove(key);
                 continue;
             }
-            long want = amt.min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+            // 一次送完剩余全量（数量上不再设上限；限流只卡本 tick 处理多少个 key）
+            long want = amt.min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
+            if (want <= 0) {
+                continue;
+            }
+            done++;
             long inserted;
             try {
                 inserted = storage.insert(key, want, Actionable.MODULATE, actionSource);

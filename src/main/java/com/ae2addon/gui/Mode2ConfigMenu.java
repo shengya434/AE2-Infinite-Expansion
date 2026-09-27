@@ -1,6 +1,7 @@
 package com.ae2addon.gui;
 
 import com.ae2addon.AE2Addon;
+import com.ae2addon.block.InfiniteDriveBE;
 import com.ae2addon.cell.UnlimitedCellInventory;
 import com.ae2addon.init.ModMenuTypes;
 import com.ae2addon.network.Mode2ConfigPacket;
@@ -15,6 +16,8 @@ import net.minecraft.world.item.ItemStack;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 
 /**
  * 模式2配置界面 — 点击背包物品添加到白名单 + 存储面板
@@ -23,20 +26,31 @@ import java.util.List;
 public class Mode2ConfigMenu extends AbstractContainerMenu {
 
     private final ItemStack cellStack;
+    private final InfiniteDriveBE drive;
+    private final int driveSlot;
     /** 客户端缓存的面板数据 */
     private List<UnlimitedCellInventory.PanelItem> panelItems = new ArrayList<>();
     /** 客户端缓存的 tag 规则 */
     private List<String> tagRules = new ArrayList<>();
     /** 客户端缓存的 mod 规则 */
     private List<String> modRules = new ArrayList<>();
+    /** 客户端缓存的每条 tag/mod 规则模式 */
+    private final Map<String, Integer> ruleModes = new HashMap<>();
     /** 客户端缓存的黑名单 AEKey */
     private List<AEKey> blacklist = new ArrayList<>();
     /** 由屏幕控制：是否隐藏物品栏 */
     public boolean slotsHidden = false;
 
     public Mode2ConfigMenu(int id, Inventory playerInventory, ItemStack cellStack) {
+        this(id, playerInventory, cellStack, null, -1);
+    }
+
+    public Mode2ConfigMenu(int id, Inventory playerInventory, ItemStack cellStack,
+                           InfiniteDriveBE drive, int driveSlot) {
         super(ModMenuTypes.MODE2_CONFIG.get(), id);
         this.cellStack = cellStack;
+        this.drive = drive;
+        this.driveSlot = driveSlot;
 
         // 使用可切换隐藏的 Slot 包装
         var inv = playerInventory;
@@ -44,13 +58,13 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
         for (int r = 0; r < 3; r++)
             for (int c = 0; c < 9; c++) {
                 int idx = c + r * 9 + 9;
-                addSlot(new Slot(inv, idx, 48 + c * 18, 166 + r * 18) {
+                addSlot(new Slot(inv, idx, 48 + c * 18, 192 + r * 18) {
                     @Override public boolean isActive() { return !slotsHidden; }
                 });
             }
         // 快捷栏（1x9）
         for (int c = 0; c < 9; c++) {
-            addSlot(new Slot(inv, c, 48 + c * 18, 224) {
+            addSlot(new Slot(inv, c, 48 + c * 18, 250) {
                 @Override public boolean isActive() { return !slotsHidden; }
             });
         }
@@ -61,6 +75,27 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
     }
 
     public ItemStack getCellStack() { return cellStack; }
+
+    /** 编辑器打开期间确认目标仍在原槽，避免改到已取出的旧栈。 */
+    public boolean isCellPresent(Player player) {
+        return drive == null || (driveSlot >= 0 && drive.isFormed()
+                && player.level().hasChunkAt(drive.getBlockPos())
+                && player.level().getBlockEntity(drive.getBlockPos()) == drive
+                && drive.getInternalInventory().getStackInSlot(driveSlot) == cellStack);
+    }
+
+    /** 活栈的 NBT 已修改，通知驱动器保存。 */
+    public void markCellChanged() {
+        if (drive != null) drive.setChanged();
+    }
+
+    @Override
+    public void removed(Player player) {
+        super.removed(player);
+        if (drive != null && !player.level().isClientSide && isCellPresent(player)) {
+            drive.onChangeInventory(drive.getInternalInventory(), driveSlot);
+        }
+    }
 
     public long getThreshold() {
         return cellStack.getOrCreateTag().getLong("thr");
@@ -87,8 +122,35 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
         return panelItems;
     }
 
+    public long getItemThreshold(AEKey key) {
+        for (var item : panelItems) {
+            if (item.key.equals(key)) return item.itemThreshold;
+        }
+        return 0L;
+    }
+
+    public void sendSetItemThreshold(CompoundTag keyTag, long value) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(keyTag, value));
+    }
+
+    public void sendSetQuantity(CompoundTag keyTag, String quantityText, boolean lock) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(keyTag, quantityText, lock));
+    }
+
+    public UnlimitedCellInventory.PanelItem getPanelItem(AEKey key) {
+        for (var item : panelItems) {
+            if (item.key.equals(key)) return item;
+        }
+        return null;
+    }
+
     /** 客户端更新规则数据 */
-    public void setRuleData(boolean isTag, List<String> rules) {
+    public void setRuleData(boolean isTag, List<String> rules, List<Integer> modes) {
+        String prefix = isTag ? "tag:" : "mod:";
+        ruleModes.keySet().removeIf(key -> key.startsWith(prefix));
+        for (int i = 0; i < rules.size(); i++) {
+            ruleModes.put(prefix + rules.get(i), i < modes.size() && modes.get(i) == 2 ? 2 : 1);
+        }
         if (isTag) {
             tagRules = new ArrayList<>(rules);
         } else {
@@ -102,6 +164,10 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
 
     public List<String> getModRules() {
         return modRules;
+    }
+
+    public int getRuleMode(String ruleKey) {
+        return ruleModes.getOrDefault(ruleKey, 1);
     }
 
     /** 添加 tag 规则 */
@@ -124,9 +190,9 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
         AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(8, mod, false));
     }
 
-    /** 设置规则生效模式（true=立即全量，false=触碰后） */
-    public void sendSetRuleInstant(boolean instant) {
-        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(instant));
+    /** 设置单条规则的无限模式。 */
+    public void sendSetRuleMode(String rule, boolean isTag, int mode) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(15, rule, isTag, mode));
     }
 
     /** 客户端更新黑名单缓存 */
@@ -162,5 +228,5 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
     }
 
     @Override
-    public boolean stillValid(Player p) { return !cellStack.isEmpty(); }
+    public boolean stillValid(Player p) { return !cellStack.isEmpty() && isCellPresent(p); }
 }

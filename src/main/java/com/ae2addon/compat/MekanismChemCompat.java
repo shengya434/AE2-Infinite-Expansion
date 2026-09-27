@@ -106,6 +106,22 @@ public final class MekanismChemCompat {
         return MekanismKey.of(stack);
     }
 
+    /** 目标是否暴露该化学物形态对应的能力。调用方需先检查 isLoaded。 */
+    public static boolean supports(BlockEntity target, Direction side, AEKey key) {
+        if (!(key instanceof MekanismKey mk)) return false;
+        try {
+            return switch (mk.getForm()) {
+                case MekanismKey.GAS -> findHandler(target, side, Capabilities.GAS_HANDLER) != null;
+                case MekanismKey.INFUSION -> findHandler(target, side, Capabilities.INFUSION_HANDLER) != null;
+                case MekanismKey.PIGMENT -> findHandler(target, side, Capabilities.PIGMENT_HANDLER) != null;
+                case MekanismKey.SLURRY -> findHandler(target, side, Capabilities.SLURRY_HANDLER) != null;
+                default -> false;
+            };
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
     /** 喂出：把化学物的 amount 量插入机器对应槽（气体/灌注/颜料/泥浆）；
      * 返回实际喂出量（0=机器满/拒收）。带失败原因诊断（节流）。调用方需保证 isLoaded。 */
     public static long feed(BlockEntity target, Direction side, AEKey key, long amount) {

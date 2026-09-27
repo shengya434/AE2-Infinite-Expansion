@@ -6,6 +6,9 @@ import appeng.api.upgrades.IUpgradeInventory;
 import appeng.api.upgrades.UpgradeInventories;
 import appeng.util.ConfigInventory;
 import com.ae2addon.gui.ModeSelectMenu;
+import com.ae2addon.gui.InfiniteDriveMenu;
+import com.ae2addon.block.InfiniteDriveBE;
+import com.ae2addon.util.SizeFormat;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -50,9 +53,13 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
      */
     private static class Mode2MenuProvider implements MenuProvider {
         private final ItemStack stack;
+        private final InfiniteDriveBE drive;
+        private final int driveSlot;
 
-        Mode2MenuProvider(ItemStack stack) {
+        Mode2MenuProvider(ItemStack stack, InfiniteDriveBE drive, int driveSlot) {
             this.stack = stack;
+            this.drive = drive;
+            this.driveSlot = driveSlot;
         }
 
         @Override
@@ -62,16 +69,20 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
 
         @Override
         public AbstractContainerMenu createMenu(int id, Inventory inv, Player p) {
-            return new com.ae2addon.gui.Mode2ConfigMenu(id, inv, stack);
+            return new com.ae2addon.gui.Mode2ConfigMenu(id, inv, stack, drive, driveSlot);
         }
     }
 
     /** Mode 1/3 模式选择菜单的 MenuProvider（静态内部类） */
     private static class ModeSelectMenuProvider implements MenuProvider {
         private final ItemStack stack;
+        private final InfiniteDriveBE drive;
+        private final int driveSlot;
 
-        ModeSelectMenuProvider(ItemStack stack) {
+        ModeSelectMenuProvider(ItemStack stack, InfiniteDriveBE drive, int driveSlot) {
             this.stack = stack;
+            this.drive = drive;
+            this.driveSlot = driveSlot;
         }
 
         @Override
@@ -81,7 +92,7 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
 
         @Override
         public AbstractContainerMenu createMenu(int id, Inventory inv, Player p) {
-            return new ModeSelectMenu(id, inv, stack);
+            return new ModeSelectMenu(id, inv, stack, drive, driveSlot);
         }
     }
 
@@ -118,21 +129,35 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
         if (level.isClientSide) return InteractionResultHolder.success(stack);
 
         if (player instanceof ServerPlayer serverPlayer) {
-            int mode = stack.getOrCreateTag().getInt("umode");
-            if (mode < 1 || mode > 3) mode = 1;
-
-            if (mode == MODE_CUSTOM) {
-                NetworkHooks.openScreen(serverPlayer,
-                        new Mode2MenuProvider(stack),
-                        new LightStackWriter(stack, false));
-            } else {
-                // Mode 1 / Mode 3：只传光副本，裁掉存储NBT防炸包
-                NetworkHooks.openScreen(serverPlayer,
-                        new ModeSelectMenuProvider(stack),
-                        new LightStackWriter(stack, true));
-            }
+            openConfigFor(serverPlayer, stack);
         }
         return InteractionResultHolder.success(stack);
+    }
+
+    /** 打开指定元件的配置菜单；手持与驱动器内元件共用这一处模式分流。 */
+    public static void openConfigFor(ServerPlayer player, ItemStack stack) {
+        if (!(stack.getItem() instanceof UniversalStorageCell)) return;
+
+        InfiniteDriveBE drive = null;
+        int driveSlot = -1;
+        if (player.containerMenu instanceof InfiniteDriveMenu menu && menu.isEditorMode()) {
+            driveSlot = menu.findCellSlot(stack);
+            if (driveSlot < 0) return;
+            drive = menu.getDrive();
+        }
+
+        int mode = stack.getOrCreateTag().getInt("umode");
+        if (mode < 1 || mode > 3) mode = 1;
+        if (mode == MODE_CUSTOM) {
+            NetworkHooks.openScreen(player,
+                    new Mode2MenuProvider(stack, drive, driveSlot),
+                    new LightStackWriter(stack, false));
+        } else {
+            // Mode 1 / Mode 3：只传光副本，裁掉存储NBT防炸包
+            NetworkHooks.openScreen(player,
+                    new ModeSelectMenuProvider(stack, drive, driveSlot),
+                    new LightStackWriter(stack, true));
+        }
     }
 
     // ── ICellWorkbenchItem ──
@@ -191,32 +216,9 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
         }
         int typeCount = tag.getInt("_t");
 
-        tooltip.add(Component.translatable("gui.ae2addon.cell.bytes", formatBytes(totalBytes)));
+        tooltip.add(Component.translatable("gui.ae2addon.cell.bytes", SizeFormat.bytes(totalBytes)));
         tooltip.add(Component.translatable("gui.ae2addon.cell.types", typeCount));
         tooltip.add(Component.translatable("gui.ae2addon.cell.switch_hint"));
     }
-
-    /** BigInteger 版字节格式化：支持 B/K/M/G/T/P/E/Z/Y/R/Q 单位 */
-    private String formatBytes(BigInteger bytes) {
-        if (bytes.signum() < 0) return "0B";
-        String[] units = {"B", "K", "M", "G", "T", "P", "E", "Z", "Y", "R", "Q"};
-        BigInteger base = BigInteger.valueOf(1000);
-        BigInteger v = bytes;
-        int u = 0;
-        while (u < units.length - 1 && v.compareTo(base) >= 0) {
-            v = v.divide(base);
-            u++;
-        }
-        // 保留一位小数的近似（显示友好）
-        if (u > 0) {
-            // 用 BigDecimal 算一位小数
-            java.math.BigDecimal bd = new java.math.BigDecimal(bytes);
-            java.math.BigDecimal div = java.math.BigDecimal.valueOf(1000).pow(u);
-            bd = bd.divide(div, 1, java.math.RoundingMode.DOWN);
-            return bd.toPlainString() + units[u];
-        }
-        return v + units[u];
-    }
-
 
 }

@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "group": "ae2addon",
+  "ingredients": [
+    {
+      "item": "ae2:memory_card"
+    },
+    {
+      "item": "ae2addon:config_card"
+    },
+    {
+      "item": "minecraft:ender_pearl"
+    }
+  ],
+  "result": {
+    "item": "ae2addon:cell_editor"
+  }
+}

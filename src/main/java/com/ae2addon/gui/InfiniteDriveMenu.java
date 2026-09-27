@@ -35,23 +35,36 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
     private static final int BTN_NEXT = 1;
 
     private final InfiniteDriveBE be;
+    private final BlockPos drivePos;
     private final PagedCellHandler paged;
     private final ContainerData pageData;
+    private final boolean editorMode;
 
     /** 客户端构造（IForgeMenuType → 只带 pos） */
     public InfiniteDriveMenu(int id, Inventory playerInv, FriendlyByteBuf buf) {
-        this(id, playerInv, buf.readBlockPos());
+        this(id, playerInv, buf.readBlockPos(), buf.readBoolean());
     }
 
     /** 服务端构造 */
     public InfiniteDriveMenu(int id, Inventory playerInv, BlockPos pos) {
+        this(id, playerInv, pos, false);
+    }
+
+    public InfiniteDriveMenu(int id, Inventory playerInv, BlockPos pos, boolean editorMode) {
         super(ModMenuTypes.INFINITE_DRIVE.get(), id);
 
-        BlockEntity be = playerInv.player.level().getBlockEntity(pos);
-        if (!(be instanceof InfiniteDriveBE drive)) {
-            throw new IllegalStateException("Block entity at " + pos + " is not InfiniteDriveBE");
+        this.drivePos = pos;
+        // 远程绑定时客户端未必加载驱动器区块；编辑器客户端只需接收菜单槽位同步。
+        if (editorMode && playerInv.player.level().isClientSide) {
+            this.be = null;
+        } else {
+            BlockEntity blockEntity = playerInv.player.level().getBlockEntity(pos);
+            if (!(blockEntity instanceof InfiniteDriveBE drive)) {
+                throw new IllegalStateException("Block entity at " + pos + " is not InfiniteDriveBE");
+            }
+            this.be = drive;
         }
-        this.be = drive;
+        this.editorMode = editorMode;
         this.paged = new PagedCellHandler();
         this.pageData = new SimpleContainerData(1);
         addDataSlots(pageData);
@@ -93,10 +106,26 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
 
     public int getMaxPage() { return MAX_PAGE; }
 
+    public boolean isEditorMode() { return editorMode; }
+
+    public BlockPos getDrivePos() { return drivePos; }
+
+    /** 选中栈的真实槽号，仅供服务端打开配置菜单时绑定驱动器。 */
+    public int findCellSlot(ItemStack stack) {
+        if (be == null) return -1;
+        for (int i = 0; i < InfiniteDriveBE.CELL_SLOTS; i++) {
+            if (be.getInternalInventory().getStackInSlot(i) == stack) return i;
+        }
+        return -1;
+    }
+
+    public InfiniteDriveBE getDrive() { return be; }
+
     // ── 转移 ──
 
     @Override
     public ItemStack quickMoveStack(Player player, int slotIndex) {
+        if (editorMode) return ItemStack.EMPTY;
         Slot slot = getSlot(slotIndex);
         if (!slot.hasItem()) return ItemStack.EMPTY;
 
@@ -121,6 +150,11 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
 
     @Override
     public boolean stillValid(Player player) {
+        if (editorMode) {
+            if (player.level().isClientSide) return true;
+            return be != null && be.isFormed() && player.level().hasChunkAt(drivePos)
+                    && player.level().getBlockEntity(drivePos) == be;
+        }
         return be != null && be.isFormed()
                 && player.distanceToSqr(be.getBlockPos().getX() + 0.5,
                         be.getBlockPos().getY() + 0.5,
@@ -158,12 +192,17 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
 
         @Override
         public @NotNull ItemStack getStackInSlot(int slot) {
+            if (be == null) return super.getStackInSlot(slot);
             int rs = realSlot(slot);
             return valid(rs) ? real().getStackInSlot(rs) : ItemStack.EMPTY;
         }
 
         @Override
         public void setStackInSlot(int slot, @NotNull ItemStack stack) {
+            if (be == null) {
+                super.setStackInSlot(slot, stack);
+                return;
+            }
             int rs = realSlot(slot);
             if (!valid(rs)) return;
             real().setItemDirect(rs, stack);
@@ -172,6 +211,7 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
 
         @Override
         public @NotNull ItemStack insertItem(int slot, @NotNull ItemStack stack, boolean simulate) {
+            if (be == null) return super.insertItem(slot, stack, simulate);
             int rs = realSlot(slot);
             if (!valid(rs) || !real().isItemValid(rs, stack)) return stack;
             ItemStack remainder = real().insertItem(rs, stack, simulate);
@@ -181,6 +221,7 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
 
         @Override
         public @NotNull ItemStack extractItem(int slot, int amount, boolean simulate) {
+            if (be == null) return super.extractItem(slot, amount, simulate);
             int rs = realSlot(slot);
             if (!valid(rs)) return ItemStack.EMPTY;
             ItemStack out = real().extractItem(rs, amount, simulate);
@@ -190,12 +231,14 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
 
         @Override
         public int getSlotLimit(int slot) {
+            if (be == null) return super.getSlotLimit(slot);
             int rs = realSlot(slot);
             return valid(rs) ? real().getSlotLimit(rs) : 0;
         }
 
         @Override
         public boolean isItemValid(int slot, @NotNull ItemStack stack) {
+            if (be == null) return super.isItemValid(slot, stack);
             int rs = realSlot(slot);
             return valid(rs) && real().isItemValid(rs, stack);
         }

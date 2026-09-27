@@ -41,10 +41,14 @@ import java.util.function.Supplier;
  * type 6 = 设置工作模式
  * type 7 = 添加 tag/mod 规则（tag=true 传 tag 名，false 传 mod id）
  * type 8 = 移除 tag/mod 规则
- * type 9 = 规则数据响应（服务端→客户端：tags/mods 列表）
- * type 10 = 设置规则生效模式
+ * type 9 = 规则数据响应（服务端→客户端：tags/mods 列表及各自模式）
+ * type 10 = 旧版全局规则模式（兼容解码，不再发送）
  * type 11 = 切换黑名单（客户端→服务端，传完整AEKey NBT）
  * type 12 = 黑名单数据响应（服务端→客户端，分包 AEKey 列表）
+ * type 14 = 一键格式化当前元件
+ * type 15 = 设置单条 tag/mod 规则的无限模式
+ * type 16 = 设置或清除单物品阈值
+ * type 17 = 设置元件内数量及锁定状态
  */
 public class Mode2ConfigPacket {
 
@@ -60,10 +64,17 @@ public class Mode2ConfigPacket {
     private final boolean isTag;
     /** type 9：规则列表 */
     private final List<String> ruleList;
+    private List<Integer> modeList;
+    private int ruleMode = 1;
     /** type 10：规则生效模式（true=立即全量，false=触碰后） */
     private boolean ruleInstant;
     /** type 11：切换黑名单用的 key */
     private final CompoundTag blacklistKeyTag;
+    private CompoundTag itemThrKeyTag;
+    private long itemThrValue;
+    private CompoundTag quantityKeyTag;
+    private String quantityText;
+    private boolean lock;
     /** type 12：黑名单 AEKey 列表（分包） */
     private final List<AEKey> blacklistKeys;
     /** 分包支持：当前 chunk 索引 / 总 chunk 数，非分包时 (0, 1) */
@@ -89,6 +100,21 @@ public class Mode2ConfigPacket {
         this.blacklistKeys = null;
         this.chunkIndex = 0;
         this.totalChunks = 1;
+    }
+
+    /** type 16：设置或清除单物品阈值。 */
+    public Mode2ConfigPacket(CompoundTag itemThrKeyTag, long itemThrValue) {
+        this(16);
+        this.itemThrKeyTag = itemThrKeyTag;
+        this.itemThrValue = itemThrValue;
+    }
+
+    /** type 17：服务端解析玩家输入的数量算式。 */
+    public Mode2ConfigPacket(CompoundTag quantityKeyTag, String quantityText, boolean lock) {
+        this(17);
+        this.quantityKeyTag = quantityKeyTag;
+        this.quantityText = quantityText;
+        this.lock = lock;
     }
 
     // type 0 / 2
@@ -225,7 +251,7 @@ public class Mode2ConfigPacket {
     }
 
     // type 9 规则数据响应（tags/mods 列表）
-    public Mode2ConfigPacket(List<String> ruleList, boolean isTag, boolean ruleInstant) {
+    public Mode2ConfigPacket(List<String> ruleList, List<Integer> modeList, boolean isTag) {
         this.type = 9;
         this.threshold = 0;
         this.itemId = "";
@@ -236,11 +262,18 @@ public class Mode2ConfigPacket {
         this.rule = "";
         this.isTag = isTag;
         this.ruleList = ruleList;
-        this.ruleInstant = ruleInstant;
+        this.modeList = modeList;
+        this.ruleInstant = true;
         this.blacklistKeyTag = null;
         this.blacklistKeys = null;
         this.chunkIndex = 0;
         this.totalChunks = 1;
+    }
+
+    // type 15：设置某条规则的无限模式
+    public Mode2ConfigPacket(int type, String rule, boolean isTag, int ruleMode) {
+        this(type, rule, isTag);
+        this.ruleMode = ruleMode;
     }
 
     // type 10 设置规则生效模式（true=立即全量，false=触碰后）
@@ -316,6 +349,8 @@ public class Mode2ConfigPacket {
                 buf.writeByteArray(entry.amount.toByteArray());
                 buf.writeBoolean(entry.isInfinite);
                 buf.writeVarLong(entry.bytes);
+                buf.writeLong(entry.itemThreshold);
+                buf.writeBoolean(entry.quantityLocked);
             }
         } else if (p.type == 5 && p.keyTag != null) {
             buf.writeNbt(p.keyTag);
@@ -326,15 +361,26 @@ public class Mode2ConfigPacket {
             buf.writeUtf(p.rule == null ? "" : p.rule);
         } else if (p.type == 9 && p.ruleList != null) {
             buf.writeBoolean(p.isTag);
-            buf.writeBoolean(p.ruleInstant);
             buf.writeVarInt(p.ruleList.size());
-            for (String r : p.ruleList) {
-                buf.writeUtf(r == null ? "" : r);
+            for (int i = 0; i < p.ruleList.size(); i++) {
+                buf.writeUtf(p.ruleList.get(i));
+                buf.writeByte(p.modeList.get(i));
             }
+        } else if (p.type == 15) {
+            buf.writeBoolean(p.isTag);
+            buf.writeUtf(p.rule);
+            buf.writeVarInt(p.ruleMode);
         } else if (p.type == 10) {
             buf.writeBoolean(p.ruleInstant);
         } else if (p.type == 11 && p.blacklistKeyTag != null) {
             buf.writeNbt(p.blacklistKeyTag);
+        } else if (p.type == 16) {
+            buf.writeNbt(p.itemThrKeyTag);
+            buf.writeLong(p.itemThrValue);
+        } else if (p.type == 17) {
+            buf.writeNbt(p.quantityKeyTag);
+            buf.writeUtf(p.quantityText);
+            buf.writeBoolean(p.lock);
         } else if (p.type == 13 && p.keyTag != null) {
             buf.writeNbt(p.keyTag);
         } else if (p.type == 12 && p.blacklistKeys != null) {
@@ -375,7 +421,10 @@ public class Mode2ConfigPacket {
                 java.math.BigInteger amount = new java.math.BigInteger(buf.readByteArray());
                 boolean isInfinite = buf.readBoolean();
                 long bytes = buf.readVarLong();
-                items.add(new UnlimitedCellInventory.PanelItem(key, amount, isInfinite, bytes));
+                long itemThreshold = buf.readLong();
+                boolean quantityLocked = buf.readBoolean();
+                items.add(new UnlimitedCellInventory.PanelItem(key, amount, isInfinite, bytes,
+                        itemThreshold, quantityLocked));
             }
             return new Mode2ConfigPacket(items, chunkIndex, totalChunks);
         }
@@ -397,14 +446,21 @@ public class Mode2ConfigPacket {
 
         if (type == 9) {
             boolean isTag = buf.readBoolean();
-            boolean ruleInstant = buf.readBoolean();
             int count = buf.readVarInt();
             List<String> rules = new ArrayList<>(count);
+            List<Integer> modes = new ArrayList<>(count);
             for (int i = 0; i < count; i++) {
                 rules.add(buf.readUtf());
+                modes.add((int) buf.readByte());
             }
-            Mode2ConfigPacket p = new Mode2ConfigPacket(rules, isTag, ruleInstant);
-            return p;
+            return new Mode2ConfigPacket(rules, modes, isTag);
+        }
+
+        if (type == 15) {
+            boolean isTag = buf.readBoolean();
+            String rule = buf.readUtf();
+            int ruleMode = buf.readVarInt();
+            return new Mode2ConfigPacket(type, rule, isTag, ruleMode);
         }
 
         if (type == 10) {
@@ -414,6 +470,14 @@ public class Mode2ConfigPacket {
         if (type == 11) {
             CompoundTag tag = buf.readNbt();
             return new Mode2ConfigPacket(tag, false);
+        }
+
+        if (type == 16) {
+            return new Mode2ConfigPacket(buf.readNbt(), buf.readLong());
+        }
+
+        if (type == 17) {
+            return new Mode2ConfigPacket(buf.readNbt(), buf.readUtf(), buf.readBoolean());
         }
 
         if (type == 12) {
@@ -447,7 +511,7 @@ public class Mode2ConfigPacket {
 
         if (side.isClient() && p.type == 9) {
             ctx.get().enqueueWork(() -> {
-                com.ae2addon.gui.Mode2ConfigScreen.handleRuleData(p.isTag, p.ruleList, p.ruleInstant);
+                com.ae2addon.gui.Mode2ConfigScreen.handleRuleData(p.isTag, p.ruleList, p.modeList);
             });
             ctx.get().setPacketHandled(true);
             return;
@@ -470,7 +534,24 @@ public class Mode2ConfigPacket {
             ServerPlayer player = ctx.get().getSender();
             if (player == null) return;
 
-            ItemStack stack = player.getMainHandItem();
+            // 菜单里的栈可能在驱动器内，所有配置操作都优先使用这只活栈。
+            ItemStack stack = ItemStack.EMPTY;
+            if (player.containerMenu instanceof com.ae2addon.gui.Mode2ConfigMenu m2) {
+                if (!m2.isCellPresent(player)) return;
+                ItemStack s = m2.getCellStack();
+                if (s != null && !s.isEmpty() && s.getItem() instanceof UniversalStorageCell) {
+                    stack = s;
+                    m2.markCellChanged();
+                }
+            } else if (p.type == 14 && player.containerMenu instanceof com.ae2addon.gui.ModeSelectMenu m1) {
+                if (!m1.isCellPresent(player)) return;
+                ItemStack s = m1.getCellStack();
+                if (s != null && !s.isEmpty() && s.getItem() instanceof UniversalStorageCell) {
+                    stack = s;
+                    m1.markCellChanged();
+                }
+            }
+            if (stack.isEmpty()) stack = player.getMainHandItem();
             if (!(stack.getItem() instanceof UniversalStorageCell)) {
                 stack = player.getOffhandItem();
                 if (!(stack.getItem() instanceof UniversalStorageCell)) return;
@@ -550,6 +631,17 @@ public class Mode2ConfigPacket {
                 sendRuleData(inv, player);
                 sendPanelRefresh(inv, player);
                 return;
+            } else if (p.type == 15 && !p.rule.isEmpty()) {
+                inv.setRuleMode(UnlimitedCellInventory.ruleKey(p.isTag, p.rule), p.ruleMode);
+                if ((p.isTag ? inv.getTags() : inv.getMods()).contains(p.rule)) {
+                    player.sendSystemMessage(Component.translatable("gui.ae2addon.mode2.rule_mode_set", p.rule,
+                            Component.translatable(inv.getRuleMode(UnlimitedCellInventory.ruleKey(p.isTag, p.rule)) == 2
+                                    ? "gui.ae2addon.mode2.rule_mode_touch"
+                                    : "gui.ae2addon.mode2.rule_mode_instant")));
+                }
+                sendRuleData(inv, player);
+                sendPanelRefresh(inv, player);
+                return;
             } else if (p.type == 11 && p.blacklistKeyTag != null) {
                 // 切换黑名单
                 AEKey key = AEKey.fromTagGeneric(p.blacklistKeyTag);
@@ -559,6 +651,42 @@ public class Mode2ConfigPacket {
                             nowBlacklisted ? "gui.ae2addon.mode2.blacklist_added" : "gui.ae2addon.mode2.blacklist_removed",
                             key.getDisplayName()));
                 }
+                sendRuleData(inv, player);
+                sendBlacklistData(inv, player);
+                sendPanelRefresh(inv, player);
+                return;
+            } else if (p.type == 16 && p.itemThrKeyTag != null) {
+                AEKey key = AEKey.fromTagGeneric(p.itemThrKeyTag);
+                if (key != null) {
+                    inv.setItemThreshold(key, p.itemThrValue);
+                    player.sendSystemMessage(Component.translatable(p.itemThrValue > 0
+                            ? "gui.ae2addon.mode2.item_thr_set" : "gui.ae2addon.mode2.item_thr_clear",
+                            key.getDisplayName()));
+                }
+                sendPanelRefresh(inv, player);
+                return;
+            } else if (p.type == 17 && p.quantityKeyTag != null) {
+                AEKey key = AEKey.fromTagGeneric(p.quantityKeyTag);
+                if (key != null) {
+                    try {
+                        com.ae2addon.util.NumberExpr.Quantity parsed =
+                                com.ae2addon.util.NumberExpr.parseQuantity(p.quantityText, p.lock);
+                        inv.setStoredQuantity(key, parsed.value(), p.lock);
+                        player.sendSystemMessage(Component.translatable("gui.ae2addon.mode2.qty_set",
+                                key.getDisplayName()));
+                        if (parsed.clamped()) {
+                            player.sendSystemMessage(Component.translatable("gui.ae2addon.mode2.qty_clamped"));
+                        }
+                    } catch (NumberFormatException e) {
+                        player.sendSystemMessage(Component.translatable("gui.ae2addon.mode2.qty_bad"));
+                    }
+                }
+                sendPanelRefresh(inv, player);
+                return;
+            } else if (p.type == 14) {
+                // 一键格式化：只清当前元件的 mode1 + mode2 数据。
+                inv.wipeAllData();
+                player.sendSystemMessage(Component.translatable("gui.ae2addon.mode2.format_done"));
                 sendRuleData(inv, player);
                 sendBlacklistData(inv, player);
                 sendPanelRefresh(inv, player);
@@ -575,7 +703,25 @@ public class Mode2ConfigPacket {
 
     /** 分包发送面板刷新数据：每包最多 MAX_ITEMS_PER_CHUNK 个 item */
     private static void sendPanelRefresh(UnlimitedCellInventory inv, ServerPlayer player) {
-        List<UnlimitedCellInventory.PanelItem> allItems = inv.getPanelItems();
+        List<UnlimitedCellInventory.PanelItem> allItems = new ArrayList<>();
+        for (UnlimitedCellInventory.PanelItem item : inv.getPanelItems()) {
+            allItems.add(new UnlimitedCellInventory.PanelItem(item.key, item.amount, item.isInfinite,
+                    item.bytes, inv.itemThresholds().getOrDefault(item.key, 0L),
+                    inv.isQuantityLocked(item.key)));
+        }
+        // 仍显示只有单物品阈值、当前数量为零的条目，以便再次编辑或清除。
+        for (var entry : inv.itemThresholds().entrySet()) {
+            if (allItems.stream().noneMatch(item -> item.key.equals(entry.getKey()))) {
+                allItems.add(new UnlimitedCellInventory.PanelItem(entry.getKey(), java.math.BigInteger.ZERO,
+                        false, 0L, entry.getValue(), inv.isQuantityLocked(entry.getKey())));
+            }
+        }
+        for (AEKey key : inv.quantityLockedKeys()) {
+            if (allItems.stream().noneMatch(item -> item.key.equals(key))) {
+                allItems.add(new UnlimitedCellInventory.PanelItem(key, java.math.BigInteger.ZERO,
+                        false, 0L, inv.itemThresholds().getOrDefault(key, 0L), true));
+            }
+        }
         int total = allItems.size();
         int totalChunks = (total + MAX_ITEMS_PER_CHUNK - 1) / MAX_ITEMS_PER_CHUNK;
         if (totalChunks == 0) totalChunks = 1;
@@ -595,14 +741,17 @@ public class Mode2ConfigPacket {
     private static void sendRuleData(UnlimitedCellInventory inv, ServerPlayer player) {
         List<String> tags = new ArrayList<>(inv.getTags());
         List<String> mods = new ArrayList<>(inv.getMods());
-        boolean instant = inv.isRuleInstant();
+        List<Integer> tagModes = new ArrayList<>(tags.size());
+        for (String tag : tags) tagModes.add(inv.getRuleMode(UnlimitedCellInventory.ruleKey(true, tag)));
+        List<Integer> modModes = new ArrayList<>(mods.size());
+        for (String mod : mods) modModes.add(inv.getRuleMode(UnlimitedCellInventory.ruleKey(false, mod)));
         com.ae2addon.AE2Addon.NETWORK.send(
                 PacketDistributor.PLAYER.with(() -> player),
-                new Mode2ConfigPacket(tags, true, instant)
+                new Mode2ConfigPacket(tags, tagModes, true)
         );
         com.ae2addon.AE2Addon.NETWORK.send(
                 PacketDistributor.PLAYER.with(() -> player),
-                new Mode2ConfigPacket(mods, false, instant)
+                new Mode2ConfigPacket(mods, modModes, false)
         );
     }
 
@@ -715,9 +864,16 @@ public class Mode2ConfigPacket {
 
         inv.togglePanelInfinite(key);
 
-        if (wasInfinite && committed.signum() > 0 && key instanceof AEItemKey itemKey) {
+        if (wasInfinite && committed.signum() > 0) {
             // 取消无限 → 输出承诺数量。数量过大时打包成物质球，避免海量掉落物卡死
-            outputOrBall(player, itemKey, committed);
+            if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
+                com.ae2addon.AE2Addon.LOGGER.info("[ae2addon][mode2] 取消无限: key={} 承诺额度={} → 输出", key, committed);
+            }
+            outputOrBall(player, key, committed);
+        } else if (wasInfinite && committed.signum() == 0
+                && com.ae2addon.crafting.CraftingCompat.debugLogs) {
+            com.ae2addon.AE2Addon.LOGGER.info(
+                    "[ae2addon][mode2] 取消无限: key={} 承诺额度=0 → 无可输出（立即无限且从未存入）", key);
         }
 
         sendPanelRefresh(inv, player);
@@ -730,19 +886,20 @@ public class Mode2ConfigPacket {
      * ⚠ 2026-09-19（sensei：取消无限只排出 9.2E）：数量参数改成 **BigInteger**。
      * 真实存储量可以远超 Long.MAX，用 long 会在打包/掉落时被截断成 9.2E。
      */
-    private static void outputOrBall(ServerPlayer player, AEItemKey itemKey,
+    private static void outputOrBall(ServerPlayer player, AEKey key,
                                      java.math.BigInteger amount) {
+        AEItemKey itemKey = key instanceof AEItemKey k ? k : null;
         // 背包容量估算（36 格 × 最大堆叠）
-        java.math.BigInteger capacity = java.math.BigInteger.valueOf(
-                36L * Math.max(1, itemKey.getItem().getMaxStackSize()));
+        java.math.BigInteger capacity = itemKey == null ? java.math.BigInteger.ZERO
+                : java.math.BigInteger.valueOf(36L * Math.max(1, itemKey.getItem().getMaxStackSize()));
 
         if (amount.compareTo(capacity) > 0) {
             // 打包成物质球
-            ItemStack ball = com.ae2addon.item.MatterBallItem.makeBall(itemKey, amount);
+            ItemStack ball = com.ae2addon.item.MatterBallItem.makeBall(key, amount);
             boolean placed = player.addItem(ball);
             if (placed) {
                 player.sendSystemMessage(Component.translatable(
-                        "gui.ae2addon.matter_ball.given", amount, itemKey.getDisplayName()));
+                        "gui.ae2addon.matter_ball.given", amount, key.getDisplayName()));
             } else {
                 // 背包满 → 只掉 1 个球实体，不会卡死
                 ItemEntity entity = new ItemEntity(
@@ -753,7 +910,7 @@ public class Mode2ConfigPacket {
                 entity.setPickUpDelay(10);
                 player.level().addFreshEntity(entity);
                 player.sendSystemMessage(Component.translatable(
-                        "gui.ae2addon.matter_ball.dropped", amount, itemKey.getDisplayName()));
+                        "gui.ae2addon.matter_ball.dropped", amount, key.getDisplayName()));
             }
             return;
         }

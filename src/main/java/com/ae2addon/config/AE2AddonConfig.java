@@ -197,6 +197,20 @@ public final class AE2AddonConfig {
                     "Infinite Interface restock interval ticks (1 = fastest)")
             .defineInRange("feederRestockInterval", 4, 1, 200);
 
+    /**
+     * 待入网缓存每 tick 最多补送多少个物品（key）。
+     * <p>
+     * ⚠ 2026-09-27（sensei：蓄水池 1T 无法在 1 次内归网）：原来每 10 tick 才推一次、
+     * 且每个 key 单次最多只送 {@code Integer.MAX_VALUE}（21.5 亿）⇒ 1e12 要
+     * 466 趟 ≈ 4660 tick ≈ 3.9 分钟。现在**每 tick 都推**、单次送**剩余全量**，
+     * 限流只卡「每 tick 处理多少个 key」——
+     * 真正的开销在 key 数上（每次 insert 一次），**跟数量无关**，所以按量限流既慢又没用。
+     */
+    public static final ForgeConfigSpec.IntValue FEEDER_NETWORK_PUSH_KEYS = BUILDER
+            .comment("ME接口(无限级)待入网缓存每tick最多补送多少个物品（不限单次数量：每个key一次送完剩余全量）",
+                    "Infinite Interface pending-to-network keys per tick (no per-amount cap)")
+            .defineInRange("feederNetworkPushKeys", 8, 1, 4096);
+
     // ── ME接口（无限级）主动抽取 ──
 
     /** 主动抽取间隔（tick；1=每tick抽 = 最快）。 */
@@ -463,6 +477,11 @@ public final class AE2AddonConfig {
     /** 感应卡单轮供电 FE 上限（默认 1 亿；每 tick 总上限=此值×轮数）。 */
     public static long feederPowerFeCap() {
         return Math.max(1L, FEEDER_POWER_FE_CAP.get());
+    }
+
+    /** 待入网缓存每 tick 最多补送多少个 key（不限单次数量）。 */
+    public static int feederNetworkPushKeys() {
+        return Math.max(1, FEEDER_NETWORK_PUSH_KEYS.get());
     }
 
     /**

@@ -194,7 +194,10 @@ public class InfiniteDriveBE extends DriveBlockEntity implements Formable, MenuP
     @Override
     public void openMenu(Player player) {
         if (player instanceof ServerPlayer serverPlayer && formed) {
-            NetworkHooks.openScreen(serverPlayer, this, worldPosition);
+            NetworkHooks.openScreen(serverPlayer, this, buf -> {
+                buf.writeBlockPos(worldPosition);
+                buf.writeBoolean(false);
+            });
         }
     }
 

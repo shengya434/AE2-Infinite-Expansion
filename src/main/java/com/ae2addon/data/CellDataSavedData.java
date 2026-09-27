@@ -107,18 +107,25 @@ public class CellDataSavedData extends SavedData {
          *  读写改走 {@link #putBigIntMap}/{@link #getBigIntMap}，
          *  后者**兼容旧的 long 格式**（"#" 为 TAG_LONG），老存档不会丢数据。 */
         public final Map<AEKey, BigInteger> ca = new HashMap<>();
+        /** 单物品阈值；没有条目时使用元件的全局 thr。 */
+        public final Map<AEKey, Long> itemThr = new HashMap<>();
         /** Mode 3 已插入的物品（含 NBT 变体），跨存档持久化 */
         public final Set<AEKey> m3 = new HashSet<>();
         /** Mode 2 按 tag 批量无限（如 "minecraft:logs"） */
         public final Set<String> tags = new HashSet<>();
         /** Mode 2 按 mod 批量无限（如 "gtceu"） */
         public final Set<String> mods = new HashSet<>();
+        /** tag/mod 规则各自的无限模式：key = "tag:"+name 或 "mod:"+name，值 1=立即 2=触碰。
+         * 没有条目时按「立即」处理。 */
+        public final Map<String, Integer> ruleModes = new HashMap<>();
         /** 规则生效模式：true=立即全量无限，false=触碰（存入过）后无限 */
         public boolean ruleInstant = true;
         /** 触碰模式下记录过的匹配物品（存入过才显示无限） */
         public final Set<AEKey> ruleTouched = new HashSet<>();
         /** 黑名单：即使命中 tag/mod 规则也禁止无限 */
         public final Set<AEKey> blacklist = new HashSet<>();
+        /** 已锁定「元件内数量」的条目：存入拒收、取出不扣减（数量恒定）。 */
+        public final Set<AEKey> qtyLocked = new HashSet<>();
 
         public void save(CompoundTag tag) {
             putBigIntMap(tag, "s1", s1);
@@ -126,12 +133,14 @@ public class CellDataSavedData extends SavedData {
             putSet(tag, "wl", wl);
             putSet(tag, "ul", ul);
             putBigIntMap(tag, "ca", ca);
+            putLongMap(tag, "it", itemThr);
             putSet(tag, "m3", m3);
             putStringSet(tag, "tags", tags);
             putStringSet(tag, "mods", mods);
-            tag.putBoolean("ri", ruleInstant);
+            putStringIntMap(tag, "rm", ruleModes);
             putSet(tag, "rt", ruleTouched);
             putSet(tag, "bl", blacklist);
+            putSet(tag, "ql", qtyLocked);
         }
 
         public static CellData load(CompoundTag tag) {
@@ -141,12 +150,19 @@ public class CellDataSavedData extends SavedData {
             getSet(tag, "wl", data.wl);
             getSet(tag, "ul", data.ul);
             getBigIntMap(tag, "ca", data.ca);
+            getLongMap(tag, "it", data.itemThr);
             getSet(tag, "m3", data.m3);
             getStringSet(tag, "tags", data.tags);
             getStringSet(tag, "mods", data.mods);
-            data.ruleInstant = tag.getBoolean("ri");
+            getStringIntMap(tag, "rm", data.ruleModes);
+            data.ruleInstant = !tag.contains("ri", Tag.TAG_BYTE) || tag.getBoolean("ri");
+            if (data.ruleModes.isEmpty() && !data.ruleInstant) {
+                for (String name : data.tags) data.ruleModes.put("tag:" + name, 2);
+                for (String name : data.mods) data.ruleModes.put("mod:" + name, 2);
+            }
             getSet(tag, "rt", data.ruleTouched);
             getSet(tag, "bl", data.blacklist);
+            getSet(tag, "ql", data.qtyLocked);
             return data;
         }
 
@@ -277,6 +293,30 @@ public class CellDataSavedData extends SavedData {
                 CompoundTag e = (CompoundTag) tag;
                 if (e.contains("v", Tag.TAG_STRING)) {
                     s.add(e.getString("v"));
+                }
+            }
+        }
+
+        /** 写规则模式表。 */
+        private static void putStringIntMap(CompoundTag t, String k, Map<String, Integer> m) {
+            ListTag l = new ListTag();
+            for (var entry : m.entrySet()) {
+                CompoundTag n = new CompoundTag();
+                n.putString("key", entry.getKey());
+                n.putInt("mode", entry.getValue());
+                l.add(n);
+            }
+            t.put(k, l);
+        }
+
+        /** 读规则模式表。 */
+        private static void getStringIntMap(CompoundTag t, String k, Map<String, Integer> m) {
+            m.clear();
+            if (!t.contains(k, Tag.TAG_LIST)) return;
+            for (Tag entry : t.getList(k, Tag.TAG_COMPOUND)) {
+                CompoundTag n = (CompoundTag) entry;
+                if (n.contains("key", Tag.TAG_STRING) && n.contains("mode", Tag.TAG_INT)) {
+                    m.put(n.getString("key"), n.getInt("mode"));
                 }
             }
         }

@@ -19,6 +19,7 @@ import appeng.blockentity.grid.AENetworkBlockEntity;
 import appeng.me.helpers.MachineSource;
 import com.ae2addon.config.AE2AddonConfig;
 import com.ae2addon.init.ModBlockEntities;
+import com.ae2addon.util.SizeFormat;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -158,6 +159,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     public static volatile int EXTRACT_GAS = 1000;
     /** 补货间隔（tick）。4 = 每秒 5 次全量补货。 */
     public static volatile int RESTOCK_INTERVAL = 4;
+    /**
+     * 待入网缓存每 tick 最多补送多少个 key（2026-09-27）。
+     * 单次送剩余**全量**、不限数量；限流只卡 key 数（开销在 key 上，与数量无关）。
+     */
+    public static volatile int NETWORK_PUSH_KEYS = 8;
 
     /** 配置热加载时由 AE2AddonConfig 调用。 */
     public static void applyConfig() {
@@ -170,6 +176,7 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         EXTRACT_LOOP_CAP = Math.max(0, AE2AddonConfig.feederExtractLoopCap());
         EXTRACT_FLUID = Math.max(1, AE2AddonConfig.feederExtractFluid());
         EXTRACT_GAS = Math.max(1, AE2AddonConfig.feederExtractGas());
+        NETWORK_PUSH_KEYS = Math.max(1, AE2AddonConfig.feederNetworkPushKeys());
     }
 
     // ── 蓄水池（BigInteger 防溢出；CPU N× 直灌可达 2^63-1/批） ──
@@ -1351,9 +1358,11 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         if ((lvl.getGameTime() % EXTRACT_INTERVAL) == 0) {
             extractFromMachine(); // 主动抽取：可配置方向/间隔（默认每 4 tick）
         }
-        if ((lvl.getGameTime() % 10) == 0) {
-            pushPendingToNetwork(); // 待入网缓存自动补送（网络有空间即送出，2026-09-02）
-        }
+        // ⚠ 2026-09-27（sensei：蓄水池 1T 无法在 1 次内归网）：
+        // 原来这里是 `if (gameTime % 10 == 0) pushPendingToNetwork();` —— 每 10 tick 才推一次，
+        // 且单 key 单次封顶 21.5 亿 ⇒ 1e12 要 466 趟 ≈ 3.9 分钟。
+        // 现在**每 tick 都推**（每次送剩余全量），限流改由 key 预算承担。
+        pushPendingToNetwork(NETWORK_PUSH_KEYS);
         if ((lvl.getGameTime() % 20) == 0) {
             retryPendingReturns(); // 取消回退滞留重试（断网/拒收恢复后自动补退，2026-09-08）
         }
@@ -2092,9 +2101,25 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         setChanged();
     }
 
-    /** 自动补送：把待入网缓存送进网络（网络有空间即出；每 10 tick 由 serverTick 调）。 */
-    private void pushPendingToNetwork() {
-        if (pendingNetworkKeys.isEmpty()) {
+    /**
+     * 自动补送：把待入网缓存送进网络（网络有空间即出；每 tick 由 serverTick 调）。
+     * <p>
+     * ⚠ 2026-09-27（sensei：蓄水池 1T 无法在 1 次内完成归网）。原来两处节流叠加：
+     * <ul>
+     *   <li>{@code gameTime % 10 == 0} —— 每 10 tick 才推一次</li>
+     *   <li>{@code amt.min(Integer.MAX_VALUE)} —— 每个 key 单次最多 21.5 亿</li>
+     * </ul>
+     * 于是 1e12 要 466 趟 × 10 tick ≈ 4660 tick ≈ 3.9 分钟。而
+     * {@code storage.insert(key, want, ...)} 的 {@code want} 本来就是 {@code long}，
+     * 这个上限**没有技术必要**。
+     * <p>
+     * 现在：单次送**剩余全量**，限流只卡「本 tick 处理多少个 key」——
+     * 每次 insert 的固定开销在 key 上，**跟数量无关**，按量限流既慢又防不住卡顿。
+     *
+     * @param keyBudget 本 tick 最多处理多少个待入网 key（&le;0 表示本 tick 不处理）
+     */
+    private void pushPendingToNetwork(int keyBudget) {
+        if (pendingNetworkKeys.isEmpty() || keyBudget <= 0) {
             return;
         }
         IGrid grid = getMainNode().getGrid();
@@ -2103,16 +2128,22 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         }
         var storage = grid.getStorageService().getInventory();
         // 快照遍历：subtractReservoir 会在条目清空时移除 pendingNetworkKeys（防 CME）
+        int done = 0;
         for (AEKey key : new java.util.ArrayList<>(pendingNetworkKeys)) {
+            if (done >= keyBudget) {
+                break;
+            }
             BigInteger amt = reservoir.get(key);
             if (amt == null || amt.signum() <= 0) {
                 pendingNetworkKeys.remove(key);
                 continue;
             }
-            long want = amt.min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+            // 一次送完剩余全量（见方法注释：数量上不再设上限）
+            long want = amt.min(BigInteger.valueOf(Long.MAX_VALUE)).longValue();
             if (want <= 0) {
                 continue;
             }
+            done++;
             long inserted;
             try {
                 inserted = storage.insert(key, want, Actionable.MODULATE, actionSource);
@@ -3274,28 +3305,10 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
         return total;
     }
 
-    /** 大数格式化：K/M/G/T/P/E 后缀。 */
+    /** 蓄水池数量格式化，与元件字节摘要共用单位和科学计数。 */
     public static String fmt(BigInteger value) {
-        if (value == null || value.signum() < 0) {
-            return "0";
-        }
-        String[] units = {"", "K", "M", "G", "T", "P", "E"};
-        java.math.BigDecimal d = new java.math.BigDecimal(value);
-        int unit = 0;
-        java.math.BigDecimal thousand = java.math.BigDecimal.valueOf(1000);
-        while (d.compareTo(thousand) >= 0 && unit < units.length - 1) {
-            d = d.divide(thousand);
-            unit++;
-        }
-        if (unit == 0) {
-            return d.toBigInteger().toString();
-        }
-        d = d.setScale(1, java.math.RoundingMode.DOWN);
-        if (d.compareTo(java.math.BigDecimal.valueOf(1000)) >= 0 && unit < units.length - 1) {
-            d = d.divide(thousand).setScale(1, java.math.RoundingMode.DOWN);
-            unit++;
-        }
-        return d.toPlainString() + units[unit];
+        if (value == null) return "0";
+        return SizeFormat.bytes(value);
     }
 
     /**

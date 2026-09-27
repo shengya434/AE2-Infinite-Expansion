@@ -37,19 +37,19 @@ public class Mode2ConfigGhostHandler implements IGhostIngredientHandler<Mode2Con
         int guiLeft = screen.getGuiLeft();
         int guiTop = screen.getGuiTop();
 
-        // 主背包 3行 (y=166起)
+        // 主背包 3行 (y=192起)
         for (int row = 0; row < 3; row++) {
             for (int col = 0; col < 9; col++) {
                 int x = guiLeft + 48 + col * 18;
-                int y = guiTop + 166 + row * 18;
+                int y = guiTop + 192 + row * 18;
                 targets.add(new AddToWhitelistTarget<>(x, y, 18, 18));
             }
         }
 
-        // 快捷栏 1行 (y=224起)
+        // 快捷栏 1行 (y=250起)
         for (int col = 0; col < 9; col++) {
             int x = guiLeft + 48 + col * 18;
-            int y = guiTop + 224;
+            int y = guiTop + 250;
             targets.add(new AddToWhitelistTarget<>(x, y, 18, 18));
         }
 

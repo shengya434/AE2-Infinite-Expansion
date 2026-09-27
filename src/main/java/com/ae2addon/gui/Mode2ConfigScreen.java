@@ -8,6 +8,7 @@ import com.ae2addon.AE2Addon;
 import com.ae2addon.cell.UnlimitedCellInventory;
 import com.ae2addon.network.Mode2ConfigPacket;
 import com.ae2addon.network.SetCellModePacket;
+import com.ae2addon.util.NumberExpr;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.client.Minecraft;
@@ -55,12 +56,23 @@ import java.util.*;
  */
 public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> {
 
-    private static final int W = 256, H = 250;
+    private static final int W = 256, H = 276;
     private static final int PANEL_X = 10, PANEL_Y = 72;
     private static final int PANEL_W = 236, PANEL_H = 78;
+    private static final int PANEL_LIST_H = PANEL_H - 16;
     private static final int ROW_H = 14;
 
     private EditBox thresholdInput;
+    private EditBox itemThrInput;
+    private Button itemThrConfirmButton;
+    private Button itemThrCancelButton;
+    private AEKey itemThrKey;
+    private EditBox quantityInput;
+    private Button quantityLockButton;
+    private Button quantityConfirmButton;
+    private Button quantityCancelButton;
+    private AEKey quantityKey;
+    private boolean quantityLock;
     private EditBox searchBox;
     private EditBox ruleInput;
     private List<UnlimitedCellInventory.PanelItem> displayItems = new ArrayList<>();
@@ -92,8 +104,6 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     /** 客户端缓存的规则列表 */
     private List<String> tagRules = new ArrayList<>();
     private List<String> modRules = new ArrayList<>();
-    /** 规则生效模式：true=立即全量，false=触碰后 */
-    private boolean ruleInstant = true;
 
     /** 拼音缓存：原始名称 → [全拼, 首字母] */
     private final Map<String, String[]> pinyinCache = new HashMap<>();
@@ -137,7 +147,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
 
     private void saveThreshold() {
         try {
-            long v = Long.parseLong(thresholdInput.getValue());
+            long v = NumberExpr.parse(thresholdInput.getValue());
             v = Math.max(1, Math.min(v, Long.MAX_VALUE));
             AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(0, v, ""));
             thresholdInput.setValue(String.valueOf(v));
@@ -175,6 +185,8 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
 
     /** 完整配置界面 */
     private void buildFullConfigUI() {
+        itemThrKey = null;
+        quantityKey = null;
         // ── 阈值输入（仅模式1可见） ──
         thresholdInput = new EditBox(font, leftPos + 10, topPos + 20, 100, 16, Component.literal("Threshold"));
         thresholdInput.setValue(String.valueOf(menu.getThreshold()));
@@ -208,9 +220,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         int titleW = font.width(I18n.get("gui.ae2addon.mode2.title"));
         int ruleX = leftPos + 10 + titleW + 6;
         int ruleY = topPos + 4;
-        // 生效模式按钮贴右边缘，输入条占用其余空间（动态分配）
-        int modeBtnX = leftPos + W - 56;
-        int avail = modeBtnX - ruleX - 4;
+        int avail = leftPos + W - ruleX - 2;
         int tagBtnW = 26;
         int addBtnW = 16;
         int inputW = Math.max(20, avail - tagBtnW - addBtnW - 6);
@@ -236,16 +246,6 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
                 btn -> addRule()
         ).bounds(ruleX + inputW + tagBtnW + 4, ruleY - 1, addBtnW, 16).build());
 
-        // 生效模式切换（立即全量 / 触碰后）—— 贴右边缘
-        addRenderableWidget(Button.builder(
-                Component.translatable(ruleInstant ? "gui.ae2addon.mode2.instant" : "gui.ae2addon.mode2.touch"),
-                btn -> {
-                    ruleInstant = !ruleInstant;
-                    menu.sendSetRuleInstant(ruleInstant);
-                    rebuildWidgets();
-                }
-        ).bounds(modeBtnX, ruleY - 1, 54, 16).build());
-
         // ── 搜索框 ──
         searchBox = new EditBox(font, leftPos + PANEL_X, topPos + PANEL_Y - 24, PANEL_W - 50, 14,
                 Component.literal("Search"));
@@ -253,8 +253,112 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         searchBox.setHint(Component.translatable("gui.ae2addon.mode2.search"));
         addRenderableWidget(searchBox);
 
-        maxVisibleRows = PANEL_H / ROW_H;
+        // 面板条目右键后在面板下方编辑，留空即回落全局阈值。
+        itemThrInput = new EditBox(font, leftPos + 10, topPos + 152, 166, 16,
+                Component.translatable("gui.ae2addon.mode2.item_thr_title"));
+        itemThrInput.setMaxLength(64);
+        itemThrInput.setVisible(false);
+        addRenderableWidget(itemThrInput);
+        itemThrConfirmButton = Button.builder(Component.literal("§a✓"), b -> saveItemThreshold())
+                .bounds(leftPos + 180, topPos + 151, 28, 18).build();
+        itemThrConfirmButton.visible = false;
+        addRenderableWidget(itemThrConfirmButton);
+        itemThrCancelButton = Button.builder(Component.literal("§c✕"), b -> hideItemThreshold())
+                .bounds(leftPos + 212, topPos + 151, 28, 18).build();
+        itemThrCancelButton.visible = false;
+        addRenderableWidget(itemThrCancelButton);
+
+        quantityInput = new EditBox(font, leftPos + 10, topPos + 152, 132, 16,
+                Component.translatable("gui.ae2addon.mode2.qty_title"));
+        quantityInput.setMaxLength(64);
+        quantityInput.setVisible(false);
+        addRenderableWidget(quantityInput);
+        quantityLockButton = Button.builder(Component.translatable("gui.ae2addon.mode2.qty_lock_off"),
+                b -> {
+                    quantityLock = !quantityLock;
+                    updateQuantityLockButton();
+                }).bounds(leftPos + 146, topPos + 151, 58, 18).build();
+        quantityLockButton.visible = false;
+        addRenderableWidget(quantityLockButton);
+        quantityConfirmButton = Button.builder(Component.literal("§a✓"), b -> saveQuantity())
+                .bounds(leftPos + 207, topPos + 151, 18, 18).build();
+        quantityConfirmButton.visible = false;
+        addRenderableWidget(quantityConfirmButton);
+        quantityCancelButton = Button.builder(Component.literal("§c✕"), b -> hideQuantity())
+                .bounds(leftPos + 228, topPos + 151, 18, 18).build();
+        quantityCancelButton.visible = false;
+        addRenderableWidget(quantityCancelButton);
+
+        maxVisibleRows = PANEL_LIST_H / ROW_H;
         requestRefresh();
+    }
+
+    private void showItemThreshold(AEKey key) {
+        if (quantityKey != null) hideQuantity();
+        itemThrKey = key;
+        long value = menu.getItemThreshold(key);
+        itemThrInput.setValue(value > 0 ? String.valueOf(value) : "");
+        itemThrInput.setVisible(true);
+        itemThrConfirmButton.visible = true;
+        itemThrCancelButton.visible = true;
+        setFocused(itemThrInput);
+        itemThrInput.setFocused(true);
+    }
+
+    private void hideItemThreshold() {
+        itemThrKey = null;
+        itemThrInput.setVisible(false);
+        itemThrConfirmButton.visible = false;
+        itemThrCancelButton.visible = false;
+        setFocused(searchBox);
+    }
+
+    private void saveItemThreshold() {
+        if (itemThrKey == null) return;
+        String text = itemThrInput.getValue().trim();
+        try {
+            long value = text.isEmpty() ? 0L : NumberExpr.parse(text);
+            menu.sendSetItemThreshold(itemThrKey.toTagGeneric(), value);
+            hideItemThreshold();
+        } catch (NumberFormatException e) {
+            Minecraft.getInstance().player.displayClientMessage(
+                    Component.translatable("gui.ae2addon.mode2.item_thr_bad"), false);
+        }
+    }
+
+    private void showQuantity(AEKey key) {
+        if (itemThrKey != null) hideItemThreshold();
+        quantityKey = key;
+        var item = menu.getPanelItem(key);
+        quantityInput.setValue(item == null ? "" : item.amount.toString());
+        quantityLock = item != null && item.quantityLocked;
+        updateQuantityLockButton();
+        quantityInput.setVisible(true);
+        quantityLockButton.visible = true;
+        quantityConfirmButton.visible = true;
+        quantityCancelButton.visible = true;
+        setFocused(quantityInput);
+        quantityInput.setFocused(true);
+    }
+
+    private void updateQuantityLockButton() {
+        quantityLockButton.setMessage(Component.translatable(quantityLock
+                ? "gui.ae2addon.mode2.qty_lock_on" : "gui.ae2addon.mode2.qty_lock_off"));
+    }
+
+    private void hideQuantity() {
+        quantityKey = null;
+        quantityInput.setVisible(false);
+        quantityLockButton.visible = false;
+        quantityConfirmButton.visible = false;
+        quantityCancelButton.visible = false;
+        setFocused(searchBox);
+    }
+
+    private void saveQuantity() {
+        if (quantityKey == null) return;
+        menu.sendSetQuantity(quantityKey.toTagGeneric(), quantityInput.getValue(), quantityLock);
+        hideQuantity();
     }
 
     /** 添加 tag/mod 规则 */
@@ -271,16 +375,15 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     }
 
     /** 服务端规则数据响应（type 9，主线程） */
-    public static void handleRuleData(boolean isTag, List<String> rules, boolean ruleInstant) {
+    public static void handleRuleData(boolean isTag, List<String> rules, List<Integer> modes) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.screen instanceof Mode2ConfigScreen screen) {
-            screen.menu.setRuleData(isTag, rules);
+            screen.menu.setRuleData(isTag, rules, modes);
             if (isTag) {
                 screen.tagRules = new ArrayList<>(rules);
             } else {
                 screen.modRules = new ArrayList<>(rules);
             }
-            screen.ruleInstant = ruleInstant;
         }
     }
 
@@ -392,8 +495,15 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
             try {
                 AEItemKey k = AEItemKey.of(item);
                 if (k != null && clientMatchesRule(k, rule)) {
+                    var stored = menu.getPanelItem(k);
+                    if (stored != null && (!stored.isInfinite || stored.quantityLocked)) {
+                        items.add(stored);
+                        continue;
+                    }
                     boolean blocked = bl.contains(k);
-                    items.add(new UnlimitedCellInventory.PanelItem(k, blocked ? 0 : UnlimitedCellInventory.INFINITE, !blocked));
+                    items.add(new UnlimitedCellInventory.PanelItem(k,
+                            java.math.BigInteger.valueOf(blocked ? 0 : UnlimitedCellInventory.INFINITE),
+                            !blocked, 0L, menu.getItemThreshold(k)));
                 }
             } catch (Exception ignored) {}
         }
@@ -405,8 +515,15 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
                 if (fluid == Fluids.EMPTY) continue;
                 AEFluidKey k = AEFluidKey.of(fluid);
                 if (k != null && clientMatchesRule(k, rule)) {
+                    var stored = menu.getPanelItem(k);
+                    if (stored != null && (!stored.isInfinite || stored.quantityLocked)) {
+                        items.add(stored);
+                        continue;
+                    }
                     boolean blocked = bl.contains(k);
-                    items.add(new UnlimitedCellInventory.PanelItem(k, blocked ? 0 : UnlimitedCellInventory.INFINITE, !blocked));
+                    items.add(new UnlimitedCellInventory.PanelItem(k,
+                            java.math.BigInteger.valueOf(blocked ? 0 : UnlimitedCellInventory.INFINITE),
+                            !blocked, 0L, menu.getItemThreshold(k)));
                 }
             } catch (Exception ignored) {}
         }
@@ -551,6 +668,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     public void updatePanelData(List<UnlimitedCellInventory.PanelItem> items) {
         this.displayItems = items;
         this.menu.setPanelItems(items);
+        if (currentRuleFilter != null) ruleItems = buildRuleItems(currentRuleFilter);
         scanAvailableTypes();
         applyFilters();
         // 刷新后同步 workMode
@@ -593,7 +711,21 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         renderRuleBar(g, mx, my);
         renderPanel(g, mx, my);
         renderFilterTabs(g, mx, my);
-        g.drawString(font, I18n.get("gui.ae2addon.mode2.hint_bar"), leftPos + 10, topPos + PANEL_Y + PANEL_H + 8, 0x888888, false);
+        if (itemThrKey == null && quantityKey == null) {
+            String hint = I18n.get("gui.ae2addon.mode2.hint_bar");
+            float scale = Math.min(1.0F, (W - 20.0F) / font.width(hint));
+            g.pose().pushPose();
+            g.pose().translate(leftPos + 10, topPos + PANEL_Y + PANEL_H + 8, 0);
+            g.pose().scale(scale, scale, 1.0F);
+            g.drawString(font, hint, 0, 0, 0x888888, false);
+            g.pose().popPose();
+        } else if (itemThrKey != null) {
+            g.drawString(font, I18n.get("gui.ae2addon.mode2.item_thr_title"), leftPos + 10, topPos + 172,
+                    0xFFFFAA, false);
+        } else {
+            g.drawString(font, I18n.get("gui.ae2addon.mode2.qty_title"), leftPos + 10, topPos + 172,
+                    0xFFFFAA, false);
+        }
         renderTooltip(g, mx, my);
         renderPanelTooltip(g, mx, my);
     }
@@ -603,18 +735,17 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         int x = leftPos + 10;
         int y = topPos + 62;
         int viewW = PANEL_W - 14; // 右侧留滚动条空间
-        String modeStr = ruleInstant ? I18n.get("gui.ae2addon.mode2.instant_short") : I18n.get("gui.ae2addon.mode2.touch_short");
-        String header = I18n.get("gui.ae2addon.mode2.batch_header", modeStr);
+        String header = I18n.get("gui.ae2addon.mode2.batch_header");
         int headerW = font.width(header) + 4;
         g.drawString(font, Component.literal(header), x, y, 0xFFFFAA, false);
 
         // 收集词条（加大间距 18px）
         List<Object[]> chips = new ArrayList<>(); // [label, kind, key]
         for (String tag : tagRules) {
-            chips.add(new Object[]{"[tag:" + tag + "]", 2, tag});
+            chips.add(new Object[]{ruleChipLabel(true, tag), 2, tag});
         }
         for (String mod : modRules) {
-            chips.add(new Object[]{"[mod:" + mod + "]", 3, mod});
+            chips.add(new Object[]{ruleChipLabel(false, mod), 3, mod});
         }
 
         if (chips.isEmpty()) {
@@ -663,6 +794,12 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
             g.fill(barX, barY, barX + barW, barY + 1, 0x33444444);
             g.fill(sliderX, barY, sliderX + sliderW, barY + 1, 0xFFAAAAAA);
         }
+    }
+
+    private String ruleChipLabel(boolean isTag, String rule) {
+        String modeKey = menu.getRuleMode(UnlimitedCellInventory.ruleKey(isTag, rule)) == 2
+                ? "gui.ae2addon.mode2.rule_mode_touch" : "gui.ae2addon.mode2.rule_mode_instant";
+        return "[" + (isTag ? "tag:" : "mod:") + rule + "]" + I18n.get(modeKey);
     }
 
     /** 面板条目悬浮提示：物品显示完整 tooltip，流体/其他显示名称 */
@@ -859,7 +996,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         int y = topPos + PANEL_Y + 16; // 搜索框+标签下方
 
         // 面板背景
-        g.fill(x, y, x + PANEL_W, y + PANEL_H, 0xCC111111);
+        g.fill(x, y, x + PANEL_W, y + PANEL_LIST_H, 0xCC111111);
 
         // 面板标题
         String header = currentRuleFilter != null
@@ -916,7 +1053,9 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
             }
 
             // 物品名（规则分类下黑名单物品变红）
-            boolean isBlocked = currentRuleFilter != null && !isInfinite;
+            boolean isBlocked = currentRuleFilter != null && !isInfinite
+                    && amount.signum() == 0 && !entry.quantityLocked
+                    && menu.getBlacklist().contains(key);
             String name = key.getDisplayName().getString();
             if (font.width(name) > 80) name = font.plainSubstrByWidth(name, 77) + "…";
             g.drawString(font, name, x + 20, rowY + 3, isBlocked ? 0xFF5555 : (isInfinite ? 0xFFFFAA : 0xCCCCCC), false);
@@ -927,16 +1066,23 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
             } else if (isBlocked) {
                 g.drawString(font, Component.translatable("gui.ae2addon.mode2.blacklisted"), x + PANEL_W - 30, rowY + 3, 0xFF5555, false);
             } else {
-                String ct = formatAmount(amount);
+                String ct = formatAmount(amount) + (entry.quantityLocked ? " §b🔒" : "");
                 int cw = font.width(ct);
                 g.drawString(font, ct, x + PANEL_W - cw - 10, rowY + 3, 0xAAAAAA, false);
+            }
+            if (entry.itemThreshold > 0) {
+                String marker = "§b⚡" + formatAmount(entry.itemThreshold);
+                int countWidth = font.width(isInfinite ? "∞" : isBlocked ? I18n.get("gui.ae2addon.mode2.blacklisted")
+                        : formatAmount(amount) + (entry.quantityLocked ? " §b🔒" : ""));
+                g.drawString(font, marker, x + PANEL_W - countWidth - font.width(marker) - 14,
+                        rowY + 3, 0x55FFFF, false);
             }
         }
 
         // 滚动条
         if (totalRows > maxVisibleRows) {
-            int barH = Math.max(maxVisibleRows * PANEL_H / totalRows, 8);
-            int barY = y + (startIdx * PANEL_H / totalRows);
+            int barH = Math.max(maxVisibleRows * PANEL_LIST_H / totalRows, 8);
+            int barY = y + (startIdx * PANEL_LIST_H / totalRows);
             g.fill(x + PANEL_W - 3, barY, x + PANEL_W - 1, barY + barH, 0xFF888888);
         }
     }
@@ -991,24 +1137,30 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
             }
         }
 
-        // 规则条点击删除（y=62~72）—— 需要 Shift+左键，防误触
-        if (my >= topPos + 62 && my < topPos + 72 && hasShiftDown()) {
-            String modeStr = ruleInstant ? I18n.get("gui.ae2addon.mode2.instant_short") : I18n.get("gui.ae2addon.mode2.touch_short");
-            String header = I18n.get("gui.ae2addon.mode2.batch_header", modeStr);
-            int headerW = font.width(header) + 4;
+        // 规则条：Shift+左键删除，右键切换该条规则的模式。
+        if (my >= topPos + 62 && my < topPos + 72 && (button == 1 || (button == 0 && hasShiftDown()))) {
+            int headerW = ruleBarHeaderWidth();
             int cx = leftPos + 10 + headerW - ruleBarScrollOffset;
             for (String tag : tagRules) {
-                int w = font.width("[tag:" + tag + "]") + 18;
-                if (mx >= cx && mx < cx + w) {
-                    menu.sendRemoveTagRule(tag);
+                int w = font.width(ruleChipLabel(true, tag)) + 18;
+                if (mx >= cx && mx < cx + w && mx >= leftPos + 10 + headerW
+                        && mx < leftPos + 10 + PANEL_W) {
+                    if (button == 1) {
+                        int mode = menu.getRuleMode(UnlimitedCellInventory.ruleKey(true, tag));
+                        menu.sendSetRuleMode(tag, true, mode == 1 ? 2 : 1);
+                    } else menu.sendRemoveTagRule(tag);
                     return true;
                 }
                 cx += w;
             }
             for (String mod : modRules) {
-                int w = font.width("[mod:" + mod + "]") + 18;
-                if (mx >= cx && mx < cx + w) {
-                    menu.sendRemoveModRule(mod);
+                int w = font.width(ruleChipLabel(false, mod)) + 18;
+                if (mx >= cx && mx < cx + w && mx >= leftPos + 10 + headerW
+                        && mx < leftPos + 10 + PANEL_W) {
+                    if (button == 1) {
+                        int mode = menu.getRuleMode(UnlimitedCellInventory.ruleKey(false, mod));
+                        menu.sendSetRuleMode(mod, false, mode == 1 ? 2 : 1);
+                    } else menu.sendRemoveModRule(mod);
                     return true;
                 }
                 cx += w;
@@ -1071,15 +1223,23 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         if (isInPanelArea(mx, my)) {
             int row = getClickedRow(mx, my);
             if (row >= 0 && row < filteredItems.size()) {
-                if (hasShiftDown()) {
-                    if (currentRuleFilter != null) {
-                        // 规则分类模式下：Shift+点击 = 切换黑名单
-                        menu.sendToggleBlacklist(filteredItems.get(row).key.toTagGeneric());
-                    } else {
-                        menu.sendToggleInfinite(filteredItems.get(row).key.toTagGeneric());
-                    }
+                if (button == 0 && hasControlDown()) {
+                    showQuantity(filteredItems.get(row).key);
                     return true;
                 }
+                if (button == 1 && hasShiftDown()) {
+                    menu.sendToggleBlacklist(filteredItems.get(row).key.toTagGeneric());
+                    return true;
+                }
+                if (button == 0 && hasShiftDown()) {
+                    menu.sendToggleInfinite(filteredItems.get(row).key.toTagGeneric());
+                    return true;
+                }
+                if (button == 1) {
+                    showItemThreshold(filteredItems.get(row).key);
+                    return true;
+                }
+                // 普通左键不操作，防止误触取消无限。
                 return true;
             }
         }
@@ -1093,14 +1253,13 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         // 规则条横向滚动（y=62~72）
         if (my >= topPos + 62 && my < topPos + 72
                 && mx >= leftPos + 10 && mx < leftPos + 10 + PANEL_W) {
-            int headerW = font.width(I18n.get("gui.ae2addon.mode2.batch_header",
-                    ruleInstant ? I18n.get("gui.ae2addon.mode2.instant_short") : I18n.get("gui.ae2addon.mode2.touch_short"))) + 4;
+            int headerW = ruleBarHeaderWidth();
             int totalW = headerW;
             for (String tag : tagRules) {
-                totalW += font.width("[tag:" + tag + "]") + 18;
+                totalW += font.width(ruleChipLabel(true, tag)) + 18;
             }
             for (String mod : modRules) {
-                totalW += font.width("[mod:" + mod + "]") + 18;
+                totalW += font.width(ruleChipLabel(false, mod)) + 18;
             }
             int maxScroll = Math.max(0, totalW - PANEL_W);
             int step = 24;
@@ -1156,11 +1315,21 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (uiState == 0) return super.keyPressed(keyCode, scanCode, modifiers);
+        if (itemThrKey != null) {
+            if (keyCode == 257 || keyCode == 335) { saveItemThreshold(); return true; }
+            if (keyCode == 256) { hideItemThreshold(); return true; }
+        }
+        if (quantityKey != null) {
+            if (keyCode == 257 || keyCode == 335) { saveQuantity(); return true; }
+            if (keyCode == 256) { hideQuantity(); return true; }
+        }
         // 搜索框/阈值/规则输入框获得焦点时：优先输入，并吞掉所有按键——
         // 防止其他 mod 快捷键（如 Curios 饰品栏 G 键）在输入时触发并关闭界面
         //（Forge 在 Screen.keyPressed 返回 false 时会 fallthrough 给 KeyMapping）
         if (searchBox.isFocused() || ruleInput.isFocused()
-                || (thresholdInput != null && thresholdInput.isFocused())) {
+                || (thresholdInput != null && thresholdInput.isFocused())
+                || (itemThrInput != null && itemThrInput.isFocused())
+                || (quantityInput != null && quantityInput.isFocused())) {
             // Esc：保留关闭界面能力
             if (keyCode == 256) {
                 return super.keyPressed(keyCode, scanCode, modifiers);
@@ -1213,7 +1382,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         int x = leftPos + PANEL_X;
         int y = topPos + PANEL_Y + 16;
         return mx >= x + PANEL_W - 4 && mx <= x + PANEL_W + 1
-                && my >= y && my <= y + PANEL_H;
+                && my >= y && my <= y + PANEL_LIST_H;
     }
 
     private void dragMainScrollbar(double my) {
@@ -1221,8 +1390,8 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         if (totalRows <= maxVisibleRows) return;
         int y = topPos + PANEL_Y + 16;
         int maxScroll = Math.max(0, totalRows - maxVisibleRows);
-        int barH = Math.max(maxVisibleRows * PANEL_H / totalRows, 8);
-        double ratio = (my - y - barH / 2.0) / Math.max(1, PANEL_H - barH);
+        int barH = Math.max(maxVisibleRows * PANEL_LIST_H / totalRows, 8);
+        double ratio = (my - y - barH / 2.0) / Math.max(1, PANEL_LIST_H - barH);
         scrollOffset = (int) Math.round(ratio * maxScroll);
         scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
     }
@@ -1257,19 +1426,16 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     }
 
     private int ruleBarHeaderWidth() {
-        String modeStr = ruleInstant
-                ? I18n.get("gui.ae2addon.mode2.instant_short")
-                : I18n.get("gui.ae2addon.mode2.touch_short");
-        return font.width(I18n.get("gui.ae2addon.mode2.batch_header", modeStr)) + 4;
+        return font.width(I18n.get("gui.ae2addon.mode2.batch_header")) + 4;
     }
 
     private int computeRuleBarWidth() {
         int total = ruleBarHeaderWidth();
         for (String tag : tagRules) {
-            total += font.width("[tag:" + tag + "]") + 18;
+            total += font.width(ruleChipLabel(true, tag)) + 18;
         }
         for (String mod : modRules) {
-            total += font.width("[mod:" + mod + "]") + 18;
+            total += font.width(ruleChipLabel(false, mod)) + 18;
         }
         return total;
     }
@@ -1302,7 +1468,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     private boolean isInPanelArea(double mx, double my) {
         int x = leftPos + PANEL_X;
         int y = topPos + PANEL_Y + 16;
-        return mx >= x && mx < x + PANEL_W && my >= y && my < y + PANEL_H;
+        return mx >= x && mx < x + PANEL_W && my >= y && my < y + PANEL_LIST_H;
     }
 
     private int getClickedRow(double mx, double my) {
