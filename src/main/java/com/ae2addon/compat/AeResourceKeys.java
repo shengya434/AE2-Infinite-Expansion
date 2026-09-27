@@ -61,6 +61,18 @@ public final class AeResourceKeys {
         return key(SOURCE_KEY_CLASS) != null;
     }
 
+    /** 这个 key 是不是「魔力」（Applied Botanics）；没装桥 → false */
+    public static boolean isManaKey(AEKey key) {
+        AEKey singleton = key(MANA_KEY_CLASS);
+        return singleton != null && singleton.equals(key);
+    }
+
+    /** 这个 key 是不是「魔源」（Ars Énergistique）；没装桥 → false */
+    public static boolean isSourceKey(AEKey key) {
+        AEKey singleton = key(SOURCE_KEY_CLASS);
+        return singleton != null && singleton.equals(key);
+    }
+
     @Nullable
     private static GenericStack stack(String className, long amount) {
         if (amount <= 0) return null;

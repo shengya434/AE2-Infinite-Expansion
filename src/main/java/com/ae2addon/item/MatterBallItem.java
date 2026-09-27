@@ -3,6 +3,7 @@ package com.ae2addon.item;
 import appeng.api.stacks.AEFluidKey;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
+import com.ae2addon.compat.AeResourceKeys;
 import com.ae2addon.compat.MekanismGasCompat;
 import com.ae2addon.init.ModItems;
 import net.minecraft.core.Direction;
@@ -27,6 +28,7 @@ import net.minecraftforge.items.IItemHandler;
 import org.jetbrains.annotations.Nullable;
 
 import java.math.BigInteger;
+import java.lang.reflect.Method;
 import java.util.List;
 
 /**
@@ -177,6 +179,8 @@ public class MatterBallItem extends Item {
     private static boolean supports(BlockEntity target, Direction side, AEKey key) {
         if (key instanceof AEItemKey) return target.getCapability(ForgeCapabilities.ITEM_HANDLER, side).isPresent();
         if (key instanceof AEFluidKey) return target.getCapability(ForgeCapabilities.FLUID_HANDLER, side).isPresent();
+        if (AeResourceKeys.isManaKey(key)) return ManaReceiverAccess.find(target) != null;
+        if (AeResourceKeys.isSourceKey(key)) return SourceTileAccess.find(target) != null;
         return MekanismGasCompat.supports(target, side, key);
     }
 
@@ -184,6 +188,10 @@ public class MatterBallItem extends Item {
     private static BigInteger pour(BlockEntity target, Direction side, AEKey key, BigInteger amount) {
         BigInteger remaining = amount;
         BigInteger intMax = BigInteger.valueOf(Integer.MAX_VALUE);
+        boolean manaKey = AeResourceKeys.isManaKey(key);
+        boolean sourceKey = AeResourceKeys.isSourceKey(key);
+        ManaReceiverAccess mana = manaKey ? ManaReceiverAccess.find(target) : null;
+        SourceTileAccess source = sourceKey ? SourceTileAccess.find(target) : null;
         for (int attempts = 0; attempts < 4096 && remaining.signum() > 0; attempts++) {
             long inserted;
             if (key instanceof AEItemKey itemKey) {
@@ -200,6 +208,10 @@ public class MatterBallItem extends Item {
                 if (handler == null) break;
                 int chunk = remaining.min(intMax).intValue();
                 inserted = handler.fill(fluidKey.toStack(chunk), IFluidHandler.FluidAction.EXECUTE);
+            } else if (manaKey) {
+                inserted = mana == null ? 0 : mana.insert(remaining);
+            } else if (sourceKey) {
+                inserted = source == null ? 0 : source.insert(remaining);
             } else {
                 long chunk = remaining.min(intMax).longValue();
                 inserted = MekanismGasCompat.insert(target, side, key, chunk);
@@ -208,6 +220,70 @@ public class MatterBallItem extends Item {
             remaining = remaining.subtract(BigInteger.valueOf(inserted));
         }
         return remaining;
+    }
+
+    /** Botania 接收器的接口方法只在运行时查找；方块实体不实现时再试方块本身。 */
+    private record ManaReceiverAccess(Object receiver, Method isFull, Method current, Method receive, @Nullable Method max) {
+        @Nullable
+        static ManaReceiverAccess find(BlockEntity target) {
+            try {
+                Class<?> type = Class.forName("vazkii.botania.api.mana.ManaReceiver", false, MatterBallItem.class.getClassLoader());
+                Object receiver = type.isInstance(target) ? target : target.getBlockState().getBlock();
+                if (!type.isInstance(receiver)) return null;
+                Class<?> pool = Class.forName("vazkii.botania.api.mana.ManaPool", false, MatterBallItem.class.getClassLoader());
+                Method max = pool.isInstance(receiver) ? pool.getMethod("getMaxMana") : null;
+                return new ManaReceiverAccess(receiver, type.getMethod("isFull"),
+                        type.getMethod("getCurrentMana"), type.getMethod("receiveMana", int.class), max);
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+
+        long insert(BigInteger remaining) {
+            try {
+                if ((Boolean) isFull.invoke(receiver)) return 0;
+                int before = (Integer) current.invoke(receiver);
+                long chunk = remaining.min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue();
+                if (max != null) chunk = Math.min(chunk, (long) (Integer) max.invoke(receiver) - before);
+                if (chunk <= 0) return 0;
+                receive.invoke(receiver, (int) chunk);
+                int after = (Integer) current.invoke(receiver);
+                return Math.max(0, Math.min(chunk, (long) after - before));
+            } catch (Throwable ignored) {
+                return 0;
+            }
+        }
+    }
+
+    /** Ars Nouveau 魔源罐：addSource 的返回值语义未知，只按前后存量差值计数。 */
+    private record SourceTileAccess(Object receiver, Method canAccept, Method current, Method max, Method add) {
+        @Nullable
+        static SourceTileAccess find(BlockEntity target) {
+            try {
+                Class<?> type = Class.forName("com.hollingsworth.arsnouveau.api.source.ISourceTile", false,
+                        MatterBallItem.class.getClassLoader());
+                if (!type.isInstance(target)) return null;
+                return new SourceTileAccess(target, type.getMethod("canAcceptSource"),
+                        type.getMethod("getSource"), type.getMethod("getMaxSource"), type.getMethod("addSource", int.class));
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+
+        long insert(BigInteger remaining) {
+            try {
+                if (!(Boolean) canAccept.invoke(receiver)) return 0;
+                int before = (Integer) current.invoke(receiver);
+                long room = (long) (Integer) max.invoke(receiver) - before;
+                long chunk = Math.min(room, remaining.min(BigInteger.valueOf(Integer.MAX_VALUE)).longValue());
+                if (chunk <= 0) return 0;
+                add.invoke(receiver, (int) chunk);
+                int after = (Integer) current.invoke(receiver);
+                return Math.max(0, Math.min(chunk, (long) after - before));
+            } catch (Throwable ignored) {
+                return 0;
+            }
+        }
     }
 
     /** 同种球可堆叠；部分取出时只修改当前一颗球，避免改掉整堆球的 NBT。 */

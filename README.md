@@ -125,7 +125,7 @@
 ./gradlew build
 ```
 
-编译产物：`build/libs/ae2-addon-1.3.0.jar`
+编译产物：`build/libs/ae2-addon-2.0.0.jar`
 
 ---
 

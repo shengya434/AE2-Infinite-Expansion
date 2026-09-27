@@ -956,6 +956,99 @@ S1～S9 的行为（尤其 S5b 锁定语义、S7 的 `ca` 累加、S8 的格式�
 ## D. 不要动
 S1～S11 的行为与界面。
 
+---
+# S13 · 物质球灌装支持魔力/魔源 + 版本号升 2.0.0（**本回合只做这两件**）
+
+## A. 物质球「Shift+右键容器」支持魔力池与魔源罐
+
+sensei 实测：**物质球灌不进魔力池（Botania）和魔源罐（Ars Nouveau）**，报"该容器不支持这种物质"。
+原因：现在 `MatterBallItem.supports()/pour()` 只分三条路 —— 物品 → `ITEM_HANDLER`、
+流体 → `FLUID_HANDLER`、其余全丢给 Mekanism 化学物。**魔力/魔源走不进去**。
+
+### A0. 已取证的接口（**读 jar 字节码拿到的，照这个写**）
+
+```
+vazkii.botania.api.mana.ManaReceiver            (interface)
+    int  getCurrentMana()
+    boolean isFull()
+    void receiveMana(int)          ← 返回 void！收了多少只能靠差值
+    boolean canReceiveManaFromBursts()
+vazkii.botania.api.mana.ManaPool extends ManaReceiver
+    int  getMaxMana()
+    boolean isOutputtingPower()
+vazkii.botania.common.block.block_entity.mana.ManaPoolBlockEntity
+    extends BotaniaBlockEntity implements ManaPool, ...     ← 所以魔力池的 BE 就是 ManaPool ✓
+
+com.hollingsworth.arsnouveau.api.source.ISourceTile   (interface)
+    int  getSource()
+    int  getMaxSource()
+    int  addSource(int)            ← 返回语义不明，**不许依赖返回值**
+    int  removeSource(int)
+    boolean canAcceptSource()
+    int  getTransferRate()
+com.hollingsworth.arsnouveau.api.source.AbstractSourceMachine implements ISourceTile
+com.hollingsworth.arsnouveau.common.block.tile.SourceJarTile extends AbstractSourceMachine  ← 魔源罐 ✓
+```
+
+### A1. `compat/AeResourceKeys` 加两个公开判定（**必须用单例相等，不能用 instanceof**）
+
+类都是反射加载的，所以判断"这个 AEKey 是不是魔力/魔源"只能拿**单例比较**：
+```java
+/** 这个 key 是不是「魔力」（Applied Botanics）；没装桥 → false */
+public static boolean isManaKey(AEKey key)   { AEKey k = key(MANA_KEY_CLASS);   return k != null && k.equals(key); }
+/** 这个 key 是不是「魔源」（Ars Énergistique）；没装桥 → false */
+public static boolean isSourceKey(AEKey key) { AEKey k = key(SOURCE_KEY_CLASS); return k != null && k.equals(key); }
+```
+（`key(String)` 已存在且带缓存，直接用。）
+
+### A2. `MatterBallItem.supports(...)`
+
+在 Mekanism 那条之前插入两条判定（**全部反射，类/lookup 失败就返回 false，绝不抛**）：
+- `AeResourceKeys.isManaKey(key)` → target 是不是 `vazkii.botania.api.mana.ManaReceiver` 的实例
+  （**BE 判定不到时，再试方块** `target.getBlockState().getBlock()` —— Botania 有些接收器实现挂在 block 上）
+- `AeResourceKeys.isSourceKey(key)` → target 是不是 `com.hollingsworth.arsnouveau.api.source.ISourceTile` 的实例
+
+### A3. `MatterBallItem.pour(...)`
+
+新增两条分支（与物品/流体分支平级）。**两条都必须"插前读一次、插后读一次，用差值算实际接收量"**
+—— 不要相信方法的返回值（Botania 是 void，Ars 的 `addSource` 语义没取证）。
+
+- **魔力**：
+  - 先 `isFull()` → true 直接算作收不下
+  - 上限：是 `ManaPool` 就 `room = getMaxMana() - getCurrentMana()`；不是 pool（比如魔力散布器）
+    就没有 `getMaxMana` → 退化成"直接试给"，靠差值判定
+  - 单次最多给 `Integer.MAX_VALUE`（接口只吃 int），循环给；**每次给完重读 `getCurrentMana()` 算差值**，
+    差值为 0 就停（不然会空转 4096 次）
+- **魔源**：
+  - 先 `canAcceptSource()` → false 直接算作收不下
+  - `room = getMaxSource() - getSource()`；单次最多 `Integer.MAX_VALUE`；每次用 `getSource()` 差值确认
+- 两者都要**受现有的"单次最多 4096 次调用"上限约束**（那是防卡服的，别动）
+- 数量是 `BigInteger`，接口是 `int` ⇒ 内部一律**转成"本次能给的 int 块"**再调；**不许把 BigInteger 截断后
+  当作总量**（截断会让"还有多少没灌进去"算错）
+- 结果仍走现有三条文案（全灌入 / 部分灌入 / 一点没进）+ 不支持那条，**不新增语言 key**
+
+### A4. 顺手把 tooltip 提示补一句（可选，做了更好）
+`gui.ae2addon.matter_ball.hint` 现在是
+`§7右键：物品进背包　·　Shift+右键容器：全部灌入容器`
+→ 改成 `§7右键：物品进背包　·　Shift+右键容器：全部灌入（含流体/气体/魔力/魔源）`
+（`zh_cn` + `en_us` 都要改；en 对应英文。）
+
+## B. 版本号 1.3.0 → 2.0.0（sensei：这一版定稿是 2.0.0）
+
+- `src/main/resources/META-INF/mods.toml`：`version="1.3.0"` → **`version="2.0.0"`**
+- `build.gradle` manifest：`Implementation-Version: "1.2.2"` → **`"2.0.0"`**
+  （`Specification-Version: "1"` **别动**，那是 spec 版本不是 mod 版本）
+- `README.md`：`build/libs/ae2-addon-1.3.0.jar` → **`ae2-addon-2.0.0.jar`**
+  （README 里若还有别处写 1.3.0/1.2.2 也一并改；**README 的正文内容不要重写**）
+- `RELEASE_NOTE.md` **本轮不要动**（由我手写，别让 codex 改）
+
+⚠ 改完自己 grep 一遍 `1\.3\.0|1\.2\.2`，确认该改的都改了、不该改的没动。
+
+## C. 不要动
+S1～S12 的行为与界面；`BotaniaCompat` / `ArsNouveauCompat`（配方兼容层）一行都不要碰。
+
+
+
 
 
 

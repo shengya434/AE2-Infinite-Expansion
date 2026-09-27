@@ -147,7 +147,7 @@
   "gui.ae2addon.matter_ball.partial": "§eUnpacked %s × %s, %s still in ball (inventory full)",
   "gui.ae2addon.matter_ball.tooltip": "§7Contains: §f%s §7× §e%s",
   "gui.ae2addon.matter_ball.tooltip_empty": "§7Empty",
-  "gui.ae2addon.matter_ball.hint": "§7Right-click: items to inventory · Shift+right-click container: pour all",
+  "gui.ae2addon.matter_ball.hint": "§7Right-click: items to inventory · Shift+right-click container: pour all (fluids/gases/mana/source)",
   "gui.ae2addon.matter_ball.pour_ok": "§aPoured all %s ×%s into the container",
   "gui.ae2addon.matter_ball.pour_partial": "§eContainer accepted %s ×%s; %s remains in the ball",
   "gui.ae2addon.matter_ball.pour_none": "§cContainer accepted none (or is not a matching container)",
