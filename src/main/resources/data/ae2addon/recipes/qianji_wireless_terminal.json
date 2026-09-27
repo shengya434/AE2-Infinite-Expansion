@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "group": "ae2addon",
+  "ingredients": [
+    {
+      "item": "ae2addon:qianji_terminal"
+    },
+    {
+      "item": "ae2:wireless_receiver"
+    },
+    {
+      "item": "ae2:energy_cell"
+    }
+  ],
+  "result": {
+    "item": "ae2addon:qianji_wireless_terminal"
+  }
+}
