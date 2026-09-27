@@ -1047,6 +1047,68 @@ public static boolean isSourceKey(AEKey key) { AEKey k = key(SOURCE_KEY_CLASS); 
 ## C. 不要动
 S1～S12 的行为与界面；`BotaniaCompat` / `ArsNouveauCompat`（配方兼容层）一行都不要碰。
 
+---
+# S14 · 物质球灌装再补一条：FE（Forge Energy）容器（**本回合只做这一项**）
+
+sensei：「另外还有 fe 的容器」。
+
+## 背景（已取证）
+
+- FE 在 AE2 里的 AEKey 由 **Applied Flux（应用通量）** 提供：
+  ```
+  com.glodblock.github.appflux.common.me.key.FluxKey extends appeng.api.stacks.AEKey
+      static FluxKey of(EnergyType);  EnergyType getEnergyType();  AEKeyType getType();
+  com.glodblock.github.appflux.common.me.key.type.FluxKeyType extends AEKeyType
+      public static final FluxKeyType TYPE;
+  ```
+- 本仓库**已经有** `compat/AppFluxPowerCompat`（`libs/AppliedFlux-*.jar` 是 **compileOnly**，运行时靠
+  `ModList` 探测 + `isLoaded()` 短路），里面 `feedEnergyOnce()` 的灌电口径是：
+  `canReceive()` → `gap = getMaxEnergyStored()-getEnergyStored()` → `need = min(gap, cap)` →
+  **`receiveEnergy(need, true)` 先模拟**拿到 `accepted` → 再按量真扣/真给（**"避免多扣"**）
+  —— **新代码照这一套写，别另发明。**
+
+## A. `compat/AppFluxPowerCompat` 新增两个静态方法
+
+```java
+/** 这个 key 是不是 Applied Flux 的 FE key（没装 / 类不在 → false，绝不抛） */
+public static boolean isFluxKey(appeng.api.stacks.AEKey key) {
+    if (!isLoaded() || key == null) return false;
+    try { return key instanceof com.glodblock.github.appflux.common.me.key.FluxKey; }
+    catch (Throwable ignored) { return false; }
+}
+
+/** 目标方块能不能收 FE（能力存在且 canReceive） */
+public static boolean canReceiveEnergy(BlockEntity target, Direction side);
+
+/** 往目标方块灌最多 maxAmount FE，返回**实际被收下**的量（照 feedEnergyOnce 的模拟-执行两步走） */
+public static long insertEnergy(BlockEntity target, Direction side, long maxAmount);
+```
+- `insertEnergy` 要点：`ForgeCapabilities.ENERGY` → 空/`!canReceive()` → 0；
+  `gap = getMaxEnergyStored()-getEnergyStored()`；`gap<=0` → 0；
+  `need = (int) Math.min((long) gap, maxAmount)`；**`accepted = receiveEnergy(need, true)`（模拟）**，
+  `accepted<=0` → 0；再 `receiveEnergy(accepted, false)`（执行）；返回 `accepted`。
+- ⚠ `receiveEnergy` 只吃 `int`：`maxAmount` 是 long，**取小到 int 以内**再传；
+  `gap` 本身 ≤ int 上限，不用怕截断。
+
+## B. `item/MatterBallItem` 接上这条通道
+
+1. `supports(BlockEntity, Direction, AEKey)`：在 Mekanism 那条**之前**插入
+   `if (AppFluxPowerCompat.isFluxKey(key)) return AppFluxPowerCompat.canReceiveEnergy(target, side);`
+2. `pour(...)`：新增一条分支（与物品/流体/魔力/魔源平级）
+   - 单次块 = `min(remaining, Integer.MAX_VALUE)`（接口只吃 int）
+   - `inserted = insertEnergy(target, side, chunk)`
+   - 差值为 0（`inserted <= 0`）就退出循环 —— **沿用现有的退出写法，防空转**
+   - 仍受现有 **4096 次调用上限** 约束；`BigInteger` 全程不要截断当总量
+3. **顺序**：物品 → 流体 → 魔力 → 魔源 → **FE** → Mekanism 化学物
+4. `gui.ae2addon.matter_ball.hint` 文案把能量也列进去（**中英都改**）：
+   - zh：`§7右键：物品进背包　·　Shift+右键容器：全部灌入（含流体/气体/魔力/魔源/能量）`
+   - en：`§7Right-click: items to inventory · Shift+right-click container: pour all (fluids/gases/mana/source/energy)`
+
+## C. 不要动
+S1～S13 的行为；`feedEnergy` 那三个已有重载**一个字都不要改**（那是感应卡在用的）。
+
+
+
 
 
 

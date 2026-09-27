@@ -147,7 +147,7 @@
   "gui.ae2addon.matter_ball.partial": "§e已取回 %s 个 %s，背包放不下剩余 %s 个仍留在球内",
   "gui.ae2addon.matter_ball.tooltip": "§7内含: §f%s §7× §e%s",
   "gui.ae2addon.matter_ball.tooltip_empty": "§7空球",
-  "gui.ae2addon.matter_ball.hint": "§7右键：物品进背包　·　Shift+右键容器：全部灌入（含流体/气体/魔力/魔源）",
+  "gui.ae2addon.matter_ball.hint": "§7右键：物品进背包　·　Shift+右键容器：全部灌入（含流体/气体/魔力/魔源/能量）",
   "gui.ae2addon.matter_ball.pour_ok": "§a已把 %s ×%s 全部灌入容器",
   "gui.ae2addon.matter_ball.pour_partial": "§e容器只收下了 %s ×%s，还有 %s 留在球里",
   "gui.ae2addon.matter_ball.pour_none": "§c该容器一点都收不下（或不是对应的容器）",

@@ -36,6 +36,54 @@ public final class AppFluxPowerCompat {
         return loaded;
     }
 
+    /** Whether the key represents Applied Flux energy. Missing optional classes are safe. */
+    public static boolean isFluxKey(appeng.api.stacks.AEKey key) {
+        try {
+            return key != null && isLoaded()
+                    && key instanceof com.glodblock.github.appflux.common.me.key.FluxKey;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** Whether the target exposes an FE storage that can receive energy on this side. */
+    public static boolean canReceiveEnergy(BlockEntity target, Direction side) {
+        try {
+            if (!isLoaded() || target == null) {
+                return false;
+            }
+            IEnergyStorage machine = target.getCapability(ForgeCapabilities.ENERGY, side).orElse(null);
+            return machine != null && machine.canReceive();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** Insert up to maxAmount FE and return the amount accepted by the execution call. */
+    public static long insertEnergy(BlockEntity target, Direction side, long maxAmount) {
+        try {
+            if (!isLoaded() || target == null || maxAmount <= 0) {
+                return 0;
+            }
+            IEnergyStorage machine = target.getCapability(ForgeCapabilities.ENERGY, side).orElse(null);
+            if (machine == null || !machine.canReceive()) {
+                return 0;
+            }
+            int gap = machine.getMaxEnergyStored() - machine.getEnergyStored();
+            if (gap <= 0) {
+                return 0;
+            }
+            int need = (int) Math.min((long) gap, maxAmount);
+            int accepted = machine.receiveEnergy(need, true);
+            if (accepted <= 0) {
+                return 0;
+            }
+            return Math.max(0, Math.min(accepted, machine.receiveEnergy(accepted, false)));
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
     /** AppFlux 感应卡物品（注册表查询，未装返回 null）。 */
     public static net.minecraft.world.item.Item inductionCard() {
         if (!isLoaded()) {

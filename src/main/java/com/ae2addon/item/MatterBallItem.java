@@ -4,6 +4,7 @@ import appeng.api.stacks.AEFluidKey;
 import appeng.api.stacks.AEItemKey;
 import appeng.api.stacks.AEKey;
 import com.ae2addon.compat.AeResourceKeys;
+import com.ae2addon.compat.AppFluxPowerCompat;
 import com.ae2addon.compat.MekanismGasCompat;
 import com.ae2addon.init.ModItems;
 import net.minecraft.core.Direction;
@@ -181,6 +182,7 @@ public class MatterBallItem extends Item {
         if (key instanceof AEFluidKey) return target.getCapability(ForgeCapabilities.FLUID_HANDLER, side).isPresent();
         if (AeResourceKeys.isManaKey(key)) return ManaReceiverAccess.find(target) != null;
         if (AeResourceKeys.isSourceKey(key)) return SourceTileAccess.find(target) != null;
+        if (AppFluxPowerCompat.isFluxKey(key)) return AppFluxPowerCompat.canReceiveEnergy(target, side);
         return MekanismGasCompat.supports(target, side, key);
     }
 
@@ -190,6 +192,7 @@ public class MatterBallItem extends Item {
         BigInteger intMax = BigInteger.valueOf(Integer.MAX_VALUE);
         boolean manaKey = AeResourceKeys.isManaKey(key);
         boolean sourceKey = AeResourceKeys.isSourceKey(key);
+        boolean fluxKey = AppFluxPowerCompat.isFluxKey(key);
         ManaReceiverAccess mana = manaKey ? ManaReceiverAccess.find(target) : null;
         SourceTileAccess source = sourceKey ? SourceTileAccess.find(target) : null;
         for (int attempts = 0; attempts < 4096 && remaining.signum() > 0; attempts++) {
@@ -212,6 +215,9 @@ public class MatterBallItem extends Item {
                 inserted = mana == null ? 0 : mana.insert(remaining);
             } else if (sourceKey) {
                 inserted = source == null ? 0 : source.insert(remaining);
+            } else if (fluxKey) {
+                long chunk = remaining.min(intMax).longValue();
+                inserted = AppFluxPowerCompat.insertEnergy(target, side, chunk);
             } else {
                 long chunk = remaining.min(intMax).longValue();
                 inserted = MekanismGasCompat.insert(target, side, key, chunk);
