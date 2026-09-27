@@ -3,10 +3,10 @@
   "group": "ae2addon",
   "ingredients": [
     {
-      "item": "ae2:blank_pattern"
+      "item": "ae2addon:qianji_pattern"
     }
   ],
   "result": {
-    "item": "ae2addon:qianji_pattern_template"
+    "item": "ae2:blank_pattern"
   }
 }
