@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "group": "ae2addon",
+  "ingredients": [
+    {
+      "item": "ae2:blank_pattern"
+    }
+  ],
+  "result": {
+    "item": "ae2addon:qianji_pattern_template"
+  }
+}
