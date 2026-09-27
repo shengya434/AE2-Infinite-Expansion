@@ -9,6 +9,7 @@
     "CraftConfirmScreenMixin",
     "CraftingCPUClusterAccessor",
     "CraftingCPUClusterMixin",
+    "CraftingCpuHelperMixin",
     "CraftingCpuLogicMixin",
     "CraftingServiceMixin",
     "GridMixin",

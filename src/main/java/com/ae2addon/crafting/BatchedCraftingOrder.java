@@ -296,13 +296,22 @@ public final class BatchedCraftingOrder {
         }
 
         IGrid grid = node.getGrid();
-        // 2026-08-27：拆批粒度用 OVERFLOW_THRESHOLD（Long.MAX/2，接近真溢出 2^63）
-        // 而非 SAFE_LIMIT——SAFE_LIMIT 拆太细，10^18 级订单会拆出 43 万批超上限；
-        // 每批允许到接近溢出线，批数可控（10^18 订单约 217 批）。
+        // ⚠ 2026-09-26 修正（sensei：拆批后第 1 批提交被第三方 mod 判 INCOMPLETE_PLAN）：
+        // 这里原来拿 OVERFLOW_THRESHOLD（Long.MAX_VALUE）当**拆批粒度**基准 —— 于是
+        // maxSafeBatchOf 会算出"最底层材料需求正好贴着 Long.MAX"的批次量
+        // （实测 perBatch=2.38e10，× 每单位 9^9 ≈ 9.22e18）。
+        // 而 Applied Enhancements 的 CraftingServiceLongSafetyMixin 会在 submitJob 里用
+        // NativeCraftingLongSafety.validatePlan 做数值一致性校验，这种贴着溢出线的值被判
+        // "不安全" → 直接返回 INCOMPLETE_PLAN（跟缺料无关，所以我们的缺料表是空的）。
+        // 现在拆批粒度改用既有的 SAFE_LIMIT（Long.MAX/4，注释写明"给执行层（批量推送 N×）
+        // 留足余量"）。
+        // ⚠ 但**判定"是否需要拆批"仍然用 OVERFLOW_THRESHOLD**（见 CraftingServiceMixin），
+        // 那里不能换成 SAFE_LIMIT —— 会误伤 10^16~10^18 级合法订单（L51-52 的旧注释警告过）。
+        // 两者分工：判定线 = 真溢出线；粒度 = 留了余量的安全线。
         long perBatch;
         try {
             perBatch = RequirementCalculator.maxSafeBatch(
-                    grid, finalOutput.what(), finalOutput.amount(), OVERFLOW_THRESHOLD);
+                    grid, finalOutput.what(), finalOutput.amount(), SAFE_LIMIT);
         } catch (RuntimeException e) {
             // 2026-08-27：VM 环境下配方树/缓存异常时 create 会静默失败导致
             // 订单放行原版（超限不拆批）。记录异常便于定位。
@@ -365,8 +374,9 @@ public final class BatchedCraftingOrder {
         }
         long perBatch;
         try {
+            // ⚠ 2026-09-26：粒度用 SAFE_LIMIT（留余量），理由见 create() 里的长注释。
             perBatch = RequirementCalculator.maxSafeBatch(
-                    grid, finalOutput.what(), finalOutput.amount(), OVERFLOW_THRESHOLD);
+                    grid, finalOutput.what(), finalOutput.amount(), SAFE_LIMIT);
         } catch (RuntimeException e) {
             com.ae2addon.AE2Addon.LOGGER.warn(
                     "[ae2addon] createFromGrid: maxSafeBatch 异常 what={} amount={} err={}",
@@ -546,11 +556,21 @@ public final class BatchedCraftingOrder {
                                 batch.pendingSimulation = CompletableFuture.completedFuture(plan);
                                 continue;
                             }
+                            // ⚠ 2026-09-26 诊断补强（sensei：v336 拆批后第 1 批报 INCOMPLETE_PLAN）：
+                            // INCOMPLETE_PLAN 在 AE2 里是"计划不完整"（missingItems 非空），
+                            // 但我们 buildModuleSettlePlan 产出的计划 missingItems 传的是空 KeyCounter ——
+                            // 两者矛盾，所以把 plan 的实际内容摊开，别猜。
                             com.ae2addon.AE2Addon.LOGGER.warn(
-                                    "[ae2addon] 分批提交失败: what={} 错误码={} 详情={}",
+                                    "[ae2addon] 分批提交失败: what={} 错误码={} 详情={}"
+                                            + " plan模拟={} 缺料={} 用到的材料种类={} finalOutput={} patternTimes={}",
                                     what,
                                     result == null ? "null" : result.errorCode(),
-                                    result == null ? "null" : result.errorDetail());
+                                    result == null ? "null" : result.errorDetail(),
+                                    plan.simulation(),
+                                    plan.missingItems(),
+                                    plan.usedItems().size(),
+                                    plan.finalOutput(),
+                                    plan.patternTimes().size());
                             ChatLog.err(level, null,
                                     "批次提交失败，订单已取消");
                             failAll();

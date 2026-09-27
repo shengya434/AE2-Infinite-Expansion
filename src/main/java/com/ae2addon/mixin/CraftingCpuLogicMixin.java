@@ -263,6 +263,77 @@ public abstract class CraftingCpuLogicMixin {
     @Unique
     private String ae2addon$diagBatchFailProvider = "-";
 
+    // ── 2026-09-27 ★ 修「材料凭空多出」的核心：抑制无源退回 ────────────────────
+    /**
+     * 上一次从**同 tick 缓存**里交还给 AE2 的那个输入数组（没有真提取，只是把旧数组再交一次）。
+     * <p>
+     * 为什么要记它：AE2 的 {@code extractPatternInputs} 契约是「成功返回非 null，
+     * 里面装的是**本次真扣走的**输入」，而 {@code executeCrafting} 在 provider 推不动时会
+     * {@code reinjectPatternInputs(inventory, inputs)} 把这些输入**还回来**。
+     * 我们在同 tick 缓存命中时直接返回了上次的数组（本次一个没扣），AE2 仍照单退回
+     * ⇒ 每命中一次白送一整轮材料（实测 581 次退回 vs 4 次真扣，累积白送钻石 3.4669e12）。
+     * <p>
+     * 修法：缓存命中时记下这个数组的身份，再 redirect 掉 {@code executeCrafting} 里的
+     * {@code reinjectPatternInputs} —— **只有当传进来的就是"本次缓存交出去的那个"才跳过**。
+     * 真提取之后的正常退回路径完全不动。
+     */
+    @Unique
+    private KeyCounter[] ae2addon$cachedInputsHandedOut;
+    @Unique
+    private long ae2addon$suppressReinjectCount;
+    @Unique
+    private boolean ae2addon$suppressReinjectLogged;
+
+    // ── 2026-09-27 ★ 净交付补偿：把「被合成自己吃掉的产物」折成任务值补回 ──
+    /**
+     * 已消费到的「被吃掉产物」累计值（用来取差值，避免把上一单的消耗算进本单）。
+     * 提交任务时与时序账本一起同步（见 {@code ae2addon$captureInitialExtract}）。
+     */
+    @Unique
+    private long ae2addon$seedEatenAccounted;
+
+    /**
+     * 本批应补回多少「任务值」。
+     * <p>
+     * 自指配方（产物=输入）里，模组按订单量虚拟生产，但真实执行的那部分合成会把产物
+     * 自己吃掉一份当种子 ⇒ 净交付比订单少。实测（1e12 模板单）：
+     * <pre>
+     * 毛产量 1,000,918,218,750 − 吃掉 2,145,384,446 = 净交付 998,772,834,304（订单 1e12）
+     * </pre>
+     * 补法：任务值每 1 单位对应「声明产出」份产物（本配方 2 份），
+     * 所以吃掉 {@code e} 份产物就少减 {@code e / 每合成产出} 的任务值 ——
+     * 等于让模组多生产 {@code e} 份，净交付回到订单量（sensei 已批准此口径）。
+     */
+    @Unique
+    private long ae2addon$seedEatenCompensation(IPatternDetails pattern) {
+        try {
+            AEKey root = ae2addon$getFinalOutputKey();
+            if (root == null) {
+                return 0L;
+            }
+            long total = com.ae2addon.crafting.SeedConsumptionLedger.total(root);
+            long delta = total - ae2addon$seedEatenAccounted;
+            if (delta <= 0) {
+                return 0L;
+            }
+            ae2addon$seedEatenAccounted = total;
+            long perCraft = 1L;
+            var outs = pattern == null ? null : pattern.getOutputs();
+            if (outs != null && outs.length > 0 && outs[0] != null && outs[0].amount() > 0) {
+                perCraft = outs[0].amount();
+            }
+            long comp = delta / perCraft;
+            if (CraftingCompat.debugLogs) {
+                AE2Addon.LOGGER.info(
+                        "[ae2addon][settle] 净交付补偿: 被吃掉产物累计={} 本轮新增={} 每合成产出={} → 少减任务值 {}",
+                        total, delta, perCraft, comp);
+            }
+            return comp;
+        } catch (Throwable t) {
+            return 0L;
+        }
+    }
+
     // 批量状态（每个 pattern 的自适应 N）
     // ⚠ 2026-08-21 兼容性修复：原用 IdentityHashMap（对象身份比较），
     // gtlcore 等 mod 环境下 AE2 每次调用可能传入不同实例（equals 相等）→
@@ -410,7 +481,19 @@ public abstract class CraftingCpuLogicMixin {
     @Unique
     private void ae2addon$resetDelivered() {
         if (!ae2addon$delivered.isEmpty()) {
-            AE2Addon.LOGGER.info("[ae2addon][账本] 清账（共 {} 个样板）", ae2addon$delivered.size());
+            // ⚠ 2026-09-27：把"本单自己声称交付了多少"汇总打出来（原来只有被 throttled 的
+            // noteDelivered 逐笔日志，看不到总数）。这是与"网络实增"对比的关键一端。
+            long total = 0L;
+            StringBuilder sb = new StringBuilder();
+            for (var en : ae2addon$delivered.entrySet()) {
+                total += en.getValue();
+                if (sb.length() > 0) {
+                    sb.append(", ");
+                }
+                sb.append(en.getKey()).append('=').append(en.getValue());
+            }
+            AE2Addon.LOGGER.warn("[ae2addon][账本] 清账（共 {} 个样板）本单声称交付合计={} [{}]",
+                    ae2addon$delivered.size(), total, sb);
         }
         ae2addon$delivered.clear();
         ae2addon$deliveredBaseline.clear();
@@ -693,6 +776,190 @@ public abstract class CraftingCpuLogicMixin {
      * 且在 {@code executeCrafting} 之外 ⇒ 这里 finishJob 把 job 置 null 也不会让
      * AE2 循环里的后续解引用炸掉（那是"结算内立刻回收"不能做的原因）。
      */
+    /**
+     * ⚠ 2026-09-27（sensei：自指合成后钻石凭空多出 3.39T）：
+     * **本实例在提交任务时被 AE2「预提取」进 CPU 合成存储的材料**（key → 量）。
+     * <p>
+     * 因果链（v343/v344 诊断实测点名）：
+     * <pre>
+     *   我们拆批 → CraftingService#submitJob → CraftingCPUCluster#submitJob
+     *   → CraftingCpuLogic#trySubmitJob
+     *   → CraftingCpuHelper#tryExtractInitialItems(plan, grid, inventory, source)
+     *     ⇒ 按 plan 里登记的需求量，把整单材料**从网络预提取进 CPU 存储**
+     *        （实测：minecraft:diamond 一次 3,500,000,000,000）
+     * </pre>
+     * 而虚拟结算**不真实装配**，只消耗掉其中一部分 ⇒ 剩下的留在存储里，
+     * 任务结束时被 {@code storeItems()} 一股脑倒回网络 ⇒ 玩家看到「材料不减反增」。
+     * <p>
+     * 这里记下预提取了哪些 key，供 {@code storeItems()} 前按「合成已消耗」清理
+     * （见 {@code ae2addon$diagStoreItemsBefore}）。
+     */
+    @Unique
+    private appeng.api.stacks.KeyCounter ae2addon$preExtractedInputs;
+
+    /**
+     * ⚠ 2026-09-27：捕获「预提取初始材料」这一步。
+     * 调完原方法后对比 CPU 存储的前后差量，把**这次真正被提取进来的 key/量**记下来。
+     * （不用 plan 反推，因为 plan 里的需求量与实际提取量在库存不足/限流时并不相等。）
+     */
+    @Redirect(method = "trySubmitJob",
+            at = @At(value = "INVOKE",
+                    target = "Lappeng/crafting/execution/CraftingCpuHelper;tryExtractInitialItems("
+                            + "Lappeng/api/networking/crafting/ICraftingPlan;"
+                            + "Lappeng/api/networking/IGrid;"
+                            + "Lappeng/crafting/inv/ListCraftingInventory;"
+                            + "Lappeng/api/networking/security/IActionSource;"
+                            + ")Lappeng/api/stacks/GenericStack;"),
+            require = 0)
+    private appeng.api.stacks.GenericStack ae2addon$captureInitialExtract(
+            appeng.api.networking.crafting.ICraftingPlan plan,
+            appeng.api.networking.IGrid grid,
+            appeng.crafting.inv.ListCraftingInventory inventory,
+            appeng.api.networking.security.IActionSource source) {
+        // ⚠ 每次提交任务都是新一单 ⇒ 重置台账。
+        // 否则上一单被取消（storeItems 没走到）时留下的记录会累加到本单，
+        // 让清理量算大、把本单以外的材料当成"本单预提取"吃掉。
+        ae2addon$preExtractedInputs = new appeng.api.stacks.KeyCounter();
+        // ★ 2026-09-27 同步「被吃掉产物」的起点：净交付补偿只补**本单**新吃掉的量，
+        //   不把上一单的消耗算进来（否则会多生产）。
+        try {
+            if (plan != null && plan.finalOutput() != null && plan.finalOutput().what() != null) {
+                ae2addon$seedEatenAccounted = com.ae2addon.crafting.SeedConsumptionLedger
+                        .total(plan.finalOutput().what());
+            }
+        } catch (Throwable ignored) {
+        }
+        // ⚠ before 快照必须**无条件**建：只在 debug 下建的话，关掉 debug 时
+        // before=null ⇒ delta 退化成"存储里的全部量"，会把本单以外的既有材料
+        // 一并误记为"本次预提取"，随后被当成消耗清掉 —— 那是吞玩家材料。
+        appeng.api.stacks.KeyCounter before = null;
+        if (inventory != null && inventory.list != null) {
+            before = new appeng.api.stacks.KeyCounter();
+            for (var e : inventory.list) {
+                if (e != null && e.getKey() != null) {
+                    before.add(e.getKey(), e.getLongValue());
+                }
+            }
+        }
+        appeng.api.stacks.GenericStack result =
+                appeng.crafting.execution.CraftingCpuHelper.tryExtractInitialItems(
+                        plan, grid, inventory, source);
+        // ⚠ 2026-09-27 修正（实测产物被误清）：**finalOutput 不能记进"待清理输入"**。
+        // 之前是在 storeItems() 里用 ae2addon$getFinalOutputKey() 排除，但那一刻
+        // job 已被 finishJob 置 null ⇒ 拿不到 finalOutput ⇒ 排除逻辑整个失效，产物被一起清掉。
+        // 现在改为在这里（plan 还在手上）就排除，pre 里根本不出现产物 / 自指种子。
+        appeng.api.stacks.AEKey rootKeyHere =
+                plan == null || plan.finalOutput() == null
+                        ? null : plan.finalOutput().what();
+        // 记录差量（正数 = 这次被提取进来的）
+        if (inventory != null && inventory.list != null) {
+            if (ae2addon$preExtractedInputs == null) {
+                ae2addon$preExtractedInputs = new appeng.api.stacks.KeyCounter();
+            }
+            for (var e : inventory.list) {
+                if (e == null || e.getKey() == null) {
+                    continue;
+                }
+                if (rootKeyHere != null && rootKeyHere.equals(e.getKey())) {
+                    continue;   // 产物 / 自指种子：保留，不参与"按消耗清理"
+                }
+                long prev = before == null ? 0L : before.get(e.getKey());
+                long delta = e.getLongValue() - prev;
+                if (delta > 0) {
+                    ae2addon$preExtractedInputs.add(e.getKey(), delta);
+                    if (CraftingCompat.debugLogs) {
+                        // ⚠ 2026-09-27 追加诊断（sensei：账对不上 —— 我方清了 3.5T，
+                        // 而网络实际只少了 0.111T）：把「这次预提取**之后**网络里还剩多少」
+                        // 也记下来。这一端 + 跑后数据一夹，就能分辨是
+                        //   A) 预提取压根没从网络扣（网络余量不降）→ 查 tryExtractInitialItems
+                        //   B) 扣了、后来又被某条通路补回来（余量先降后升）
+                        long netLeft = -1L;
+                        try {
+                            var svc = grid == null ? null : grid.getStorageService();
+                            var netInv = svc == null ? null : svc.getInventory();
+                            if (netInv != null) {
+                                netLeft = netInv.extract(e.getKey(), Long.MAX_VALUE,
+                                        appeng.api.config.Actionable.SIMULATE, source);
+                            }
+                        } catch (Throwable ignored) {
+                            netLeft = -1L;
+                        }
+                        // ⚠ 2026-09-27 追加（sensei：清了 3.5T 可存储里还剩 3.416T ⇒ 存疑"两份"）：
+                        // 打印**实例身份 + 提取前后存储量**，用于分辨两种可能：
+                        //   · 两个 lane（两个 CraftingCpuLogic 实例）各预提取了一份 ⇒ 实例哈希不同
+                        //   · 同一次 tryExtractInitialItems 内部插了两次，而 before 拍晚了
+                        //     ⇒ 实例哈希相同且"提取前存储"就已经不为 0
+                        AE2Addon.LOGGER.warn(
+                                "[ae2addon][settle] 预提取初始材料: 实例={} key={} 提取前存储={} 提取后存储={} 差={} 提取后网络剩={}",
+                                System.identityHashCode(this), e.getKey(),
+                                before == null ? -1L : before.get(e.getKey()),
+                                e.getLongValue(), delta, netLeft);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 在 CPU 存储倒出网络前，把本实例预提取进来、又没被虚拟结算消耗的输入清掉。
+     * 语义上等于「合成消耗了它们」，使网络收支与真实合成一致。
+     * finalOutput（产物/自指种子）必须保留，供交付或下一轮合成使用。
+     */
+    @Inject(method = "storeItems", at = @At("HEAD"), require = 0)
+    private void ae2addon$diagStoreItemsBefore(CallbackInfo callback) {
+        // ⚠ 必须经实例调（mixin 不继承 target，getInventory() 不能直接调）——
+        // 与 flushPendingSettle 里 `cluster.craftingLogic.insert(...)` 同一写法。
+        var inv = cluster == null || cluster.craftingLogic == null
+                ? null : cluster.craftingLogic.getInventory();
+        if (inv == null || inv.list == null) {
+            return;
+        }
+        // ── ① 按「合成已消耗」清理预提取的输入（非 finalOutput）──
+        // 清理量取 min(本单预提取量, 存储剩余)：只吃掉"这一单为合成备下、却没被虚拟结算
+        // 消耗掉"的那部分，绝不碰存储里其它来源的材料。
+        appeng.api.stacks.KeyCounter pre = ae2addon$preExtractedInputs;
+        if (pre != null && !pre.isEmpty()) {
+            AEKey rootKey = ae2addon$getFinalOutputKey();
+            StringBuilder cleared = new StringBuilder();
+            for (var e : pre) {
+                if (e == null || e.getKey() == null) {
+                    continue;
+                }
+                AEKey key = e.getKey();
+                // finalOutput 是要交付的产物/种子，绝不清（双保险：预提取时已排除，
+                // 但 job 若还在，getFinalOutputKey() 也能兜一层）
+                if (rootKey != null && rootKey.equals(key)) {
+                    continue;
+                }
+                long preAmount = e.getLongValue();
+                long remain = inv.list.get(key);
+                long want = Math.min(preAmount, remain);
+                if (want <= 0) {
+                    continue;
+                }
+                long taken = inv.extract(key, want,
+                        appeng.api.config.Actionable.MODULATE);
+                if (taken > 0) {
+                    if (cleared.length() > 0) {
+                        cleared.append(", ");
+                    }
+                    // 清理前 = 实测读取值；清理后 = 实测再读一次（不用算术推）
+                    cleared.append(key).append(" 记账=").append(preAmount)
+                            .append(" 清理前=").append(remain)
+                            .append(" 实清=").append(taken)
+                            .append(" 清理后=").append(inv.list.get(key));
+                }
+            }
+            if (CraftingCompat.debugLogs && cleared.length() > 0) {
+                AE2Addon.LOGGER.warn(
+                        "[ae2addon][settle] 预提取输入按消耗清理（等价于真实合成吃掉）: 实例={} 清理={}",
+                        System.identityHashCode(this), cleared);
+            }
+            ae2addon$preExtractedInputs = null;
+        }
+    }
+
     @Inject(method = "tickCraftingLogic", at = @At("TAIL"), require = 0)
     private void ae2addon$flushAtTickEnd(IEnergyService energyService,
             CraftingService craftingService, CallbackInfo callback) {
@@ -966,6 +1233,10 @@ public abstract class CraftingCpuLogicMixin {
                     expectedContainerItems.add(entry.getKey(), entry.getLongValue());
                 }
             }
+            // ★ 2026-09-27 关键：这次**没有任何真提取**，只是把上次的数组再交一次。
+            //   AE2 若因 provider 推不动而 reinject 这个数组，就是"无源退回"→ 材料凭空多出。
+            //   记下身份，交给 ae2addon$guardSpuriousReinject 拦掉那一次退回。
+            ae2addon$cachedInputsHandedOut = ae2addon$batchCachedInputs;
             return ae2addon$batchCachedInputs;
         }
         // ⚠ 2026-09-19（sensei：巨型订单还跑不了 / 需解耦虚拟结算的批量）：
@@ -1303,6 +1574,60 @@ public abstract class CraftingCpuLogicMixin {
     }
 
     /**
+     * ★ 2026-09-27 核心修复（sensei：自指单跑完钻石凭空多出 3.4669e12 ≈ 一整轮输入量）。
+     * <p>
+     * AE2 {@code CraftingCpuHelper.extractPatternInputs} 的契约（javap 实测）：
+     * <pre>
+     * if (!allOk) { reinjectPatternInputs(inv, result); return null; }  // 失败：内部已自行退回
+     * return result;                                                    // 成功：非 null = 本次真扣走的输入
+     * </pre>
+     * 而 {@code CraftingCpuLogic.executeCrafting} 里 provider 推不动时会
+     * {@code reinjectPatternInputs(inventory, inputs)} 把它们**还回来**。
+     * <p>
+     * 我们在同 tick 缓存命中时直接返回了上次的数组（本次一个没扣）—— AE2 照单退回，
+     * 等于每命中一次白送一整轮材料。实测：退回 581 次、真扣 4 次，
+     * 累积白送钻石 {@code 513×33,008,612 + 68×50,734,236,644 = 3,466,861,509,748}。
+     * <p>
+     * 这里只拦「传进来的就是本次缓存交出去的那个数组」这一种情形；
+     * 真提取之后的正常退回路径原样透传，不改行为。
+     */
+    @Redirect(method = "executeCrafting",
+            at = @At(value = "INVOKE",
+                    target = "Lappeng/crafting/execution/CraftingCpuHelper;reinjectPatternInputs("
+                            + "Lappeng/crafting/inv/ICraftingInventory;"
+                            + "[Lappeng/api/stacks/KeyCounter;)V"),
+            require = 1)
+    private void ae2addon$guardSpuriousReinject(ICraftingInventory inventory,
+            KeyCounter[] inputs) {
+        if (inputs != null && inputs == ae2addon$cachedInputsHandedOut) {
+            ae2addon$cachedInputsHandedOut = null;
+            long total = 0L;
+            for (KeyCounter counter : inputs) {
+                if (counter == null) {
+                    continue;
+                }
+                for (var entry : counter) {
+                    if (entry != null) {
+                        total += entry.getLongValue();
+                    }
+                }
+            }
+            ae2addon$suppressReinjectCount++;
+            if (CraftingCompat.debugLogs
+                    && (!ae2addon$suppressReinjectLogged
+                            || (ae2addon$suppressReinjectCount & 0xFF) == 0)) {
+                ae2addon$suppressReinjectLogged = true;
+                AE2Addon.LOGGER.warn(
+                        "[ae2addon][settle] 拦掉无源退回（同 tick 缓存数组，本次未真提取）:"
+                                + " 第{}次 本次退回件数={}",
+                        ae2addon$suppressReinjectCount, total);
+            }
+            return;
+        }
+        CraftingCpuHelper.reinjectPatternInputs(inventory, inputs);
+    }
+
+    /**
      * 是否为合成样板（crafting pattern）：此类配方强制 1× 推送（见 extractBatch）。
      * 按类名判断（不引用具体类，兼容 AE2 民间重置版/gtlcore 改名）。
      */
@@ -1487,25 +1812,40 @@ public abstract class CraftingCpuLogicMixin {
             // 原来这里直接 `return ae2addon$virtualSettle(...)`，**绕过了下面的
             // onBatchAccepted 翻倍逻辑** → 千机的批量倍数永远停在 1，大订单被钉死在
             // 1 份/tick（实测 4.1 万份任务里每次只 -1 ≈ 半小时，看着就是卡在正在合成）。
-            // 现在：千机样板按"本批实际结算份数"走同样的翻倍 + 任务值补减；
-            // 装配处理器（原有虚拟结算）保持原样不动，避免改动它已有的表现。
+            // 现在：按"本批实际结算份数"记账 + 任务值补减（**所有虚拟结算，不只千机**）。
             long settledBatches = ae2addon$virtualSettle(patternDetails);
-            if (settledBatches > 0 && patternDetails != null
-                    && ae2addon$isQianJiPattern(patternDetails)) {
+            if (settledBatches > 0 && patternDetails != null) {
+                // ⚠ 2026-09-26 修复（sensei：样板合成链中间产物在任务完成后莫名在网络中多出）：
+                // 下面这两句原来被 `isQianJiPattern` 挡着，**只对千机样板生效**，普通合成样板
+                // （装配处理器）完全不记账，于是：
+                //   · noteDelivered 不累加 → selfRemaining(= base - delivered) 恒等于首见任务值
+                //     → L1086 `n = Math.min(batchMultiplier, selfRemaining)` 的夹子形同不存在
+                //   · decrementTaskValue 不补减 → AE2 每 tick 只减 1，而本批实际交付了 settledN 份
+                //   ⇒ 每 tick 全量提取 + 全量结算，AE2 侧却只记 1 份 ⇒ 滚雪球。
+                //   实测轨迹：8.1e9 → 5.9e12 → … → 2.48e18 个圆石；多出的中间产物在任务结束时
+                //   被 finishJob → storeItems() 一股脑倒进网络 —— 就是 sensei 看到的「莫名多出」。
+                // 现在所有虚拟结算都记账 + 补减。decrementTaskValue 内部有
+                // `current > amount ? current - amount : 0` 保护，不会把任务值做成负数。
                 ae2addon$noteDelivered(patternDetails, settledBatches); // 自己记账已交付
-                // 虚拟结算自己爬坡：每成功一批 ×2（受每 tick 份数上限约束）
-                var scaleKey = ae2addon$batchKey(patternDetails);
-                if (scaleKey != null) {
-                    // ⚠ 2026-09-19：爬坡上限改用"结算单批上限"（集成CPU = 不夹），
-                    // 否则 scale 会被 4096 钉死，永远学不到更大的批（sensei 报的问题）
-                    long cap = ae2addon$qianjiSettleBatchCeiling();
-                    long cur = ae2addon$settleScale.getOrDefault(scaleKey, 1L);
-                    long next = (cur > cap / 2) ? cap : cur * 2;
-                    ae2addon$settleScale.put(scaleKey, Math.max(1L, next));
+                // ★ 2026-09-27（sensei：净交付 = 订单量）：把「真实被合成吃掉的产物」
+                //   折成任务值**少减**，模组就会多生产同样多 —— 否则自指配方里被自己吃掉
+                //   的那份（实测 2,145,384,446 / 1e12 单）会让净交付比订单少。
+                long eatenComp = ae2addon$seedEatenCompensation(patternDetails);
+                ae2addon$decrementTaskValue(patternDetails, settledBatches - 1 - eatenComp);
+                if (ae2addon$isQianJiPattern(patternDetails)) {
+                    // 虚拟结算自己爬坡：每成功一批 ×2（受每 tick 份数上限约束）
+                    var scaleKey = ae2addon$batchKey(patternDetails);
+                    if (scaleKey != null) {
+                        // ⚠ 2026-09-19：爬坡上限改用"结算单批上限"（集成CPU = 不夹），
+                        // 否则 scale 会被 4096 钉死，永远学不到更大的批（sensei 报的问题）
+                        long cap = ae2addon$qianjiSettleBatchCeiling();
+                        long cur = ae2addon$settleScale.getOrDefault(scaleKey, 1L);
+                        long next = (cur > cap / 2) ? cap : cur * 2;
+                        ae2addon$settleScale.put(scaleKey, Math.max(1L, next));
+                    }
+                    ae2addon$onBatchAccepted(patternDetails, settledBatches);
+                    ae2addon$batchPendingMultiplier = -1;
                 }
-                ae2addon$decrementTaskValue(patternDetails, settledBatches - 1);
-                ae2addon$onBatchAccepted(patternDetails, settledBatches);
-                ae2addon$batchPendingMultiplier = -1;
             }
             return settledBatches > 0;
         }
@@ -2020,33 +2360,91 @@ public abstract class CraftingCpuLogicMixin {
                 //    - 普通任务：root 物理入网（账务后：link 已完成，产物留在网络）
                 if (isRoot && networkStorage != null) {
                     if (selfRef) {
+                        // ⚠ 2026-09-27 修复（sensei：自指下单数较大时，返回网络的数量不精确）：
+                        // `logic.insert` 对根产物会走 CraftingLink 交割（→ BatchedRequester 真把产物
+                        // 插进 ME 网络），而这里又**全额**回流 crafting storage 当种子
+                        // ⇒ 同一份 root 被记两遍：种子虚多 → 滚雪球更快 → 大额单产出超过下单量。
+                        // 修法：
+                        //   · 任务还在（getJob() != null，还有后续轮次）→ 这轮 root 是"中间种子"，
+                        //     把它从网络**取回**放进 crafting storage，种子数 = 实际拥有的量；
+                        //   · 任务已结束（getJob() == null，最后一轮）→ 不取回，root 留在网络交付玩家 ✓；
+                        //   · 没有交割（creditedToCpu == 0，如断网/无 link）→ 退回原来的全额回流，
+                        //     否则种子会断、滚雪球停摆。
+                        long credited = Math.max(0L, creditedToCpu);
+                        // ⚠ 2026-09-27 实测备注（收尾时确认，**故意保留分支**）：
+                        //   在"自指配方 + 独立网络"的实测环境下（1e12 模板单，跑 5 次以上），
+                        //   `creditedToCpu` **恒为 0** ⇒ 下面 `credited > 0` 这条分支**从未触发过**，
+                        //   每次都走 else 的"全额回流"。
+                        //   保留它的理由：它防的是"产物确实通过 CraftingLink 交割出去了"这种情况
+                        //   （那时若不取回，种子会被重复记两遍 → 滚雪球虚快 → 超产）。
+                        //   删掉 = 把这条防线拆了；实测没触发**只说明当前环境没走到**，不代表不可能。
+                        //   所以：**保留**，并把实测结论写在这里，免得后人以为它是死代码。
                         var inv = logic.getInventory();
-                        if (inv != null) {
+                        if (credited > 0) {
+                            if (ae2addon$getJob() != null && networkStorage != null && inv != null) {
+                                long taken = networkStorage.extract(key, credited,
+                                        appeng.api.config.Actionable.MODULATE, cluster.getSrc());
+                                if (taken > 0) {
+                                    inv.insert(key, taken,
+                                            appeng.api.config.Actionable.MODULATE);
+                                    if (CraftingCompat.debugLogs) {
+                                        AE2Addon.LOGGER.info(
+                                                "[ae2addon][settle] 自指种子取回crafting storage:"
+                                                        + " key={} 交割={} 取回={}（滚雪球）",
+                                                key, credited, taken);
+                                    }
+                                }
+                            }
+                            // getJob()==null（最后一轮）→ 不取回，root 留在网络交付给玩家
+                        } else if (inv != null) {
                             inv.insert(key, amount,
                                     appeng.api.config.Actionable.MODULATE);
                             if (CraftingCompat.debugLogs) {
                                 AE2Addon.LOGGER.info(
-                                        "[ae2addon][settle] 自指产物回流crafting storage: key={} 量={}（不入网，滚雪球）",
+                                        "[ae2addon][settle] 自指产物回流crafting storage: key={} 量={}（无交割，全额回流滚雪球）",
                                         key, amount);
                             }
                         }
                     } else {
-                        // ⚠️ AE2 insert 返回「已插入量」（非剩余量）——2026-09-04 20:40 修正误报
-                        long insertedAmt = networkStorage.insert(key, amount,
-                                appeng.api.config.Actionable.MODULATE, cluster.getSrc());
-                        if (CraftingCompat.debugLogs && ae2addon$logHot()) {
-                            AE2Addon.LOGGER.info(
-                                    "[ae2addon][settle] 物理入网(账务后): key={} 期望{} 实插{} root=true",
-                                    key, amount, insertedAmt);
+                        // ⚠ 2026-09-26 修复（sensei：下 2 次单，网络里出了 4 倍产物）：
+                        // `CraftingCpuLogic.insert` 对**根产物**走的是
+                        //   `job.link.insert(what, amount, mode)`  → CraftingLink 交割
+                        //   → `requester.insertCraftedItems(...)`
+                        // （字节码实测：appeng.crafting.execution.CraftingCpuLogic#insert 偏移 112-126）。
+                        // 而巨型订单的 requester 是 `BatchedRequester`，它**真的把产物插进 ME 网络**
+                        // （BatchedRequester:44-63 的 `storage.insert`），实插量就是这里的 creditedToCpu。
+                        // ⇒ **交割成功时产物已经入网了**。这里原来又无条件 `networkStorage.insert` 一次，
+                        // 等于同一份产物入网两遍（实测 2 次 1e11 单 → 网络里 4e11）。
+                        // 修法：**只补交割没覆盖的差额**——
+                        //   · requester 全收了（creditedToCpu == amount）→ 不再入网；
+                        //   · requester 没收到（0，例如任务已结束 / 无 link）→ 全额兜底入网（保住原意图）；
+                        //   · 部分交割（网络满等）→ 只补差额。
+                        long alreadyDelivered = Math.max(0L, creditedToCpu);
+                        long toInsert = amount - Math.min(amount, alreadyDelivered);
+                        if (toInsert <= 0) {
+                            if (CraftingCompat.debugLogs && ae2addon$logHot()) {
+                                AE2Addon.LOGGER.info(
+                                        "[ae2addon][settle] 根产物已由交割送达，跳过物理入网: key={} 量={} 交割={}",
+                                        key, amount, creditedToCpu);
+                            }
+                        } else {
+                            // ⚠️ AE2 insert 返回「已插入量」（非剩余量）——2026-09-04 20:40 修正误报
+                            long insertedAmt = networkStorage.insert(key, toInsert,
+                                    appeng.api.config.Actionable.MODULATE, cluster.getSrc());
+                            if (CraftingCompat.debugLogs && ae2addon$logHot()) {
+                                AE2Addon.LOGGER.info(
+                                        "[ae2addon][settle] 物理入网(账务后): key={} 期望{} 实插{} root=true 交割={} 补差={}",
+                                        key, amount, insertedAmt, creditedToCpu, toInsert);
+                            }
+                            if (insertedAmt < toInsert && CraftingCompat.debugLogs) {
+                                AE2Addon.LOGGER.warn(
+                                        "[ae2addon][settle] 根产物入网部分失败: key={} 已插{} 期望补差{}（网络满？）",
+                                        key, insertedAmt, toInsert);
+                            }
                         }
-                        if (insertedAmt < amount && CraftingCompat.debugLogs) {
-                            AE2Addon.LOGGER.warn(
-                                    "[ae2addon][settle] 根产物入网部分失败: key={} 已插{} 期望{}（网络满？）",
-                                    key, insertedAmt, amount);
-                        }
-                        // ⚠ 2026-09-19 修正误报：根产物的 `insert` 返回的是 **CraftingLink 收了多少**，
+                        // ⚠ 2026-09-19 注释保留：根产物的 `insert` 返回的是 **CraftingLink 收了多少**，
                         // 而这个设计里"产物物理入网、requester 再去网络里取"本来就是正常路径
-                        // （sensei 语义：产物注入网络）⇒ link 收 0 **不代表**出错。
+                        // （sensei 语义：产物注入网络）⇒ link 收 0 **不代表**出错（那种情况上面会全额兜底入网）。
                         // 只在**任务已经没了**（取消/结束）时才值得报警。
                         if (creditedToCpu <= 0 && ae2addon$getJob() == null && CraftingCompat.debugLogs) {
                             AE2Addon.LOGGER.warn(

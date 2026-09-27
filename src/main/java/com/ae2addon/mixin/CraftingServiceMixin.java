@@ -184,6 +184,20 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                         long amount = job.finalOutput().amount();
                         ICraftingPlan replacement = ae2addon$buildModuleSettlePlan(
                                 this.grid, module, finalKey, amount);
+                        // ⚠ 2026-09-26 与 tryModuleSettlePlan 同一道闸门：需求乘爆 long 时
+                        // expandMaterial 会把缺口兜底成 Long.MAX_VALUE/2（≈4.61e18，恰好等于
+                        // OVERFLOW_THRESHOLD），这种已损坏的替换计划绝不能提交给 CPU ——
+                        // 否则 CPU 拿假需求去网络提货，报「无法从网络取出」（伪装成缺料）。
+                        // 这里改成不替换，让流程继续往下走到巨型订单拆批。
+                        if (replacement != null
+                                && (ae2addon$isOversized(replacement)
+                                        || ae2addon$hasOverflow(replacement))) {
+                            com.ae2addon.AE2Addon.LOGGER.warn(
+                                    "[ae2addon] submitJob增殖替换计划超限（需求超出 long 记账范围）"
+                                            + "→ 不替换，交给巨型订单拆批: what={} amount={}",
+                                    finalKey, amount);
+                            replacement = null;
+                        }
                         if (replacement != null) {
                             com.ae2addon.AE2Addon.LOGGER.warn(
                                     "[ae2addon] submitJob替换增殖计划: what={} amount={}（VM计划缺失自身种子，改用模块即时结算计划）",
@@ -401,7 +415,22 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             }
             return;
         }
+        // ⚠ 2026-09-26（sensei：拆批第 1 批提交被第三方 mod 判 INCOMPLETE_PLAN）：
+        // 上面的 analysis 是用 OVERFLOW_THRESHOLD（Long.MAX）算的，它的 maxSafeBatch 会让
+        // "最底层材料需求正好贴着 Long.MAX"（实测 perBatch=2.38e10，× 每单位 9^9 ≈ 9.22e18）。
+        // 而 Applied Enhancements 的 CraftingServiceLongSafetyMixin 在 submitJob 里用
+        // NativeCraftingLongSafety.validatePlan 做数值一致性校验，这种贴着溢出线的 plan 被判
+        // "不安全" → 直接返回 INCOMPLETE_PLAN（跟缺料无关）。
+        // 所以**拆批粒度另按 SAFE_LIMIT（Long.MAX/4）重算一次**，取两者较小的：
+        // 判定"是否要拆批"仍用真溢出线（不能用 SAFE_LIMIT，会误伤 10^16~10^18 合法订单），
+        // 而"每批多大"用留了余量的安全线。
         long perBatch = analysis.maxSafeBatch;
+        try {
+            perBatch = Math.min(perBatch, RequirementCalculator.maxSafeBatch(
+                    grid, what, amount, BatchedCraftingOrder.SAFE_LIMIT));
+        } catch (RuntimeException ignored) {
+            // 重算失败 → 退回 analysis 的值（旧的贴线行为，不会更差）
+        }
 
         // 超限：估算需求（饱和到 long 供确认界面显示）并返回真 CraftingPlan
         var used = new KeyCounter();
@@ -466,6 +495,24 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             if (plan == null) {
                 return false;
             }
+            // ⚠ 2026-09-26 修复（sensei：溢出对象本该由「巨型订单」自动拆批，而不是报缺料）：
+            // 即时结算在这条路径上是**无条件优先**的（见 beginCraftingCalculation 里
+            // 「先无条件尝试即时结算」那段注释），代价是它**绕过了紧随其后的
+            // RequirementCalculator.analyze + 拆批判定**。
+            // 于是当 buildModuleSettlePlan 里的 expandMaterial 递归展开把 needPer×times
+            // 乘爆 long（兜底塞 Long.MAX_VALUE/2 ≈ 4.61e18，恰好等于 OVERFLOW_THRESHOLD），
+            // 这个已损坏的计划会被直接提交给 CPU —— CPU 拿着 4.6e18 的假需求去网络提货，
+            // 必然失败，表现为 sensei 实测的「4.6E原石无法从网络取出」（伪装成缺料的算术溢出）。
+            // 现在：计划一旦超限就不接管，返回 false 让调用方自然回落到后面的拆批路径
+            // （RequirementCalculator.analyze → BatchedCraftingOrder 自动分批）。
+            // 不超限时行为完全不变，增殖单绕开 VM 卡死的那条老路照旧。
+            if (ae2addon$isOversized(plan) || ae2addon$hasOverflow(plan)) {
+                com.ae2addon.AE2Addon.LOGGER.warn(
+                        "[ae2addon] 模块即时结算计划超限（需求超出 long 记账范围）"
+                                + "→ 不接管，回落到巨型订单拆批: what={} amount={}",
+                        what, amount);
+                return false;
+            }
             callback.cancel();
             callback.setReturnValue(CompletableFuture.completedFuture(plan));
             return true;
@@ -521,8 +568,10 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
         // 100 亿单要下两次才出 200 亿）。long 域完整执行；ScaledPattern 批量
         // N× 乘法溢出由 multiplyExact 异常自动回退 1×（已有保护）。
         long safeTimes = times;
-        // 自指种子集合（产物=输入的增殖配方，如模板复制）：种子 used 只放 1
-        // 份起手——全量备 N 个自身种子备不齐；CPU 逐次结算靠产物倍增滚雪球。
+        // 自指种子集合（产物=输入的增殖配方，如模板复制）：种子 used 按
+        // 「需要量 ∩ 网络库存」登记（2026-09-26 起；原来写死 1 份，导致合成界面的
+        // 材料需求与真实库存完全脱节，100M 库存也只显示 1）；不足的部分由 CPU
+        // 逐次结算靠产物倍增滚雪球补足。
         java.util.Set<AEKey> selfKeys = new java.util.HashSet<>();
         if (outs != null) {
             for (var o : outs) {
@@ -546,13 +595,44 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             if (gs == null || gs.what() == null) {
                 continue;
             }
-            if (selfKeys.contains(gs.what())) {
-                used.add(gs.what(), 1); // 自指种子：1 份起手
-                continue;
-            }
             long mult = Math.max(1, inputGroup.getMultiplier());
             long needPer = gs.amount() * mult;
             if (needPer <= 0) {
+                continue;
+            }
+            if (selfKeys.contains(gs.what())) {
+                // ⚠ 2026-09-26 修正（sensei：合成界面输入 100M，材料需求却显示 1）：
+                // **顶层**自指种子登记在这里，界面显示的就是这一条（上一轮改的
+                // expandMaterial#subSelf 只管子输入递归，所以完全不生效）。
+                // 原来写死 1 份（"1 份起手，其余靠滚雪球"），副作用是材料需求与真实库存脱节。
+                // 现在按「需要量 ∩ 网络库存」登记：
+                //   · 库存 ≥ 需要量 → 登记需要量（数字准确；每轮实际执行量仍被 taskRemaining
+                //     夹住，不会过产）；
+                //   · 库存 < 需要量 → 只登记库存（不误判缺料，缺口由产物倍增滚雪球补足）；
+                //   · 至少 1 → 保住"1 份起手"的滚雪球语义。
+                long seedNeed;
+                try {
+                    seedNeed = Math.multiplyExact(needPer, safeTimes);
+                } catch (ArithmeticException overflow) {
+                    used.add(gs.what(), Long.MAX_VALUE);
+                    continue;
+                }
+                long seedStock = 0;
+                try {
+                    var seedStorage = grid.getStorageService().getInventory();
+                    seedStock = seedStorage.extract(gs.what(), seedNeed,
+                            appeng.api.config.Actionable.SIMULATE,
+                            appeng.api.networking.security.IActionSource.empty());
+                } catch (RuntimeException ignored) {
+                    seedStock = 0;
+                }
+                long seedReg = Math.max(1L, Math.min(seedNeed, seedStock));
+                used.add(gs.what(), seedReg);
+                if (CraftingCompat.debugLogs) {
+                    com.ae2addon.AE2Addon.LOGGER.info(
+                            "[ae2addon][settle] 自指种子按库存登记: key={} 需要={} 库存={} 登记={}",
+                            gs.what(), seedNeed, seedStock, seedReg);
+                }
                 continue;
             }
             // 库存抵扣：网络可提取的先用库存，缺口才展开配方链
@@ -560,8 +640,15 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
             try {
                 needTotal = Math.multiplyExact(needPer, safeTimes);
             } catch (ArithmeticException overflow) {
-                // 超出 long 记账上限：放行原路径（模拟拦截/拆批会处理）
-                used.add(gs.what(), Long.MAX_VALUE / 2);
+                // ⚠ 2026-09-26 修正（sensei：1e11 仍报「4.6E原石无法从网络取出」）：
+                // 这里原来塞 Long.MAX_VALUE/2（≈4.61e18），而 isOversized 的阈值
+                // OVERFLOW_THRESHOLD = Long.MAX_VALUE（BatchedCraftingOrder:54）——
+                // 哨兵**比阈值小一半**，于是 `value >= OVERFLOW_THRESHOLD` 判 false，
+                // 这个已损坏的计划被判成"正常"，绕过拆批直接提交给 CPU →
+                // CPU 拿 4.61e18 假需求去网络提货，报「无法从网络取出」（伪装成缺料）。
+                // 改成 Long.MAX_VALUE：与阈值一致，也与 AE2-VM 自己的 cap 哨兵同形
+                // （见 ae2addon$isOversized 里"用 > 会漏判"那段注释）。
+                used.add(gs.what(), Long.MAX_VALUE);
                 continue;
             }
             if (needTotal <= 0) {
@@ -691,7 +778,38 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                         }
                     }
                     if (subSelf) {
-                        used.add(subGs.what(), 1); // 子增殖种子：1 份起手
+                        // ⚠ 2026-09-26 修正（sensei：网络里有 100M 叶子材料，自指增殖的材料需求却写 1）：
+                        // 这里原来写死 `used.add(what, 1)`（"1 份起手，其余靠滚雪球"）。用意是避免
+                        // "全量种子需求备不齐 → AE2 直接判缺料"，但副作用是**材料需求 / 可用判断与真实
+                        // 库存完全脱节**（100M 库存也只显示 1）。
+                        // 现在按「需要量 ∩ 网络库存」登记：
+                        //   · 库存 ≥ 需要量 → 登记需要量（数字准确；每轮实际执行量仍被 taskRemaining
+                        //     夹住，所以不会过产）；
+                        //   · 库存 < 需要量 → 只登记库存（不会误判缺料，缺口由产物倍增滚雪球补足）；
+                        //   · 至少 1：保住"1 份起手"的滚雪球语义。
+                        long seedMult = Math.max(1, inputGroup.getMultiplier());
+                        long seedNeed;
+                        try {
+                            seedNeed = Math.multiplyExact(
+                                    Math.multiplyExact(subGs.amount(), seedMult), subTimes);
+                        } catch (ArithmeticException overflow) {
+                            used.add(subGs.what(), Long.MAX_VALUE);
+                            continue;
+                        }
+                        if (seedNeed <= 0) {
+                            used.add(subGs.what(), 1L);
+                            continue;
+                        }
+                        long seedStock = 0;
+                        try {
+                            var seedStorage = grid.getStorageService().getInventory();
+                            seedStock = seedStorage.extract(subGs.what(), seedNeed,
+                                    appeng.api.config.Actionable.SIMULATE,
+                                    appeng.api.networking.security.IActionSource.empty());
+                        } catch (RuntimeException ignored) {
+                            seedStock = 0;
+                        }
+                        used.add(subGs.what(), Math.max(1L, Math.min(seedNeed, seedStock)));
                         continue;
                     }
                     long subMult = Math.max(1, inputGroup.getMultiplier());
@@ -700,7 +818,7 @@ public abstract class CraftingServiceMixin implements IntegratedCraftingServiceB
                         subNeed = Math.multiplyExact(
                                 Math.multiplyExact(subGs.amount(), subMult), subTimes);
                     } catch (ArithmeticException overflow) {
-                        used.add(subGs.what(), Long.MAX_VALUE / 2);
+                        used.add(subGs.what(), Long.MAX_VALUE);
                         continue;
                     }
                     if (subNeed > 0) {
