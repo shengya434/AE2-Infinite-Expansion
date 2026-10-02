@@ -35,15 +35,19 @@ public final class Mode2ConfigScreen extends GuiContainer {
     private final List<Mode2ConfigPacket.PanelEntry> all = new ArrayList<>();
     private final List<Mode2ConfigPacket.PanelEntry> filtered = new ArrayList<>();
     private final Map<Integer, List<Mode2ConfigPacket.PanelEntry>> pending = new TreeMap<>();
+    private final ChunkRetry panelRetry = new ChunkRetry();
     private final RejectListState rejectList = new RejectListState();
     private final List<ItemStack> blacklist = new ArrayList<>();
     private final Map<String, String> committedAmounts = new LinkedHashMap<>();
     private final Map<Integer, List<ItemStack>> pendingBlacklist = new TreeMap<>();
+    private final ChunkRetry blacklistRetry = new ChunkRetry();
     private final Map<String, Integer> oreRules = new LinkedHashMap<>(), modRules = new LinkedHashMap<>();
     private int expectedBlacklist;
+    private boolean blacklistComplete;
     private final List<ItemStack> rejectItems = new ArrayList<>();
     private int expectedChunks;
-    private long pendingSince;
+    private boolean panelComplete;
+    private boolean ruleInstant;
     private int uiState; // 0: choose work mode, 1: editor
     private int workMode = 1;
     private long currentThreshold = UnlimitedCellInventory.DEFAULT_THRESHOLD;
@@ -127,6 +131,8 @@ public final class Mode2ConfigScreen extends GuiContainer {
         buttonList.add(new GuiButton(14, x + 112, y + 170, 43, 16, I18n.format("gui.ae2addon.p3.save_qty")));
         buttonList.add(new GuiButton(15, x + 160, y + 170, 42, 16,
                 I18n.format(quantityLock ? "gui.ae2addon.p3.lock" : "gui.ae2addon.p3.unlock")));
+        buttonList.add(new GuiButton(16, x + 205, y + 170, 41, 16,
+                I18n.format(ruleInstant ? "gui.ae2addon.p3.all_instant" : "gui.ae2addon.p3.all_touch")));
         defaultButton = new GuiButton(11, x + 10, y + 172, 150, 16, "");
         defaultButton.y = y + 35;
         defaultButton.width = 126;
@@ -147,6 +153,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
             buttonList.get(8).visible = !quantityEditing.isEmpty();
             buttonList.get(9).visible = !quantityEditing.isEmpty();
         }
+    }
+
+    private void updateRuleInstantButton() {
+        for (GuiButton button : buttonList) if (button.id == 16)
+            button.displayString = I18n.format(ruleInstant ? "gui.ae2addon.p3.all_instant"
+                    : "gui.ae2addon.p3.all_touch");
     }
 
     @Override protected void actionPerformed(GuiButton button) {
@@ -175,10 +187,19 @@ public final class Mode2ConfigScreen extends GuiContainer {
         else if (button.id == 15) {
             quantityLock = !quantityLock;
             button.displayString = I18n.format(quantityLock ? "gui.ae2addon.p3.lock" : "gui.ae2addon.p3.unlock");
+        } else if (button.id == 16) {
+            ruleInstant = !ruleInstant;
+            updateRuleInstantButton();
+            CellNetwork.send(new Mode2ConfigPacket(10, ruleInstant));
         }
     }
 
-    private void refresh() { CellNetwork.send(new Mode2ConfigPacket(3)); }
+    private void refresh() {
+        if (panelComplete) { pending.clear(); expectedChunks = 0; panelComplete = false; }
+        if (blacklistComplete) { pendingBlacklist.clear(); expectedBlacklist = 0; blacklistComplete = false; }
+        panelRetry.manualRefresh(); blacklistRetry.manualRefresh(); rejectList.manualRefresh();
+        CellNetwork.send(new Mode2ConfigPacket(3));
+    }
 
     private void saveThreshold() {
         try {
@@ -224,6 +245,8 @@ public final class Mode2ConfigScreen extends GuiContainer {
     public void accept(Mode2ConfigPacket packet) {
         if (packet.type == 18 && packet.state != null) {
             rejectDefault = packet.state.getBoolean("default");
+            ruleInstant = packet.state.getBoolean("ruleInstant");
+            updateRuleInstantButton();
             rejectOnCount = packet.state.getTagList("on", 10).tagCount();
             rejectOffCount = packet.state.getTagList("off", 10).tagCount();
             committedAmounts.clear();
@@ -236,17 +259,20 @@ public final class Mode2ConfigScreen extends GuiContainer {
             }
             updateDefaultButton();
         } else if (packet.type == 4) {
-            if (packet.chunkIndex == 0) {
+            if (expectedChunks == 0 || expectedChunks != packet.totalChunks) {
                 pending.clear(); expectedChunks = packet.totalChunks;
-                pendingSince = System.currentTimeMillis();
+                panelComplete = false;
+                panelRetry.start();
             }
             if (expectedChunks != packet.totalChunks || packet.chunkIndex < 0
                     || packet.chunkIndex >= expectedChunks) return;
-            pending.put(packet.chunkIndex, packet.entries);
+            if (panelComplete) pending.put(packet.chunkIndex, packet.entries);
+            else if (pending.putIfAbsent(packet.chunkIndex, packet.entries) == null) panelRetry.progress();
             if (pending.size() == expectedChunks) {
                 all.clear();
                 for (int i = 0; i < expectedChunks; i++) all.addAll(pending.get(i));
-                pending.clear(); expectedChunks = 0;
+                // Keep complete chunks: trailing packets from a retry must not start a false partial list.
+                panelComplete = true;
                 applyFilters();
             }
         } else if (packet.type == 21) {
@@ -254,13 +280,18 @@ public final class Mode2ConfigScreen extends GuiContainer {
             rejectItems.clear(); rejectItems.addAll(rejectList.on()); rejectItems.addAll(rejectList.off());
             applyFilters();
         } else if (packet.type == 12) {
-            if (packet.chunkIndex == 0) { pendingBlacklist.clear(); expectedBlacklist = packet.totalChunks; }
-            if (expectedBlacklist == packet.totalChunks) {
-                pendingBlacklist.put(packet.chunkIndex, packet.keys);
+            if (expectedBlacklist == 0 || expectedBlacklist != packet.totalChunks) {
+                pendingBlacklist.clear(); expectedBlacklist = packet.totalChunks;
+                blacklistComplete = false; blacklistRetry.start();
+            }
+            if (expectedBlacklist == packet.totalChunks && packet.chunkIndex >= 0
+                    && packet.chunkIndex < expectedBlacklist) {
+                if (blacklistComplete) pendingBlacklist.put(packet.chunkIndex, packet.keys);
+                else if (pendingBlacklist.putIfAbsent(packet.chunkIndex, packet.keys) == null) blacklistRetry.progress();
                 if (pendingBlacklist.size() == expectedBlacklist) {
                     blacklist.clear();
                     for (int i = 0; i < expectedBlacklist; i++) blacklist.addAll(pendingBlacklist.get(i));
-                    expectedBlacklist = 0; pendingBlacklist.clear();
+                    blacklistComplete = true;
                     applyFilters();
                 }
             }
@@ -293,12 +324,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
         if (rejectTab) {
             source.clear();
             if (!rejectList.pending()) for (ItemStack item : rejectItems)
-                source.add(new Mode2ConfigPacket.PanelEntry(item, BigInteger.ZERO, false, 0L, 0L, false));
+                source.add(new Mode2ConfigPacket.PanelEntry(item, BigInteger.ZERO, false, 0L, 0L, false, false));
         } else if ("blacklist".equals(activeRule)) {
             for (ItemStack item : blacklist) {
                 boolean present = false;
                 for (Mode2ConfigPacket.PanelEntry entry : source) if (sameKey(entry.item, item)) { present = true; break; }
-                if (!present) source.add(new Mode2ConfigPacket.PanelEntry(item, BigInteger.ZERO, false, 0L, 0L, false));
+                if (!present) source.add(new Mode2ConfigPacket.PanelEntry(item, BigInteger.ZERO, false, 0L, 0L, false, false));
             }
         }
         for (Mode2ConfigPacket.PanelEntry entry : source) {
@@ -333,6 +364,9 @@ public final class Mode2ConfigScreen extends GuiContainer {
         super.updateScreen();
         if (rebuildPending) { rebuildPending = false; buildControls(); }
         if (uiState == 1 && !lastSearch.equals(searchInput.getText())) applyFilters();
+        if (panelRetry.retryDue(expectedChunks > 0 && !panelComplete)) CellNetwork.send(new Mode2ConfigPacket(3));
+        if (blacklistRetry.retryDue(expectedBlacklist > 0 && !blacklistComplete)) CellNetwork.send(new Mode2ConfigPacket(11));
+        if (rejectList.retryDue()) CellNetwork.send(new Mode2ConfigPacket(23));
     }
 
     @Override protected void drawGuiContainerBackgroundLayer(float partialTicks, int mouseX, int mouseY) {
@@ -388,13 +422,22 @@ public final class Mode2ConfigScreen extends GuiContainer {
         String blackChip = I18n.format("gui.ae2addon.p3.cat_blacklist");
         if (chipX >= guiLeft + 70 && chipX + fontRenderer.getStringWidth(blackChip) <= guiLeft + 246)
             fontRenderer.drawString(blackChip, chipX, guiTop + 75, 0xFF7777);
-        if (expectedChunks > 0) fontRenderer.drawString(
+        if (panelRetry.exhausted(expectedChunks > 0 && !panelComplete)) fontRenderer.drawString(
+                I18n.format("gui.ae2addon.p3.retry_stopped", I18n.format("gui.ae2addon.p3.list_panel")),
+                guiLeft + 12, guiTop + 98, 0xFF5555);
+        else if (blacklistRetry.exhausted(expectedBlacklist > 0 && !blacklistComplete)) fontRenderer.drawString(
+                I18n.format("gui.ae2addon.p3.retry_stopped", I18n.format("gui.ae2addon.p3.cat_blacklist")),
+                guiLeft + 12, guiTop + 98, 0xFF5555);
+        else if (rejectList.exhausted()) fontRenderer.drawString(
+                I18n.format("gui.ae2addon.p3.retry_stopped", I18n.format("gui.ae2addon.mode2.tab_reject")),
+                guiLeft + 12, guiTop + 98, 0xFF5555);
+        else if (expectedChunks > 0 && !panelComplete) fontRenderer.drawString(
                 I18n.format("gui.ae2addon.p3.partial", pending.size(), expectedChunks),
-                guiLeft + 12, guiTop + 98, System.currentTimeMillis() - pendingSince > 5000 ? 0xFF5555 : 0xFFFF77);
+                guiLeft + 12, guiTop + 98, 0xFFFF77);
         else if (rejectTab && rejectList.pending()) fontRenderer.drawString(
                 I18n.format("gui.ae2addon.p3.partial", rejectList.received(), rejectList.expected()),
-                guiLeft + 12, guiTop + 98, rejectList.timedOut() ? 0xFF5555 : 0xFFFF77);
-        else if (expectedBlacklist > 0) fontRenderer.drawString(
+                guiLeft + 12, guiTop + 98, 0xFFFF77);
+        else if (expectedBlacklist > 0 && !blacklistComplete) fontRenderer.drawString(
                 I18n.format("gui.ae2addon.p3.partial", pendingBlacklist.size(), expectedBlacklist),
                 guiLeft + 12, guiTop + 98, 0xFFFF77);
         else if (filtered.isEmpty()) fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.no_match"),
@@ -409,7 +452,8 @@ public final class Mode2ConfigScreen extends GuiContainer {
                     ? I18n.format("gui.ae2addon.mode2.reject_mark") : I18n.format("gui.ae2addon.mode2.reject_allow_mark"))
                     : (entry.infinite ? "§b∞" : shortAmount(entry.amount))
                     + (entry.quantityLocked ? " §eL" : "")
-                    + (containsStack(blacklist, entry.item) ? " §cX" : "");
+                    + (containsStack(blacklist, entry.item) ? " §cX" : "")
+                    + (entry.whitelisted ? " §aW" : "");
             fontRenderer.drawString(status, guiLeft + 149, y, 0xFFFFFF);
         }
         if (workMode == 1) thresholdInput.drawTextBox();
@@ -429,12 +473,17 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 tooltip.add(I18n.format("gui.ae2addon.mode2.item_thr_title") + ": " + entry.threshold);
                 if (entry.quantityLocked) tooltip.add(I18n.format("gui.ae2addon.mode2.qty_lock_on"));
                 if (containsStack(blacklist, entry.item)) tooltip.add(I18n.format("gui.ae2addon.mode2.blacklisted"));
+                if (!rejectTab && entry.whitelisted)
+                    tooltip.add(I18n.format("gui.ae2addon.p3.remove_whitelist_tip"));
                 if (entry.infinite && committedAmounts.containsKey(itemId(entry.item)))
                     tooltip.add(I18n.format("gui.ae2addon.p3.committed", committedAmounts.get(itemId(entry.item))));
                 if (rejectTab) tooltip.add(I18n.format("gui.ae2addon.mode2.reject_tip"));
                 drawHoveringText(tooltip, mouseX, mouseY);
             }
         }
+        if (mouseX >= guiLeft + 205 && mouseX < guiLeft + 246
+                && mouseY >= guiTop + 170 && mouseY < guiTop + 186)
+            drawHoveringText(I18n.format("gui.ae2addon.p3.rule_all_tip"), mouseX, mouseY);
     }
 
     private static String shortAmount(BigInteger amount) {
@@ -506,6 +555,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
                         CellNetwork.send(new Mode2ConfigPacket(22, entry.item.copy()));
                     else if (!rejectTab && mouseButton == 1 && isShiftKeyDown())
                         CellNetwork.send(new Mode2ConfigPacket(11, entry.item.copy()));
+                    else if (!rejectTab && mouseButton == 1 && isCtrlKeyDown() && entry.whitelisted
+                            && entry.item.getItem().getRegistryName() != null) {
+                        Mode2ConfigPacket remove = new Mode2ConfigPacket(2);
+                        remove.text = entry.item.getItem().getRegistryName().toString();
+                        CellNetwork.send(remove);
+                    }
                     else if (!rejectTab && mouseButton == 0 && isCtrlKeyDown()) {
                         hideItemThreshold();
                         quantityEditing = entry.item.copy(); quantityLock = entry.quantityLocked;

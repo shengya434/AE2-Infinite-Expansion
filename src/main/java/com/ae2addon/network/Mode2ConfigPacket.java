@@ -73,6 +73,7 @@ public final class Mode2ConfigPacket implements IMessage {
         Mode2ConfigPacket p = new Mode2ConfigPacket(18);
         p.state = new NBTTagCompound();
         p.state.setBoolean("default", inv.rejectDefault());
+        p.state.setBoolean("ruleInstant", inv.isRuleInstant());
         NBTTagList rejectOn = new NBTTagList(), rejectOff = new NBTTagList();
         for (IAEItemStack key : inv.getRejectOnKeys())
             rejectOn.appendTag(key.createItemStack().writeToNBT(new NBTTagCompound()));
@@ -144,6 +145,7 @@ public final class Mode2ConfigPacket implements IMessage {
                     buf.writeVarLong(entry.bytes);
                     buf.writeLong(entry.threshold);
                     buf.writeBoolean(entry.quantityLocked);
+                    buf.writeBoolean(entry.whitelisted);
                 }
                 break;
             case 3: case 23: break;
@@ -188,8 +190,9 @@ public final class Mode2ConfigPacket implements IMessage {
                         long bytes = buf.readVarLong();
                         long threshold = buf.readLong();
                         boolean locked = buf.readBoolean();
+                        boolean whitelisted = buf.readBoolean();
                         if (!stack.isEmpty() && amount.length > 0) entries.add(new PanelEntry(stack, new BigInteger(amount),
-                                infinite, bytes, threshold, locked));
+                                infinite, bytes, threshold, locked, whitelisted));
                     }
                     break;
                 case 3: case 23: break;
@@ -206,12 +209,14 @@ public final class Mode2ConfigPacket implements IMessage {
         public final boolean infinite;
         public final long bytes;
         public final boolean quantityLocked;
+        public final boolean whitelisted;
         public final long threshold;
 
         public PanelEntry(ItemStack item, BigInteger amount, boolean infinite, long bytes,
-                long threshold, boolean quantityLocked) {
+                long threshold, boolean quantityLocked, boolean whitelisted) {
             this.item = item; this.amount = amount; this.infinite = infinite;
             this.bytes = bytes; this.threshold = threshold; this.quantityLocked = quantityLocked;
+            this.whitelisted = whitelisted;
         }
     }
 
@@ -246,7 +251,12 @@ public final class Mode2ConfigPacket implements IMessage {
         } else if (msg.type == 8) inv.setRejectDefault(msg.flag);
         else if (msg.type == 10) inv.setRuleInstant(msg.flag);
         else if (msg.type == 11) {
-            IAEItemStack key = key(msg.item); if (key == null) return; inv.toggleBlacklist(key);
+            IAEItemStack key = key(msg.item);
+            if (key == null) {
+                sendKeys(player, 12, stackList(inv.getBlacklist()), new ArrayList<>());
+                return;
+            }
+            inv.toggleBlacklist(key);
         } else if (msg.type == 14) inv.wipeAllData();
         else if (msg.type == 15) inv.setRuleMode(UnlimitedCellInventory.ruleKey(msg.isOre, msg.text), msg.ruleMode);
         else if (msg.type == 16) {
@@ -288,7 +298,7 @@ public final class Mode2ConfigPacket implements IMessage {
         List<PanelEntry> all = new ArrayList<>();
         for (UnlimitedCellInventory.PanelItem row : inv.getPanelItems()) {
             all.add(new PanelEntry(row.key.createItemStack(), row.amount, row.isInfinite,
-                    row.bytes, row.itemThreshold, row.quantityLocked));
+                    row.bytes, row.itemThreshold, row.quantityLocked, inv.isWhitelisted(row.key)));
         }
         int total = Math.max(1, (all.size() + MAX_ITEMS_PER_CHUNK - 1) / MAX_ITEMS_PER_CHUNK);
         for (int index = 0; index < total; index++) {

@@ -70,7 +70,10 @@ public final class ModeSelectScreen extends GuiContainer {
             rejectDefault = !rejectDefault;
             updateDefaultButton();
             CellNetwork.send(new Mode2ConfigPacket(8, rejectDefault));
-        } else if (button.id == 9) CellNetwork.send(new Mode2ConfigPacket(23));
+        } else if (button.id == 9) {
+            rejectList.manualRefresh();
+            CellNetwork.send(new Mode2ConfigPacket(23));
+        }
     }
 
     public void accept(Mode2ConfigPacket packet) {
@@ -88,6 +91,11 @@ public final class ModeSelectScreen extends GuiContainer {
         }
     }
 
+    @Override public void updateScreen() {
+        super.updateScreen();
+        if (rejectList.retryDue()) CellNetwork.send(new Mode2ConfigPacket(23));
+    }
+
     @Override protected void drawGuiContainerBackgroundLayer(float partialTicks, int mouseX, int mouseY) {
         mc.getTextureManager().bindTexture(PANEL);
         drawTexturedModalRect(guiLeft, guiTop, 0, 0, xSize, ySize);
@@ -102,9 +110,12 @@ public final class ModeSelectScreen extends GuiContainer {
                 I18n.format("gui.ae2addon.mode_select.format_warn"), 160), guiLeft + 10, guiTop + 141, 0xBBBBBB);
         fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_reject") + " (" + onCount + "/" + offCount + ")",
                 guiLeft + 10, guiTop + 158, 0xFFFFFF);
-        if (rejectList.pending()) fontRenderer.drawString(
+        if (rejectList.exhausted()) fontRenderer.drawString(
+                I18n.format("gui.ae2addon.p3.retry_stopped", I18n.format("gui.ae2addon.mode2.tab_reject")),
+                guiLeft + 10, guiTop + 174, 0xFF5555);
+        else if (rejectList.pending()) fontRenderer.drawString(
                 I18n.format("gui.ae2addon.p3.partial", rejectList.received(), rejectList.expected()),
-                guiLeft + 10, guiTop + 174, rejectList.timedOut() ? 0xFF5555 : 0xFFFF77);
+                guiLeft + 10, guiTop + 174, 0xFFFF77);
         else if (visibleRejects.isEmpty()) fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.reject_empty"),
                 guiLeft + 10, guiTop + 174, 0xAAAAAA);
         for (int i = 0; !rejectList.pending() && i < 3 && i + rejectScroll < visibleRejects.size(); i++) {

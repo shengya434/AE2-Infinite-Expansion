@@ -296,3 +296,19 @@
   public int tagCount();
 === net.minecraft.util.ResourceLocation
   public java.lang.String getNamespace();
+
+=== P3 closeout: Forge 1.12.2 mapped stable_39 javap -p (2026-10-02) ===
+Classpath: forge-1.12.2-14.23.5.2859_mapped_stable_39-1.12.jar
+=== net.minecraft.client.gui.GuiScreen
+  public void drawHoveringText(java.lang.String, int, int);
+  public void drawHoveringText(java.util.List<java.lang.String>, int, int);
+  public static boolean isCtrlKeyDown();
+  public static boolean isShiftKeyDown();
+=== net.minecraft.client.gui.GuiButton
+  public java.lang.String displayString;
+  public net.minecraft.client.gui.GuiButton(int, int, int, int, int, java.lang.String);
+=== net.minecraft.nbt.NBTTagCompound
+  public void setBoolean(java.lang.String, boolean);
+  public boolean getBoolean(java.lang.String);
+=== net.minecraft.util.ResourceLocation
+  public java.lang.String toString();
