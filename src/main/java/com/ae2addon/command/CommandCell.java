@@ -30,7 +30,7 @@ import net.minecraft.util.text.TextComponentString;
  */
 public class CommandCell extends CommandBase {
 
-    private static final String USAGE = "/ae2addoncell <mode|wm|thr|wl|info|cancel> ...";
+    private static final String USAGE = "/ae2addoncell <mode|wm|thr|wl|info|cancel|reject|ore> ...";
 
     @Override
     public String getName() {
@@ -51,7 +51,7 @@ public class CommandCell extends CommandBase {
     public List<String> getTabCompletions(MinecraftServer server, ICommandSender sender, String[] args,
             @Nullable net.minecraft.util.math.BlockPos pos) {
         if (args.length == 1) {
-            return getListOfStringsMatchingLastWord(args, "mode", "wm", "thr", "wl", "info", "cancel", "reject");
+            return getListOfStringsMatchingLastWord(args, "mode", "wm", "thr", "wl", "info", "cancel", "reject", "ore");
         }
         if (args.length == 2 && "mode".equals(args[0])) {
             return getListOfStringsMatchingLastWord(args, "1", "2", "3");
@@ -67,6 +67,12 @@ public class CommandCell extends CommandBase {
         EntityPlayerMP player = getCommandSenderAsPlayer(sender);
         if (args.length < 1) {
             throw new CommandException(USAGE);
+        }
+
+        // Handled before heldCell(): this one asks about whatever item you are holding, not about the cell.
+        if ("ore".equalsIgnoreCase(args[0])) {
+            reportHeldItemOreNames(sender, player);
+            return;
         }
 
         UnlimitedCellInventory inv = heldCell(player);
@@ -194,6 +200,38 @@ public class CommandCell extends CommandBase {
     // NOTE: parseLong(String) is inherited from CommandBase (public static, throws
     // NumberInvalidException which is a CommandException) -- do not shadow it with a private method,
     // javac rejects the weaker access.
+
+    /**
+     * {@code /ae2addoncell ore} -- prints the registry name, mod id and every OreDictionary name the held
+     * item is actually registered under.
+     *
+     * <p>Exists because an ore rule has to be typed as an exact ore name, and there is no way to see those
+     * from outside the running game: scanning jars only proves a *string* exists somewhere, not that the
+     * OreDictionary ever got it. This asks the game itself.
+     */
+    private void reportHeldItemOreNames(ICommandSender sender, EntityPlayerMP player) throws CommandException {
+        ItemStack held = player.getHeldItemMainhand();
+        if (held == null || held.isEmpty()) {
+            throw new CommandException("手上没有物品：拿一个想查的物品再敲一次");
+        }
+        net.minecraft.util.ResourceLocation id = held.getItem().getRegistryName();
+        reply(sender, "物品: " + held.getDisplayName());
+        reply(sender, "注册名: " + (id == null ? "?" : id.toString()));
+        reply(sender, "模组 id: " + (id == null ? "?" : id.getNamespace()));
+        int[] oreIds = net.minecraftforge.oredict.OreDictionary.getOreIDs(held);
+        if (oreIds == null || oreIds.length == 0) {
+            reply(sender, "矿词: 无（该物品没有注册任何矿词）");
+            return;
+        }
+        StringBuilder names = new StringBuilder();
+        for (int oreId : oreIds) {
+            if (names.length() > 0) {
+                names.append(", ");
+            }
+            names.append(net.minecraftforge.oredict.OreDictionary.getOreName(oreId));
+        }
+        reply(sender, "矿词: " + names);
+    }
 
     private static void reply(ICommandSender sender, String message) {
         sender.sendMessage(new TextComponentString("[ae2addon] " + message));
