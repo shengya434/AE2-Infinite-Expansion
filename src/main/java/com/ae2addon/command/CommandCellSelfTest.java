@@ -1,6 +1,8 @@
 package com.ae2addon.command;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -352,6 +354,7 @@ public class CommandCellSelfTest extends CommandBase {
                 b11stored == 12345L && b11version == 2, "12345/2", b11stored + "/" + b11version);
 
         runRejectGroup(sender);
+        runRuleGroup(sender);
 
         finish(sender);
     }
@@ -456,6 +459,183 @@ public class CommandCellSelfTest extends CommandBase {
         data.wl.clear();
         data.ul.clear();
         data.m3.clear();
+        data.rejectOn.clear();
+        data.rejectOff.clear();
+        data.rejectDefault = false;
+        data.oreRules.clear();
+        data.modRules.clear();
+        data.ruleModes.clear();
+        data.touched.clear();
+        data.blacklist.clear();
+        data.qtyLocked.clear();
+        data.ruleInstant = true;
+    }
+
+    /**
+     * D group: batch rules (OreDictionary in 1.12.2), blacklist, quantity lock, panel enumeration,
+     * infinite toggle, wipe, and their persistence.
+     */
+    private void runRuleGroup(ICommandSender sender) {
+        IAEItemStack stick = key(Items.STICK);
+        IAEItemStack diamond = key(Items.DIAMOND);
+
+        // D1: mod rule in Instant mode -> infinite without ever storing it
+        UnlimitedCellInventory d1 = newInventory("d1");
+        d1.setMode(2);
+        d1.setWorkMode(1);
+        d1.setThreshold(1000000L);
+        d1.addModRule("minecraft");
+        boolean d1inf = d1.isInfiniteByRule(stick);
+        long d1take = size(d1.extractItems(stack(Items.STICK, 10000000L), Actionable.MODULATE, NO_SOURCE));
+        check(sender, "D1", "mod 规则 + Instant：没存过也能无限取 10^7",
+                d1inf && d1take == 10000000L, "true/10000000", d1inf + "/" + d1take);
+
+        // D2: same rule switched to Touch -> infinite only after it has been stored once
+        d1.setRuleMode(UnlimitedCellInventory.ruleKey(false, "minecraft"), 2);
+        boolean d2before = d1.isInfiniteByRule(stick);
+        d1.injectItems(stack(Items.STICK, 1L), Actionable.MODULATE, NO_SOURCE);
+        boolean d2after = d1.isInfiniteByRule(stick);
+        check(sender, "D2", "同一规则改 Touch：没存过不无限，存过 1 个后才无限",
+                !d2before && d2after, "false/true", d2before + "/" + d2after);
+
+        // D3: NBT variants must never take the rule path (the 1.20 vanishing-item bug)
+        UnlimitedCellInventory d3 = newInventory("d3");
+        d3.setMode(2);
+        d3.setWorkMode(1);
+        d3.addModRule("minecraft");
+        ItemStack taggedStack = new ItemStack(Items.STICK);
+        NBTTagCompound taggedTag = new NBTTagCompound();
+        taggedTag.setString("ae2addon_selftest", "tagged");
+        taggedStack.setTagCompound(taggedTag);
+        IAEItemStack taggedKey = aeStack(taggedStack, 1L);
+        boolean d3rule = d3.isInfiniteByRule(taggedKey);
+        d3.injectItems(aeStack(taggedStack, 7L), Actionable.MODULATE, NO_SOURCE);
+        long d3stored = d3.storedAmount(taggedKey).longValue();
+        check(sender, "D3", "带 NBT 的变体不进规则路径，7 个落在正常存储里",
+                !d3rule && d3stored == 7L, "false/7", d3rule + "/" + d3stored);
+
+        // D4: blacklist blocks the "store = infinite" promotion but not storage itself
+        UnlimitedCellInventory d4 = newInventory("d4");
+        d4.setMode(2);
+        d4.setWorkMode(2);
+        boolean d4bl = d4.toggleBlacklist(diamond);
+        d4.injectItems(stack(Items.DIAMOND, 5L), Actionable.MODULATE, NO_SOURCE);
+        long d4stored = d4.storedAmount(diamond).longValue();
+        check(sender, "D4", "黑名单：拦住「存入即无限」，5 个落普通存储不升级",
+                d4bl && d4.isBlacklisted(diamond) && !d4.isInfinite(diamond) && d4stored == 5L,
+                "true/true/false/5",
+                d4bl + "/" + d4.isBlacklisted(diamond) + "/" + d4.isInfinite(diamond) + "/" + d4stored);
+
+        // D5: quantity lock swallows inserts and caps extracts without changing the record
+        UnlimitedCellInventory d5 = newInventory("d5");
+        d5.setMode(2);
+        d5.setWorkMode(1);
+        d5.setStoredQuantity(diamond, BigInteger.valueOf(500), true);
+        d5.injectItems(stack(Items.DIAMOND, 100L), Actionable.MODULATE, NO_SOURCE);
+        long d5stored = d5.storedAmount(diamond).longValue();
+        long d5take = size(d5.extractItems(stack(Items.DIAMOND, 600L), Actionable.MODULATE, NO_SOURCE));
+        long d5after = d5.storedAmount(diamond).longValue();
+        check(sender, "D5", "数量锁定：存入被吞（仍 500）、取出限到 500 且记录不变",
+                d5.isQuantityLocked(diamond) && d5stored == 500L && d5take == 500L && d5after == 500L,
+                "true/500/500/500",
+                d5.isQuantityLocked(diamond) + "/" + d5stored + "/" + d5take + "/" + d5after);
+
+        // D6: panel infinite toggle, and cancelling must give the committed amount back
+        UnlimitedCellInventory d6 = newInventory("d6");
+        d6.setMode(2);
+        d6.setWorkMode(1);
+        d6.setThreshold(1000000L);
+        d6.injectItems(stack(Items.DIAMOND, 300L), Actionable.MODULATE, NO_SOURCE);
+        boolean d6on = d6.togglePanelInfinite(diamond);
+        long d6ca = d6.getCommitedAmount(diamond).longValue();
+        boolean d6s2clear = d6.rawData().s2.isEmpty();
+        boolean d6off = d6.togglePanelInfinite(diamond);
+        long d6back = d6.storedAmount(diamond).longValue();
+        check(sender, "D6", "面板切换无限：300 搬进承诺额度；再切换 300 回到普通存储（不丢数）",
+                d6on && d6ca == 300L && d6s2clear && !d6off && d6back == 300L,
+                "true/300/true/false/300",
+                d6on + "/" + d6ca + "/" + d6s2clear + "/" + d6off + "/" + d6back);
+
+        // D7: panel enumeration -- zero-count rows carrying an override must still appear
+        UnlimitedCellInventory d7 = newInventory("d7");
+        d7.setMode(2);
+        d7.setWorkMode(1);
+        d7.injectItems(stack(Items.DIAMOND, 5L), Actionable.MODULATE, NO_SOURCE);
+        d7.setItemThreshold(stick, 123L);
+        d7.addWhitelist(key(Items.PAPER));
+        boolean d7zero = false;
+        boolean d7paper = false;
+        boolean d7diamond = false;
+        List<UnlimitedCellInventory.PanelItem> rows = d7.getPanelItems();
+        for (UnlimitedCellInventory.PanelItem row : rows) {
+            if (row.key.isSameType(stick) && row.amount.signum() == 0 && row.itemThreshold == 123L) {
+                d7zero = true;
+            }
+            if (row.key.isSameType(key(Items.PAPER)) && row.isInfinite) {
+                d7paper = true;
+            }
+            if (row.key.isSameType(diamond) && row.amount.longValue() == 5L && !row.isInfinite) {
+                d7diamond = true;
+            }
+        }
+        check(sender, "D7", "面板枚举：零数量但有阈值的条目在（阈值 123）、白名单条目算无限、钻石 5 不算无限",
+                d7zero && d7paper && d7diamond, "true/true/true",
+                d7zero + "/" + d7paper + "/" + d7diamond + " rows=" + rows.size());
+
+        // D8: wipe clears everything but keeps mode 3's seen-set
+        UnlimitedCellInventory d8 = newInventory("d8");
+        d8.setMode(3);
+        d8.injectItems(stack(Items.DIAMOND, 1L), Actionable.MODULATE, NO_SOURCE);
+        d8.setMode(2);
+        d8.setWorkMode(1);
+        d8.setThreshold(4242L);
+        d8.addModRule("minecraft");
+        d8.addWhitelist(stick);
+        d8.toggleBlacklist(key(Items.COAL));
+        d8.wipeAllData();
+        boolean d8ok = d8.getThreshold() == UnlimitedCellInventory.DEFAULT_THRESHOLD
+                && d8.getWorkMode() == 1
+                && d8.getModRules().isEmpty()
+                && d8.getWl().isEmpty()
+                && d8.getBlacklist().isEmpty()
+                && d8.rawData().m3.size() == 1;
+        check(sender, "D8", "一键格式化：阈值回 65536、wm 回 1、规则/白名单/黑名单全清、mode3 数据保留",
+                d8ok, "true",
+                d8.getThreshold() + "/" + d8.getWorkMode() + "/" + d8.getModRules().size() + "/"
+                        + d8.getWl().size() + "/" + d8.getBlacklist().size() + "/" + d8.rawData().m3.size());
+
+        // D9: rules / blacklist / lock survive a persist-reload round trip
+        ItemStack cell9 = cellWithUuid(testUuid("d9"));
+        UnlimitedCellInventory inv9 = new UnlimitedCellInventory(cell9, null);
+        wipe(inv9);
+        inv9.setMode(2);
+        inv9.addModRule("minecraft");
+        inv9.setRuleMode(UnlimitedCellInventory.ruleKey(false, "minecraft"), 2);
+        inv9.toggleBlacklist(diamond);
+        inv9.setStoredQuantity(stick, BigInteger.TEN, true);
+        inv9.persist();
+        UnlimitedCellInventory reload9 = new UnlimitedCellInventory(cell9, null);
+        boolean d9ok = reload9.getModRules().contains("minecraft")
+                && reload9.getRuleMode(UnlimitedCellInventory.ruleKey(false, "minecraft")) == 2
+                && reload9.isBlacklisted(diamond)
+                && reload9.isQuantityLocked(stick);
+        check(sender, "D9", "持久化：规则（含 Touch 模式）/黑名单/数量锁定 重载后一致",
+                d9ok, "true/true/true/true",
+                reload9.getModRules().contains("minecraft") + "/"
+                        + reload9.getRuleMode(UnlimitedCellInventory.ruleKey(false, "minecraft")) + "/"
+                        + reload9.isBlacklisted(diamond) + "/" + reload9.isQuantityLocked(stick));
+
+        // D10: out-of-range and unknown inputs must not throw
+        UnlimitedCellInventory d10 = newInventory("d10");
+        d10.setMode(2);
+        d10.addModRule("minecraft");
+        d10.setRuleMode(UnlimitedCellInventory.ruleKey(false, "minecraft"), 3);
+        int mode10 = d10.getRuleMode(UnlimitedCellInventory.ruleKey(false, "minecraft"));
+        d10.setRuleMode("bogus:x", 2);
+        long fallback = d10.getCommitedAmount(key(Items.COAL)).longValue();
+        check(sender, "D10", "越界规则模式按 1；未知规则不动作；没有承诺额度时回落该物品阈值",
+                mode10 == 1 && fallback == UnlimitedCellInventory.DEFAULT_THRESHOLD,
+                "1/" + UnlimitedCellInventory.DEFAULT_THRESHOLD, mode10 + "/" + fallback);
     }
 
     private static IAEItemStack stack(Item item, long count) {

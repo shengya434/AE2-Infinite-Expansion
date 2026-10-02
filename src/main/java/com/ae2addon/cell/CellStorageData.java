@@ -10,6 +10,7 @@ import appeng.api.storage.data.IAEItemStack;
 import appeng.util.item.AEItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.nbt.NBTTagString;
 
 /**
  * P2: everything that belongs to ONE cell, keyed in {@link com.ae2addon.data.CellWorldData} by the
@@ -49,6 +50,23 @@ public class CellStorageData {
     public final Set<IAEItemStack> rejectOff = new LinkedHashSet<>();
     public boolean rejectDefault;
 
+    /**
+     * Batch "infinite" rules. 1.20 matches item *tags* here, but 1.12.2 predates vanilla item tags
+     * (they arrived in 1.13), so the equivalent is an OreDictionary name -- "ingotIron", "logWood", ...
+     * See md/p3-judgement-api-spec.md section 2.1.
+     */
+    public final Set<String> oreRules = new LinkedHashSet<>();
+    public final Set<String> modRules = new LinkedHashSet<>();
+    /** ruleKey ("ore:x" / "mod:x") -&gt; mode: 1 = Instant, 2 = Touch. Absent means 1. */
+    public final Map<String, Integer> ruleModes = new LinkedHashMap<>();
+    /** Keys actually stored while a Touch rule matched them. */
+    public final Set<IAEItemStack> touched = new LinkedHashSet<>();
+    /** Blacklisted keys can still be stored, but never become infinite. */
+    public final Set<IAEItemStack> blacklist = new LinkedHashSet<>();
+    /** Keys whose stored amount is pinned: inserts are swallowed, extracts are capped. */
+    public final Set<IAEItemStack> qtyLocked = new LinkedHashSet<>();
+    public boolean ruleInstant = true;
+
     private static final String K_S1 = "s1";
     private static final String K_S2 = "s2";
     private static final String K_CA = "ca";
@@ -59,12 +77,22 @@ public class CellStorageData {
     private static final String K_REJECT_ON = "ro";
     private static final String K_REJECT_OFF = "rf";
     private static final String K_REJECT_DEFAULT = "rd";
+    private static final String K_ORE_RULES = "or";
+    private static final String K_MOD_RULES = "md";
+    private static final String K_RULE_MODES = "rm";
+    private static final String K_TOUCHED = "rt";
+    private static final String K_BLACKLIST = "bl";
+    private static final String K_QTY_LOCKED = "ql";
+    private static final String K_RULE_INSTANT = "ri";
     private static final String K_KEY = "k";
     private static final String K_NUM = "n";
+    private static final String K_NAME = "s";
+    private static final String K_MODE = "m";
 
     public boolean isEmpty() {
         return s1.isEmpty() && s2.isEmpty() && ca.isEmpty() && wl.isEmpty() && ul.isEmpty() && m3.isEmpty()
-                && rejectOn.isEmpty() && rejectOff.isEmpty();
+                && rejectOn.isEmpty() && rejectOff.isEmpty()
+                && oreRules.isEmpty() && modRules.isEmpty() && blacklist.isEmpty() && qtyLocked.isEmpty();
     }
 
     // ------------------------------------------------------------------
@@ -82,6 +110,13 @@ public class CellStorageData {
         root.setTag(K_REJECT_ON, writeKeySet(rejectOn));
         root.setTag(K_REJECT_OFF, writeKeySet(rejectOff));
         root.setBoolean(K_REJECT_DEFAULT, rejectDefault);
+        root.setTag(K_ORE_RULES, writeStringSet(oreRules));
+        root.setTag(K_MOD_RULES, writeStringSet(modRules));
+        root.setTag(K_RULE_MODES, writeStringIntMap(ruleModes));
+        root.setTag(K_TOUCHED, writeKeySet(touched));
+        root.setTag(K_BLACKLIST, writeKeySet(blacklist));
+        root.setTag(K_QTY_LOCKED, writeKeySet(qtyLocked));
+        root.setBoolean(K_RULE_INSTANT, ruleInstant);
     }
 
     public void readFromNbt(NBTTagCompound root) {
@@ -94,6 +129,12 @@ public class CellStorageData {
         m3.clear();
         rejectOn.clear();
         rejectOff.clear();
+        oreRules.clear();
+        modRules.clear();
+        ruleModes.clear();
+        touched.clear();
+        blacklist.clear();
+        qtyLocked.clear();
         readCountMap(root.getTagList(K_S1, 10), s1);
         readCountMap(root.getTagList(K_S2, 10), s2);
         readCountMap(root.getTagList(K_CA, 10), ca);
@@ -104,6 +145,57 @@ public class CellStorageData {
         readKeySet(root.getTagList(K_REJECT_ON, 10), rejectOn);
         readKeySet(root.getTagList(K_REJECT_OFF, 10), rejectOff);
         rejectDefault = root.getBoolean(K_REJECT_DEFAULT);
+        readStringSet(root.getTagList(K_ORE_RULES, 8), oreRules);
+        readStringSet(root.getTagList(K_MOD_RULES, 8), modRules);
+        readStringIntMap(root.getTagList(K_RULE_MODES, 10), ruleModes);
+        readKeySet(root.getTagList(K_TOUCHED, 10), touched);
+        readKeySet(root.getTagList(K_BLACKLIST, 10), blacklist);
+        readKeySet(root.getTagList(K_QTY_LOCKED, 10), qtyLocked);
+        // Default true, matching 1.20: a fresh rule is Instant unless the player switches it.
+        ruleInstant = !root.hasKey(K_RULE_INSTANT) || root.getBoolean(K_RULE_INSTANT);
+    }
+
+    // ------------------------------------------------------------------
+    // plain string / string->int helpers (rules are stored by name, not by key)
+    // ------------------------------------------------------------------
+
+    private static NBTTagList writeStringSet(Set<String> set) {
+        NBTTagList list = new NBTTagList();
+        for (String name : set) {
+            list.appendTag(new NBTTagString(name));
+        }
+        return list;
+    }
+
+    private static void readStringSet(NBTTagList list, Set<String> out) {
+        for (int i = 0; i < list.tagCount(); i++) {
+            // TAG_String entries expose their value through getStringTagAt
+            String name = list.getStringTagAt(i);
+            if (name != null && !name.isEmpty()) {
+                out.add(name);
+            }
+        }
+    }
+
+    private static NBTTagList writeStringIntMap(Map<String, Integer> map) {
+        NBTTagList list = new NBTTagList();
+        for (Map.Entry<String, Integer> e : map.entrySet()) {
+            NBTTagCompound entry = new NBTTagCompound();
+            entry.setString(K_NAME, e.getKey());
+            entry.setInteger(K_MODE, e.getValue() == null ? 1 : e.getValue());
+            list.appendTag(entry);
+        }
+        return list;
+    }
+
+    private static void readStringIntMap(NBTTagList list, Map<String, Integer> out) {
+        for (int i = 0; i < list.tagCount(); i++) {
+            NBTTagCompound entry = list.getCompoundTagAt(i);
+            String name = entry.getString(K_NAME);
+            if (name != null && !name.isEmpty()) {
+                out.put(name, entry.getInteger(K_MODE));
+            }
+        }
     }
 
     private static NBTTagList writeCountMap(Map<IAEItemStack, BigInteger> map) {

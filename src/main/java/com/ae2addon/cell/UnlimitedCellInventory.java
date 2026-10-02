@@ -1,7 +1,11 @@
 package com.ae2addon.cell;
 
 import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -252,6 +256,11 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
      * @return whether the amount is accepted.
      */
     private boolean insertInternal(IAEItemStack key, BigInteger amount, boolean mutate) {
+        // Quantity-locked entries swallow everything without recording it (1.20 L366/L375/L392).
+        if (mode == 2 && data.qtyLocked.contains(key)) {
+            return true;
+        }
+
         if (mode == 3) {
             if (mutate) {
                 data.m3.add(key);
@@ -260,7 +269,24 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         }
 
         if (mode == 2) {
-            if (workMode == 2) {
+            // Batch rule hit -> infinite right away. Blacklisted keys are excluded, and NBT variants
+            // never match a rule: 1.20 L1028 records that otherwise the stack is swallowed by the
+            // "accept without recording" path and the original item simply vanishes.
+            if (!data.blacklist.contains(key) && matchesRule(key)) {
+                if (mutate) {
+                    data.touched.add(key);
+                    // Fold any finite amount into the committed total so the same key is not reported
+                    // twice (1.20 L430-437).
+                    BigInteger existing = data.s2.remove(key);
+                    if (existing != null && existing.signum() > 0) {
+                        data.ca.merge(key, existing, (a, b) -> a.compareTo(b) >= 0 ? a : b);
+                    }
+                    data.ca.merge(key, amount, BigInteger::add);
+                    saveChanges();
+                }
+                return true;
+            }
+            if (workMode == 2 && !data.blacklist.contains(key)) {
                 // 存入无限: storing anything at all makes it infinite.
                 if (mutate) {
                     data.ca.merge(key, amount, BigInteger::add);
@@ -281,7 +307,9 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         Map<IAEItemStack, BigInteger> map = mode == 1 ? data.s1 : data.s2;
         BigInteger total = map.merge(key, amount, BigInteger::add);
 
-        if (mode == 2 && workMode == 1 && total.compareTo(BigInteger.valueOf(thresholdFor(key))) >= 0) {
+        // Blacklisted keys may be stored, but never promoted (1.20 L465-467).
+        if (mode == 2 && workMode == 1 && !data.blacklist.contains(key)
+                && total.compareTo(BigInteger.valueOf(thresholdFor(key))) >= 0) {
             // Promotion, three steps, atomically: real total -> committed, join the infinite set,
             // leave the finite store.
             data.ca.put(key, total);
@@ -303,12 +331,16 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         boolean mutate = action == Actionable.MODULATE;
 
         BigInteger taken;
-        if (mode == 3) {
+        if (mode == 2 && data.qtyLocked.contains(key)) {
+            // Locked: never hand out more than what is recorded, and do not change the record
+            // (1.20 L498-500 -- the pinned amount behaves the same in both directions).
+            taken = extractFromMap(data.s2, key, requested, false);
+        } else if (mode == 3) {
             if (mutate) {
                 data.m3.add(key);
             }
             taken = BigInteger.valueOf(Math.min(requested, INFINITE));
-        } else if (mode == 2 && (data.ul.contains(key) || data.wl.contains(key))) {
+        } else if (mode == 2 && (ruleActive(key) || data.ul.contains(key) || data.wl.contains(key))) {
             taken = BigInteger.valueOf(Math.min(requested, INFINITE));
         } else {
             taken = extractFromMap(mode == 1 ? data.s1 : data.s2, key, requested, mutate);
@@ -533,9 +565,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return data.ul.contains(lookupKey(key));
     }
 
-    public boolean isQuantityLocked(IAEItemStack key) {
-        return false; // not part of P2 (see spec section 1)
-    }
+    // isQuantityLocked() now lives with the quantity-lock API further down.
 
     // ------------------------------------------------------------------
     // reject list (three-state, ported from the 1.20 line L762-799)
@@ -661,6 +691,436 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
 
     public CellStorageData rawData() {
         return data;
+    }
+
+    // ------------------------------------------------------------------
+    // batch rules -- 1.12.2 uses OreDictionary where 1.20 used item tags
+    // ------------------------------------------------------------------
+
+    public static String ruleKey(boolean isOre, String name) {
+        return (isOre ? "ore:" : "mod:") + name;
+    }
+
+    public Set<String> getOreRules() {
+        return new LinkedHashSet<>(data.oreRules);
+    }
+
+    public Set<String> getModRules() {
+        return new LinkedHashSet<>(data.modRules);
+    }
+
+    public boolean addOreRule(String oreName) {
+        if (oreName == null || oreName.trim().isEmpty()) {
+            return false;
+        }
+        String name = oreName.trim();
+        if (!data.oreRules.add(name)) {
+            return false;
+        }
+        data.ruleModes.put(ruleKey(true, name), data.ruleInstant ? 1 : 2);
+        saveChanges();
+        return true;
+    }
+
+    public boolean removeOreRule(String oreName) {
+        if (oreName == null) {
+            return false;
+        }
+        String name = oreName.trim();
+        if (!data.oreRules.remove(name)) {
+            return false;
+        }
+        data.ruleModes.remove(ruleKey(true, name));
+        saveChanges();
+        return true;
+    }
+
+    public boolean addModRule(String mod) {
+        if (mod == null || mod.trim().isEmpty()) {
+            return false;
+        }
+        String name = mod.trim();
+        if (!data.modRules.add(name)) {
+            return false;
+        }
+        data.ruleModes.put(ruleKey(false, name), data.ruleInstant ? 1 : 2);
+        saveChanges();
+        return true;
+    }
+
+    public boolean removeModRule(String mod) {
+        if (mod == null) {
+            return false;
+        }
+        String name = mod.trim();
+        if (!data.modRules.remove(name)) {
+            return false;
+        }
+        data.ruleModes.remove(ruleKey(false, name));
+        saveChanges();
+        return true;
+    }
+
+    /** 1 = Instant, 2 = Touch; anything else is treated as 1 (1.20 L938-940). */
+    public int getRuleMode(String key) {
+        Integer mode = data.ruleModes.get(key);
+        return mode == null ? 1 : mode;
+    }
+
+    public void setRuleMode(String key, int mode) {
+        if (key == null) {
+            return;
+        }
+        boolean isOre = key.startsWith("ore:");
+        boolean isMod = key.startsWith("mod:");
+        if (!isOre && !isMod) {
+            return;
+        }
+        String name = key.substring(4);
+        if (!(isOre ? data.oreRules : data.modRules).contains(name)) {
+            return; // unknown rule: no-op
+        }
+        int normalized = mode == 2 ? 2 : 1;
+        if (getRuleMode(key) == normalized) {
+            return;
+        }
+        data.ruleModes.put(key, normalized);
+        saveChanges();
+    }
+
+    public boolean isRuleInstant() {
+        return data.ruleInstant;
+    }
+
+    /**
+     * Global "make every rule instant" switch.
+     *
+     * <p>The 1.20 line only flips this flag and never consults it while matching (each rule carries its
+     * own mode), which would make the switch a no-op. Here it actually does something: flipping it
+     * rewrites every existing rule's mode, which is what the UI toggle implies.
+     */
+    public void setRuleInstant(boolean instant) {
+        if (data.ruleInstant == instant) {
+            return;
+        }
+        data.ruleInstant = instant;
+        for (String ore : data.oreRules) {
+            data.ruleModes.put(ruleKey(true, ore), instant ? 1 : 2);
+        }
+        for (String mod : data.modRules) {
+            data.ruleModes.put(ruleKey(false, mod), instant ? 1 : 2);
+        }
+        saveChanges();
+    }
+
+    private static boolean hasTag(IAEItemStack key) {
+        ItemStack def = key.getDefinition();
+        return def != null && !def.isEmpty() && def.hasTagCompound();
+    }
+
+    private static String namespaceOf(IAEItemStack key) {
+        ItemStack def = key.getDefinition();
+        if (def == null || def.isEmpty()) {
+            return null;
+        }
+        net.minecraft.util.ResourceLocation id = def.getItem().getRegistryName();
+        return id == null ? null : id.getNamespace();
+    }
+
+    /** NBT variants never participate in rules (1.20 L1023-1028 records why they must not). */
+    private boolean matchesRule(IAEItemStack key) {
+        if (data.oreRules.isEmpty() && data.modRules.isEmpty()) {
+            return false;
+        }
+        if (hasTag(key)) {
+            return false;
+        }
+        String namespace = namespaceOf(key);
+        if (namespace != null && data.modRules.contains(namespace)) {
+            return true;
+        }
+        return matchesAnyOre(key);
+    }
+
+    private boolean matchesAnyOre(IAEItemStack key) {
+        if (data.oreRules.isEmpty()) {
+            return false;
+        }
+        ItemStack def = key.getDefinition();
+        if (def == null || def.isEmpty()) {
+            return false;
+        }
+        int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(def);
+        if (ids == null) {
+            return false;
+        }
+        for (int id : ids) {
+            String ore = net.minecraftforge.oredict.OreDictionary.getOreName(id);
+            if (ore != null && data.oreRules.contains(ore)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Instant rules allow infinity immediately; Touch rules need the key to have been stored. */
+    public boolean ruleAllowsInfinite(IAEItemStack key) {
+        if (data.oreRules.isEmpty() && data.modRules.isEmpty()) {
+            return false;
+        }
+        IAEItemStack k = lookupKey(key);
+        if (hasTag(k)) {
+            return false;
+        }
+        boolean matched = false;
+
+        String namespace = namespaceOf(k);
+        if (namespace != null && data.modRules.contains(namespace)) {
+            if (getRuleMode(ruleKey(false, namespace)) == 1) {
+                return true;
+            }
+            matched = true;
+        }
+
+        ItemStack def = k.getDefinition();
+        if (def != null && !def.isEmpty()) {
+            int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(def);
+            if (ids != null) {
+                for (int id : ids) {
+                    String ore = net.minecraftforge.oredict.OreDictionary.getOreName(id);
+                    if (ore != null && data.oreRules.contains(ore)) {
+                        if (getRuleMode(ruleKey(true, ore)) == 1) {
+                            return true;
+                        }
+                        matched = true;
+                    }
+                }
+            }
+        }
+        return matched && data.touched.contains(k);
+    }
+
+    /** Blacklist, quantity lock and "currently in the finite store" all veto a rule (1.20 L1077-1080). */
+    private boolean ruleActive(IAEItemStack key) {
+        if (data.blacklist.contains(key) || data.qtyLocked.contains(key) || data.s2.containsKey(key)) {
+            return false;
+        }
+        return ruleAllowsInfinite(key);
+    }
+
+    public boolean isInfiniteByRule(IAEItemStack key) {
+        return mode == 2 && ruleActive(lookupKey(key));
+    }
+
+    // ------------------------------------------------------------------
+    // blacklist / quantity lock
+    // ------------------------------------------------------------------
+
+    /** @return whether the key is blacklisted after the toggle. */
+    public boolean toggleBlacklist(IAEItemStack key) {
+        IAEItemStack k = lookupKey(key);
+        if (data.blacklist.remove(k)) {
+            saveChanges();
+            return false;
+        }
+        data.blacklist.add(k);
+        // A blacklisted key must not keep showing as infinite through a rule.
+        data.touched.remove(k);
+        saveChanges();
+        return true;
+    }
+
+    public boolean isBlacklisted(IAEItemStack key) {
+        return data.blacklist.contains(lookupKey(key));
+    }
+
+    public Set<IAEItemStack> getBlacklist() {
+        return new LinkedHashSet<>(data.blacklist);
+    }
+
+    /** Pins a key's stored amount; {@code lock} also marks it so inserts/extracts stay capped. */
+    public void setStoredQuantity(IAEItemStack key, BigInteger quantity, boolean lock) {
+        if (key == null || quantity == null) {
+            return;
+        }
+        IAEItemStack k = lookupKey(key);
+        data.ul.remove(k);
+        data.wl.remove(k);
+        data.ca.remove(k);
+        Map<IAEItemStack, BigInteger> map = mode == 1 ? data.s1 : data.s2;
+        if (quantity.signum() <= 0) {
+            map.remove(k);
+        } else {
+            map.put(k, quantity);
+        }
+        if (lock) {
+            data.qtyLocked.add(k);
+        } else {
+            data.qtyLocked.remove(k);
+        }
+        saveChanges();
+    }
+
+    public boolean isQuantityLocked(IAEItemStack key) {
+        return data.qtyLocked.contains(lookupKey(key));
+    }
+
+    public Set<IAEItemStack> quantityLockedKeys() {
+        return new LinkedHashSet<>(data.qtyLocked);
+    }
+
+    // ------------------------------------------------------------------
+    // panel enumeration / infinite toggle / committed amount
+    // ------------------------------------------------------------------
+
+    /** One row of the config panel. {@code bytes} stays 0 for finite rows: we do no byte accounting. */
+    public static final class PanelItem {
+        public final IAEItemStack key;
+        public final BigInteger amount;
+        public final boolean isInfinite;
+        public final long bytes;
+        public final long itemThreshold;
+        public final boolean quantityLocked;
+
+        PanelItem(IAEItemStack key, BigInteger amount, boolean isInfinite, long itemThreshold,
+                boolean quantityLocked) {
+            this.key = key;
+            this.amount = amount;
+            this.isInfinite = isInfinite;
+            this.bytes = isInfinite ? INFINITE_BYTES : 0L;
+            this.itemThreshold = itemThreshold;
+            this.quantityLocked = quantityLocked;
+        }
+    }
+
+    public List<PanelItem> getPanelItems() {
+        List<PanelItem> items = new ArrayList<>();
+        if (mode != 2) {
+            return items;
+        }
+        for (IAEItemStack k : data.wl) {
+            items.add(panelItem(k, BigInteger.valueOf(INFINITE), true));
+        }
+        for (IAEItemStack k : data.ul) {
+            if (!data.wl.contains(k)) {
+                items.add(panelItem(k, BigInteger.valueOf(INFINITE), true));
+            }
+        }
+        for (Map.Entry<IAEItemStack, BigInteger> entry : data.s2.entrySet()) {
+            if (!data.wl.contains(entry.getKey()) && !data.ul.contains(entry.getKey())) {
+                items.add(panelItem(entry.getKey(), entry.getValue(), false));
+            }
+        }
+        // Zero-count entries: a key that only carries a per-item threshold must stay listed, otherwise
+        // there is no way to edit that threshold again once its count reaches zero.
+        for (Map.Entry<IAEItemStack, Long> entry : data.itemThr.entrySet()) {
+            IAEItemStack k = entry.getKey();
+            if (data.wl.contains(k) || data.ul.contains(k) || data.s2.containsKey(k)) {
+                continue;
+            }
+            items.add(panelItem(k, BigInteger.ZERO, false));
+        }
+        return items;
+    }
+
+    private PanelItem panelItem(IAEItemStack key, BigInteger amount, boolean infinite) {
+        IAEItemStack k = lookupKey(key);
+        Long override = data.itemThr.get(k);
+        return new PanelItem(k, amount, infinite, override == null ? 0L : override,
+                data.qtyLocked.contains(k));
+    }
+
+    /** @return whether the key is infinite after the toggle. Locked keys are never toggled. */
+    public boolean togglePanelInfinite(IAEItemStack key) {
+        IAEItemStack k = lookupKey(key);
+        if (data.qtyLocked.contains(k)) {
+            return false;
+        }
+        if (data.ul.contains(k) || data.wl.contains(k)) {
+            data.ul.remove(k);
+            data.wl.remove(k);
+            // NOTE (deliberate deviation from 1.20 L1158-1165): 1.20 just drops the committed amount
+            // here, so cancelling from the panel silently destroys the recorded quantity. We put it
+            // back into the finite store instead, matching cancelInfinite() and the 1.20 line's own
+            // fix elsewhere ("取消无限要排真值").
+            BigInteger committed = data.ca.remove(k);
+            if (committed != null && committed.signum() > 0) {
+                Map<IAEItemStack, BigInteger> map = mode == 1 ? data.s1 : data.s2;
+                map.merge(k, committed, BigInteger::add);
+            }
+            saveChanges();
+            return false;
+        }
+        BigInteger amount = data.s2.get(k);
+        if (amount != null && amount.signum() > 0) {
+            data.ca.put(k, amount);
+            data.s2.remove(k);
+        }
+        data.ul.add(k);
+        saveChanges();
+        return true;
+    }
+
+    /** Falls back to this item's effective threshold when nothing was ever committed (1.20 L1185). */
+    public BigInteger getCommitedAmount(IAEItemStack key) {
+        IAEItemStack k = lookupKey(key);
+        BigInteger committed = data.ca.get(k);
+        return committed != null ? committed : BigInteger.valueOf(thresholdFor(k));
+    }
+
+    public boolean hasCommitedAmount(IAEItemStack key) {
+        return data.ca.containsKey(lookupKey(key));
+    }
+
+    // ------------------------------------------------------------------
+    // wipe / accessors for the GUI + network layer
+    // ------------------------------------------------------------------
+
+    /** Clears this cell's configuration and both finite stores. mode 3's seen-set is kept (1.20 L243). */
+    public void wipeAllData() {
+        data.s1.clear();
+        data.s2.clear();
+        data.wl.clear();
+        data.ul.clear();
+        data.ca.clear();
+        data.itemThr.clear();
+        data.oreRules.clear();
+        data.modRules.clear();
+        data.ruleModes.clear();
+        data.touched.clear();
+        data.blacklist.clear();
+        data.qtyLocked.clear();
+        data.rejectOn.clear();
+        data.rejectOff.clear();
+        data.rejectDefault = false;
+        data.ruleInstant = true;
+        workMode = 1;
+        threshold = DEFAULT_THRESHOLD;
+        saveChanges();
+    }
+
+    public Set<IAEItemStack> getWl() {
+        return new LinkedHashSet<>(data.wl);
+    }
+
+    public Set<IAEItemStack> getUl() {
+        return new LinkedHashSet<>(data.ul);
+    }
+
+    public Set<IAEItemStack> getRejectOnKeys() {
+        return new LinkedHashSet<>(data.rejectOn);
+    }
+
+    public Set<IAEItemStack> getRejectOffKeys() {
+        return new LinkedHashSet<>(data.rejectOff);
+    }
+
+    public Map<IAEItemStack, Long> itemThresholds() {
+        return new java.util.LinkedHashMap<>(data.itemThr);
+    }
+
+    public Map<IAEItemStack, BigInteger> getS2() {
+        return new java.util.LinkedHashMap<>(data.s2);
     }
 
     // ------------------------------------------------------------------
