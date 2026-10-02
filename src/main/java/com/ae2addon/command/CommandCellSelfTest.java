@@ -358,6 +358,7 @@ public class CommandCellSelfTest extends CommandBase {
         runRuleGroup(sender);
         runTerminalGroup(sender);
         runSummaryGroup(sender);
+        runRuleVisibilityGroup(sender);
 
         finish(sender);
     }
@@ -781,6 +782,58 @@ public class CommandCellSelfTest extends CommandBase {
         check(sender, "F2", "摘要能读出模式/工作模式/阈值（tooltip 那几行据此生成）",
                 f2sum.mode == 3 && f2sum.workMode == 2 && f2sum.threshold == 1234L,
                 "3/2/1234", f2sum.mode + "/" + f2sum.workMode + "/" + f2sum.threshold);
+    }
+
+    /**
+     * G group: rule visibility. An Instant rule means "this item is infinite without ever being stored", so
+     * the cell has to be able to name it up front -- otherwise Instant and Touch look identical in game,
+     * which is exactly what sensei reported on 2026-10-02.
+     */
+    private void runRuleVisibilityGroup(ICommandSender sender) {
+        final long infinite = UnlimitedCellInventory.INFINITE;
+        String modRule = UnlimitedCellInventory.ruleKey(false, "minecraft");
+
+        // G1: Instant rule -- an item that was NEVER stored is already listed as infinite
+        UnlimitedCellInventory g1 = newInventory("g1");
+        g1.setMode(2);
+        g1.setWorkMode(1);
+        g1.addModRule("minecraft");
+        long g1listed = listedSize(g1, key(Items.DIAMOND));
+        boolean g1rule = g1.isInfiniteByRule(key(Items.DIAMOND));
+        check(sender, "G1", "「立即」规则：没存过的物品也已经在终端列表里（无限）",
+                g1listed == infinite && g1rule, "infinite/true",
+                "listed=" + g1listed + " rule=" + g1rule);
+
+        // G2: same rule as Touch -- not listed before storing, listed after storing one
+        g1.setRuleMode(modRule, 2);
+        long g2before = listedSize(g1, key(Items.STICK));
+        g1.injectItems(stack(Items.STICK, 1L), Actionable.MODULATE, NO_SOURCE);
+        long g2after = listedSize(g1, key(Items.STICK));
+        check(sender, "G2", "「触碰」规则：没存过不列出，存过 1 个后才列出",
+                g2before == -1L && g2after == infinite, "-1/infinite",
+                g2before + "/" + g2after);
+
+        // G3: the panel (what the GUI shows) has to include Instant-rule matches too
+        UnlimitedCellInventory g3 = newInventory("g3");
+        g3.setMode(2);
+        g3.setWorkMode(1);
+        g3.addModRule("minecraft");
+        boolean g3panel = false;
+        for (UnlimitedCellInventory.PanelItem row : g3.getPanelItems()) {
+            if (row.key.isSameType(key(Items.PAPER)) && row.isInfinite) {
+                g3panel = true;
+            }
+        }
+        check(sender, "G3", "面板也列出「立即」规则命中的物品（否则界面里看不出立即/触碰的区别）",
+                g3panel, "true", String.valueOf(g3panel));
+
+        // G4: type count stays consistent with the list while Instant rules are in play
+        IItemList<IAEItemStack> g4list = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        g3.getAvailableItems(g4list);
+        check(sender, "G4", "有「立即」规则时 getStoredItemTypes 仍与终端列出条数一致",
+                g3.getStoredItemTypes() == g4list.size(),
+                "types=list", "types=" + g3.getStoredItemTypes() + " list=" + g4list.size());
     }
 
     /** Size the terminal would see for {@code key}, or -1 when the cell does not list it at all. */

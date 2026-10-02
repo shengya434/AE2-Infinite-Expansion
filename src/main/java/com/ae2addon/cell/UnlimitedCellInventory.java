@@ -24,6 +24,7 @@ import appeng.api.storage.data.IAEItemStack;
 import appeng.api.storage.data.IItemList;
 import appeng.util.Platform;
 import appeng.util.item.AEItemStack;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -245,12 +246,18 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return bytes;
     }
 
-    /** Distinct keys the cell can hand out as infinite in mode 2 (wl u ul u ca). */
-    private int getInfiniteTypeCount() {
+    /** Distinct keys the cell can hand out as infinite in mode 2: whitelist, infinite set, committed, rules. */
+    private Set<IAEItemStack> infiniteKeys() {
         Set<IAEItemStack> infinite = new LinkedHashSet<>(data.wl);
         infinite.addAll(data.ul);
         infinite.addAll(data.ca.keySet());
-        return infinite.size();
+        infinite.addAll(ruleInfiniteKeys());
+        return infinite;
+    }
+
+    /** Distinct keys the cell can hand out as infinite in mode 2 (wl u ul u ca). */
+    private int getInfiniteTypeCount() {
+        return infiniteKeys().size();
     }
 
     /** Raw values for the item tooltip. The caller localises, so this class stays client-free. */
@@ -474,17 +481,15 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
                 break;
             case 2: {
                 // EVERYTHING that can hand items out has to be listed here, or the terminal shows nothing
-                // even though extraction works. That covers three separate sources, and missing any of
-                // them makes items invisible in the terminal:
+                // even though extraction works. That covers four separate sources, and missing any of them
+                // makes items invisible in the terminal:
                 //   * wl  -- the whitelist, which is what the panel's "mark infinite" and a JEI drag add to
                 //   * ul  -- the infinite set written by promotion and by togglePanelInfinite
                 //   * ca  -- the committed-amount map; a rule promotion writes ca WITHOUT touching ul
-                // (Bug found by sensei 2026-10-02: only ul used to be reported, so whitelisted and
-                // rule-promoted items existed and could be extracted, but never appeared in the terminal.)
-                Set<IAEItemStack> infinite = new LinkedHashSet<>();
-                infinite.addAll(data.wl);
-                infinite.addAll(data.ul);
-                infinite.addAll(data.ca.keySet());
+                //   * the rules themselves -- an Instant rule must show up before anything is ever stored
+                // (Bugs found by sensei 2026-10-02: first wl and ca were missing; then rule matches were,
+                // which made "Instant" indistinguishable from "Touch" from the player's side.)
+                Set<IAEItemStack> infinite = infiniteKeys();
                 reportInfinite(out, infinite);
                 // Finite rows must not be added on top of a key already reported as infinite: the list
                 // sums on add, and INFINITE + n overflows to a negative size.
@@ -838,6 +843,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             return false;
         }
         data.ruleModes.put(ruleKey(true, name), data.ruleInstant ? 1 : 2);
+        invalidateInstantMatchCache();
         saveChanges();
         return true;
     }
@@ -851,6 +857,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             return false;
         }
         data.ruleModes.remove(ruleKey(true, name));
+        invalidateInstantMatchCache();
         saveChanges();
         return true;
     }
@@ -864,6 +871,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             return false;
         }
         data.ruleModes.put(ruleKey(false, name), data.ruleInstant ? 1 : 2);
+        invalidateInstantMatchCache();
         saveChanges();
         return true;
     }
@@ -877,6 +885,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             return false;
         }
         data.ruleModes.remove(ruleKey(false, name));
+        invalidateInstantMatchCache();
         saveChanges();
         return true;
     }
@@ -905,6 +914,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             return;
         }
         data.ruleModes.put(key, normalized);
+        invalidateInstantMatchCache();
         saveChanges();
     }
 
@@ -930,6 +940,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         for (String mod : data.modRules) {
             data.ruleModes.put(ruleKey(false, mod), instant ? 1 : 2);
         }
+        invalidateInstantMatchCache();
         saveChanges();
     }
 
@@ -1033,6 +1044,111 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
     }
 
     // ------------------------------------------------------------------
+    // rule-match enumeration
+    //
+    // An Instant rule has to make items infinite BEFORE anyone stores them, which means the cell must be
+    // able to name those keys up front -- that is what the 1.20 line does with its cached registry scan.
+    // Without this, "Instant" is indistinguishable from "Touch" from the player's point of view: neither
+    // rule shows up anywhere until an item has been stored. (sensei hit exactly this on 2026-10-02.)
+    // ------------------------------------------------------------------
+
+    /** Cached Instant-rule matches; entries are pure rule hits, storage vetoes are applied at use time. */
+    private transient List<IAEItemStack> instantMatchCache = null;
+    private transient int instantMatchVersion = -1;
+    private transient int ruleStateVersion = 0;
+
+    private void invalidateInstantMatchCache() {
+        ruleStateVersion++;
+    }
+
+    /** Pure rule test: does any rule matching this key run in Instant mode? Blacklist is applied later. */
+    private boolean matchesInstantRule(IAEItemStack key) {
+        if (data.oreRules.isEmpty() && data.modRules.isEmpty() || hasTag(key)) {
+            return false;
+        }
+        String namespace = namespaceOf(key);
+        if (namespace != null && data.modRules.contains(namespace)
+                && getRuleMode(ruleKey(false, namespace)) == 1) {
+            return true;
+        }
+        ItemStack def = key.getDefinition();
+        if (def == null || def.isEmpty()) {
+            return false;
+        }
+        int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(def);
+        if (ids == null) {
+            return false;
+        }
+        for (int id : ids) {
+            String ore = net.minecraftforge.oredict.OreDictionary.getOreName(id);
+            if (ore != null && data.oreRules.contains(ore) && getRuleMode(ruleKey(true, ore)) == 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean ruleListingVetoed(IAEItemStack key) {
+        return data.blacklist.contains(key) || data.qtyLocked.contains(key) || data.s2.containsKey(key)
+                || data.wl.contains(key) || data.ul.contains(key) || data.ca.containsKey(key);
+    }
+
+    /**
+     * Every key the rules currently hand out as infinite, ready to be listed in the terminal or the panel.
+     *
+     * <p>Two sources: the cached registry scan (Instant rules -- items that were never stored) and the
+     * touched set (Touch rules -- items that were). Storage vetoes (blacklist, quantity lock, "already in
+     * the finite store") are applied here rather than baked into the cache, so storing or extracting an item
+     * never invalidates the scan.
+     */
+    private Set<IAEItemStack> ruleInfiniteKeys() {
+        Set<IAEItemStack> out = new LinkedHashSet<>();
+        if (mode != 2 || (data.oreRules.isEmpty() && data.modRules.isEmpty())) {
+            return out;
+        }
+        for (IAEItemStack key : instantMatchedKeys()) {
+            if (!ruleListingVetoed(key) && ruleAllowsInfinite(key)) {
+                out.add(key);
+            }
+        }
+        for (IAEItemStack key : data.touched) {
+            if (!ruleListingVetoed(key) && ruleAllowsInfinite(key)) {
+                out.add(key);
+            }
+        }
+        return out;
+    }
+
+    /** Registry scan for Instant rules, cached until the rules change. Thousands of ItemStacks, so: once. */
+    private List<IAEItemStack> instantMatchedKeys() {
+        if (instantMatchCache != null && instantMatchVersion == ruleStateVersion) {
+            return instantMatchCache;
+        }
+        List<IAEItemStack> found = new ArrayList<>();
+        if (data.oreRules.isEmpty() && data.modRules.isEmpty()) {
+            instantMatchCache = found;
+            instantMatchVersion = ruleStateVersion;
+            return found;
+        }
+        Set<IAEItemStack> seen = new LinkedHashSet<>();
+        // Meta variants are not enumerated: the canonical key is (item, meta 0, no NBT), which is also all
+        // the rule predicate can speak about (it sees an Item and that item's ore names).
+        for (net.minecraft.util.ResourceLocation id : net.minecraft.item.Item.REGISTRY.getKeys()) {
+            Item item = net.minecraft.item.Item.REGISTRY.getObject(id);
+            if (item == null) {
+                continue;
+            }
+            IAEItemStack key = lookupKey(AEItemStack.fromItemStack(new ItemStack(item)));
+            if (seen.add(key) && matchesInstantRule(key)) {
+                found.add(key);
+            }
+        }
+        instantMatchCache = found;
+        instantMatchVersion = ruleStateVersion;
+        return found;
+    }
+
+    // ------------------------------------------------------------------
     // blacklist / quantity lock
     // ------------------------------------------------------------------
 
@@ -1126,6 +1242,13 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
                 items.add(panelItem(k, BigInteger.valueOf(INFINITE), true));
             }
         }
+        // Rule matches: an Instant rule must be visible (and toggleable) in the panel before anything is
+        // ever stored, otherwise the player cannot tell Instant from Touch.
+        for (IAEItemStack k : ruleInfiniteKeys()) {
+            if (!data.wl.contains(k) && !data.ul.contains(k) && !data.s2.containsKey(k)) {
+                items.add(panelItem(k, BigInteger.valueOf(INFINITE), true));
+            }
+        }
         for (Map.Entry<IAEItemStack, BigInteger> entry : data.s2.entrySet()) {
             if (!data.wl.contains(entry.getKey()) && !data.ul.contains(entry.getKey())) {
                 items.add(panelItem(entry.getKey(), entry.getValue(), false));
@@ -1216,6 +1339,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         data.ruleInstant = true;
         workMode = 1;
         threshold = DEFAULT_THRESHOLD;
+        invalidateInstantMatchCache();
         saveChanges();
     }
 
@@ -1324,9 +1448,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             case 3:
                 return data.m3.size();
             case 2: {
-                Set<IAEItemStack> all = new LinkedHashSet<>(data.wl);
-                all.addAll(data.ul);
-                all.addAll(data.ca.keySet());
+                Set<IAEItemStack> all = infiniteKeys();
                 all.addAll(data.s2.keySet());
                 return all.size();
             }
