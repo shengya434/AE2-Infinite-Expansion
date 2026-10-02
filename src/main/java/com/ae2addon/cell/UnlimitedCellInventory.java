@@ -1233,7 +1233,23 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
 
     @Override
     public long getStoredItemTypes() {
-        return data.s1.size() + data.s2.size();
+        // This MUST agree with what getAvailableItems() reports, or the cell's tooltip contradicts the
+        // terminal. Before 2026-10-02 it counted only s1 + s2, so a cell holding nothing but whitelisted /
+        // promoted / rule-reached items claimed "0 types" while the terminal listed them -- the same
+        // omission class as the "invisible in the terminal" bug sensei hit.
+        switch (mode) {
+            case 3:
+                return data.m3.size();
+            case 2: {
+                Set<IAEItemStack> all = new LinkedHashSet<>(data.wl);
+                all.addAll(data.ul);
+                all.addAll(data.ca.keySet());
+                all.addAll(data.s2.keySet());
+                return all.size();
+            }
+            default:
+                return data.s1.size();
+        }
     }
 
     @Override

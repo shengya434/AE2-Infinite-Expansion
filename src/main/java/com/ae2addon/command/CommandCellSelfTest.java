@@ -717,6 +717,35 @@ public class CommandCellSelfTest extends CommandBase {
         long e4seen = found == null ? -1L : found.getStackSize();
         check(sender, "E4", "两片无限盘聚合到同一列表不溢出（仍是 INFINITE，不是负数）", e4seen == infinite,
                 String.valueOf(infinite), String.valueOf(e4seen));
+
+        // E5: the reported type count must agree with the reported list, or the tooltip contradicts the
+        // terminal. Mixed cell: whitelist (wl) + plain storage (s2) + rule promotion (ca only).
+        UnlimitedCellInventory e5 = newInventory("e5");
+        e5.setMode(2);
+        e5.setWorkMode(1);
+        e5.addWhitelist(key(Items.DIAMOND));                                    // wl
+        e5.injectItems(stack(Items.STICK, 5L), Actionable.MODULATE, NO_SOURCE); // s2
+        e5.addModRule("minecraft");
+        e5.setRuleMode(UnlimitedCellInventory.ruleKey(false, "minecraft"), 2);
+        e5.injectItems(stack(Items.PAPER, 2L), Actionable.MODULATE, NO_SOURCE); // Touch rule -> ca
+        IItemList<IAEItemStack> e5list = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        e5.getAvailableItems(e5list);
+        check(sender, "E5", "mode2 的 getStoredItemTypes 与终端实际列出的条目数一致",
+                e5.getStoredItemTypes() == e5list.size(),
+                "list=" + e5list.size(), "types=" + e5.getStoredItemTypes() + " list=" + e5list.size());
+
+        // E6: same consistency for mode 3 (which lists m3)
+        UnlimitedCellInventory e6 = newInventory("e6");
+        e6.setMode(3);
+        e6.injectItems(stack(Items.DIAMOND, 1L), Actionable.MODULATE, NO_SOURCE);
+        e6.injectItems(stack(Items.STICK, 1L), Actionable.MODULATE, NO_SOURCE);
+        IItemList<IAEItemStack> e6list = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        e6.getAvailableItems(e6list);
+        check(sender, "E6", "mode3 的 getStoredItemTypes 与终端实际列出的条目数一致",
+                e6.getStoredItemTypes() == e6list.size() && e6list.size() == 2,
+                "list=2", "types=" + e6.getStoredItemTypes() + " list=" + e6list.size());
     }
 
     /** Size the terminal would see for {@code key}, or -1 when the cell does not list it at all. */
