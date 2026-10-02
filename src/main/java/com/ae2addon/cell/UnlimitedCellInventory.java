@@ -472,13 +472,17 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
     @Override
     public IItemList<IAEItemStack> getAvailableItems(IItemList<IAEItemStack> out) {
         switch (mode) {
-            case 3:
-                // Deliberate P2 deviation from 1.20: 1.20 enumerates every registered item here (with a
-                // versioned cache). On 1.12.2 that would push thousands of keys into the storage grid on
-                // every rebuild, so we only list what we have actually seen. Extraction still works for
-                // any item (insert/extract do not consult this list).
-                reportInfinite(out, data.m3);
+            case 3: {
+                // 1.20 parity: mode 3 means "every registered item is infinite", so every registered item has
+                // to be listed -- otherwise you cannot see (or pull) what you never stored. sensei asked for
+                // this on 2026-10-02, conditional on it not being laggy, so the self-test's H group measures
+                // the cost instead of guessing. The scan is cached forever (the registry is frozen once the
+                // game has loaded) and reporting uses reportInfinite (set-max, never accumulate), so what a
+                // grid rebuild actually pays is one walk over the cached key list.
+                reportInfinite(out, allRegistryKeys());
+                reportInfinite(out, data.m3); // NBT variants we have seen, which the registry scan cannot name
                 break;
+            }
             case 2: {
                 // EVERYTHING that can hand items out has to be listed here, or the terminal shows nothing
                 // even though extraction works. That covers four separate sources, and missing any of them
@@ -1125,27 +1129,47 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             return instantMatchCache;
         }
         List<IAEItemStack> found = new ArrayList<>();
-        if (data.oreRules.isEmpty() && data.modRules.isEmpty()) {
-            instantMatchCache = found;
-            instantMatchVersion = ruleStateVersion;
-            return found;
+        if (!data.oreRules.isEmpty() || !data.modRules.isEmpty()) {
+            for (IAEItemStack key : allRegistryKeys()) {
+                if (matchesInstantRule(key)) {
+                    found.add(key);
+                }
+            }
         }
+        instantMatchCache = found;
+        instantMatchVersion = ruleStateVersion;
+        return found;
+    }
+
+    /** Canonical key for every registered item, meta 0 and no NBT. Cached forever: the registry is frozen. */
+    private transient List<IAEItemStack> registryKeyCache = null;
+
+    private List<IAEItemStack> allRegistryKeys() {
+        if (registryKeyCache != null) {
+            return registryKeyCache;
+        }
+        List<IAEItemStack> found = new ArrayList<>();
         Set<IAEItemStack> seen = new LinkedHashSet<>();
-        // Meta variants are not enumerated: the canonical key is (item, meta 0, no NBT), which is also all
-        // the rule predicate can speak about (it sees an Item and that item's ore names).
+        // Meta variants are not enumerated: the canonical key is (item, meta 0, no NBT), which is all the
+        // rule predicate can speak about (it sees an Item and that item's ore names). Items we have actually
+        // seen with NBT live in m3 and are reported separately.
         for (net.minecraft.util.ResourceLocation id : net.minecraft.item.Item.REGISTRY.getKeys()) {
             Item item = net.minecraft.item.Item.REGISTRY.getObject(id);
             if (item == null) {
                 continue;
             }
             IAEItemStack key = lookupKey(AEItemStack.fromItemStack(new ItemStack(item)));
-            if (seen.add(key) && matchesInstantRule(key)) {
+            if (seen.add(key)) {
                 found.add(key);
             }
         }
-        instantMatchCache = found;
-        instantMatchVersion = ruleStateVersion;
+        registryKeyCache = found;
         return found;
+    }
+
+    /** How many canonical keys the item registry yields (for the self-test's report). */
+    public int registryKeyCount() {
+        return allRegistryKeys().size();
     }
 
     // ------------------------------------------------------------------
@@ -1445,8 +1469,13 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         // promoted / rule-reached items claimed "0 types" while the terminal listed them -- the same
         // omission class as the "invisible in the terminal" bug sensei hit.
         switch (mode) {
-            case 3:
-                return data.m3.size();
+            case 3: {
+                // Must match what getAvailableItems reports in mode 3: everything the registry yields, plus
+                // the NBT variants we have seen.
+                Set<IAEItemStack> all = new LinkedHashSet<>(allRegistryKeys());
+                all.addAll(data.m3);
+                return all.size();
+            }
             case 2: {
                 Set<IAEItemStack> all = infiniteKeys();
                 all.addAll(data.s2.keySet());

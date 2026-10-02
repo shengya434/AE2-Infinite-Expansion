@@ -359,6 +359,7 @@ public class CommandCellSelfTest extends CommandBase {
         runTerminalGroup(sender);
         runSummaryGroup(sender);
         runRuleVisibilityGroup(sender);
+        runAllTypesCostGroup(sender);
 
         finish(sender);
     }
@@ -745,9 +746,12 @@ public class CommandCellSelfTest extends CommandBase {
         IItemList<IAEItemStack> e6list = AEApi.instance().storage()
                 .getStorageChannel(IItemStorageChannel.class).createList();
         e6.getAvailableItems(e6list);
+        // NOTE: mode 3 now lists every registered item (1.20 parity, asked for by sensei), so the expected
+        // count is "whatever the registry yields" rather than 2 -- what must hold is that the reported type
+        // count agrees with the listing.
         check(sender, "E6", "mode3 的 getStoredItemTypes 与终端实际列出的条目数一致",
-                e6.getStoredItemTypes() == e6list.size() && e6list.size() == 2,
-                "list=2", "types=" + e6.getStoredItemTypes() + " list=" + e6list.size());
+                e6.getStoredItemTypes() == e6list.size() && e6list.size() > 100,
+                "types=list, list>100", "types=" + e6.getStoredItemTypes() + " list=" + e6list.size());
     }
 
     /**
@@ -834,6 +838,50 @@ public class CommandCellSelfTest extends CommandBase {
         check(sender, "G4", "有「立即」规则时 getStoredItemTypes 仍与终端列出条数一致",
                 g3.getStoredItemTypes() == g4list.size(),
                 "types=list", "types=" + g3.getStoredItemTypes() + " list=" + g4list.size());
+    }
+
+    /**
+     * H group: what mode 3's "list every registered item" actually costs. sensei asked for the 1.20 behaviour
+     * *if it is not laggy*, so the numbers are measured here rather than guessed: how many keys the registry
+     * yields, that each is reported as infinite, and how long a warm listing takes -- a warm listing is what
+     * every storage-grid rebuild pays.
+     */
+    private void runAllTypesCostGroup(ICommandSender sender) {
+        UnlimitedCellInventory inv = newInventory("h");
+        inv.setMode(3);
+
+        IItemList<IAEItemStack> coldList = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        long coldStart = System.nanoTime();
+        inv.getAvailableItems(coldList); // cold: includes the one-off registry scan
+        long coldNanos = System.nanoTime() - coldStart;
+
+        IItemList<IAEItemStack> warmList = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        long warmStart = System.nanoTime();
+        inv.getAvailableItems(warmList);
+        long warmNanos = System.nanoTime() - warmStart;
+
+        boolean allInfinite = true;
+        for (IAEItemStack stack : warmList) {
+            if (stack.getStackSize() != UnlimitedCellInventory.INFINITE) {
+                allInfinite = false;
+                break;
+            }
+        }
+        check(sender, "H1", "mode3 列出全部注册物品且都算无限",
+                warmList.size() == inv.registryKeyCount() && warmList.size() > 100 && allInfinite,
+                "=" + inv.registryKeyCount() + "（>100）且全为 INFINITE",
+                "listed=" + warmList.size() + " registry=" + inv.registryKeyCount()
+                        + " allInfinite=" + allInfinite);
+
+        // The number itself is the answer to "会不会卡"; the assertion is just a headroom gate.
+        sender.sendMessage(new TextComponentString(String.format(
+                "[ae2addon] [H2] mode3 列出 %d 个键：冷 %.1f ms（含一次注册表扫描，只发生一次）/ "
+                        + "热 %.2f ms（每次网格重建的代价）",
+                warmList.size(), coldNanos / 1e6, warmNanos / 1e6)));
+        check(sender, "H2", "mode3 热重建耗时 < 50 ms（超了就该退回按需列出）",
+                warmNanos < 50_000_000L, "<50ms", String.format("%.2f ms", warmNanos / 1e6));
     }
 
     /** Size the terminal would see for {@code key}, or -1 when the cell does not list it at all. */
