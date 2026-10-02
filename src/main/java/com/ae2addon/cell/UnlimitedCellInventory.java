@@ -76,6 +76,10 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
     private static final String NBT_WORKMODE = "wm";
     private static final String NBT_THR = "thr";
     private static final String NBT_UUID = "uuid";
+    // Summary counters for the item tooltip. Tag names deliberately match the 1.20 line.
+    private static final String NBT_SUMMARY_BYTES = "_b2";        // byte[]: BigInteger, exceeds long
+    private static final String NBT_SUMMARY_BYTES_COMPAT = "_b";  // long, clamped (older readers)
+    private static final String NBT_SUMMARY_TYPES = "_t";
 
     private final ItemStack cellStack;
     private final ISaveProvider container;
@@ -203,8 +207,87 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         root.setInteger(NBT_WORKMODE, workMode);
         root.setLong(NBT_THR, threshold);
         root.setString(NBT_UUID, uuid == null ? "" : uuid.toString());
+        // Small summary counters, so the item tooltip can show bytes/types without the client needing the
+        // world save (cell data lives in CellWorldData, keyed by uuid, and is not available client-side).
+        // Tag names match the 1.20 line ("_b2" byte array for BigInteger bytes, "_b" long compat, "_t" types).
+        BigInteger summaryBytes = summaryBytes();
+        root.setByteArray(NBT_SUMMARY_BYTES, summaryBytes.toByteArray());
+        root.setLong(NBT_SUMMARY_BYTES_COMPAT, clamp(summaryBytes));
+        root.setInteger(NBT_SUMMARY_TYPES, (int) getStoredItemTypes());
         // openNbtData creates and attaches the compound when the stack has none.
         Platform.openNbtData(cellStack).setTag(NBT_ROOT, root);
+    }
+
+    /**
+     * Bytes the cell reports in its tooltip: the finite amounts plus {@code INFINITE_BYTES} per infinite
+     * type -- the same accounting the 1.20 line uses in {@code updateSummary()}, so both versions show the
+     * same number for the same content.
+     */
+    private BigInteger summaryBytes() {
+        BigInteger bytes = BigInteger.ZERO;
+        if (mode == 1) {
+            for (BigInteger amount : data.s1.values()) {
+                bytes = bytes.add(amount);
+            }
+            return bytes;
+        }
+        if (mode != 2) {
+            return bytes; // mode 3 reports infinity in the tooltip, no accounting needed
+        }
+        for (BigInteger amount : data.s2.values()) {
+            bytes = bytes.add(amount);
+        }
+        int infiniteTypes = getInfiniteTypeCount();
+        if (infiniteTypes > 0) {
+            bytes = bytes.add(BigInteger.valueOf(infiniteTypes)
+                    .multiply(BigInteger.valueOf(INFINITE_BYTES)));
+        }
+        return bytes;
+    }
+
+    /** Distinct keys the cell can hand out as infinite in mode 2 (wl u ul u ca). */
+    private int getInfiniteTypeCount() {
+        Set<IAEItemStack> infinite = new LinkedHashSet<>(data.wl);
+        infinite.addAll(data.ul);
+        infinite.addAll(data.ca.keySet());
+        return infinite.size();
+    }
+
+    /** Raw values for the item tooltip. The caller localises, so this class stays client-free. */
+    public static final class Summary {
+        public final int mode;
+        public final int workMode;
+        public final long threshold;
+        public final int types;
+        public final BigInteger bytes;
+
+        Summary(int mode, int workMode, long threshold, int types, BigInteger bytes) {
+            this.mode = mode;
+            this.workMode = workMode;
+            this.threshold = threshold;
+            this.types = types;
+            this.bytes = bytes;
+        }
+    }
+
+    /** Reads the summary counters straight off the stack, so a client tooltip needs no world data. */
+    public static Summary summaryOf(ItemStack stack) {
+        NBTTagCompound stackTag = stack == null ? null : stack.getTagCompound();
+        if (stackTag == null || !stackTag.hasKey(NBT_ROOT, 10)) {
+            return new Summary(1, 1, DEFAULT_THRESHOLD, 0, BigInteger.ZERO);
+        }
+        NBTTagCompound root = stackTag.getCompoundTag(NBT_ROOT);
+        int mode = root.getInteger(NBT_MODE);
+        if (mode < 1 || mode > 3) {
+            mode = 1;
+        }
+        int workMode = root.getInteger(NBT_WORKMODE);
+        long threshold = root.getLong(NBT_THR);
+        int types = root.getInteger(NBT_SUMMARY_TYPES);
+        BigInteger bytes = root.hasKey(NBT_SUMMARY_BYTES, 7)
+                ? new BigInteger(root.getByteArray(NBT_SUMMARY_BYTES))
+                : BigInteger.valueOf(root.getLong(NBT_SUMMARY_BYTES_COMPAT));
+        return new Summary(mode, workMode, threshold, types, bytes);
     }
 
     private void saveChanges() {
@@ -1280,25 +1363,6 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
      * P2 tooltip shows routing settings only -- no counts. The counts live in world saved data now, so a
      * client-side tooltip cannot read them; the terminal gets them from the server instead.
      */
-    public static void appendSummary(ItemStack stack, Consumer<String> line) {
-        NBTTagCompound stackTag = stack.getTagCompound();
-        if (stackTag == null || !stackTag.hasKey(NBT_ROOT, 10)) {
-            line.accept("mode 1（未初始化）");
-            return;
-        }
-        NBTTagCompound root = stackTag.getCompoundTag(NBT_ROOT);
-        int mode = root.getInteger(NBT_MODE);
-        int wm = root.getInteger(NBT_WORKMODE);
-        long thr = root.getLong(NBT_THR);
-        line.accept(modeName(mode) + (mode == 2 ? " / " + workModeName(wm) : ""));
-        if (mode == 2 && wm == 1) {
-            line.accept("阈值: " + (thr <= 0 ? DEFAULT_THRESHOLD : thr));
-        }
-        if (mode == 3) {
-            line.accept("任意物品均可取出");
-        }
-    }
-
     public static String modeName(int mode) {
         switch (mode) {
             case 2:

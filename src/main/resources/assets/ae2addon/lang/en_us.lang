@@ -94,3 +94,20 @@ gui.ae2addon.p3.rule_all_tip=Toggle all rules: Instant / Touch
 gui.ae2addon.p3.remove_whitelist_tip=Whitelisted (W) - Ctrl+right-click to remove by item ID
 gui.ae2addon.p3.retry_stopped=§c%s incomplete; auto retry stopped. Click R to refresh.
 gui.ae2addon.p3.list_panel=Panel
+# Cell tooltip (structure ported from the 1.20 appendHoverText; this line is items-only, hence "items only")
+gui.ae2addon.cell.mode=§7Mode: §b%s
+gui.ae2addon.cell.mode1.name=§aUnlimited Storage
+gui.ae2addon.cell.mode1.desc=§7Infinite capacity · normal access
+gui.ae2addon.cell.mode2.name=§eCustom Infinite
+gui.ae2addon.cell.mode2.desc=§7Whitelist / threshold / cherish
+gui.ae2addon.cell.mode3.name=§dAll-Types Infinite
+gui.ae2addon.cell.mode3.desc=§7Infinite on insert
+gui.ae2addon.cell.workmode=§7Work mode: §b%s
+gui.ae2addon.cell.workmode1=Threshold
+gui.ae2addon.cell.workmode2=Store = infinite
+gui.ae2addon.cell.workmode3=Cherish
+gui.ae2addon.cell.threshold=§7Threshold: §b%s
+gui.ae2addon.cell.bytes=§7Bytes: §b%s
+gui.ae2addon.cell.types=§7Types: §b%s
+gui.ae2addon.cell.limit=§7Limit: §eitems only
+gui.ae2addon.cell.switch_hint=§7Right-click to open the config

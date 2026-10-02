@@ -357,6 +357,7 @@ public class CommandCellSelfTest extends CommandBase {
         runRejectGroup(sender);
         runRuleGroup(sender);
         runTerminalGroup(sender);
+        runSummaryGroup(sender);
 
         finish(sender);
     }
@@ -746,6 +747,40 @@ public class CommandCellSelfTest extends CommandBase {
         check(sender, "E6", "mode3 的 getStoredItemTypes 与终端实际列出的条目数一致",
                 e6.getStoredItemTypes() == e6list.size() && e6list.size() == 2,
                 "list=2", "types=" + e6.getStoredItemTypes() + " list=" + e6list.size());
+    }
+
+    /**
+     * F group: the item tooltip's summary counters. A tooltip that disagrees with what the cell actually
+     * reports is worse than no tooltip, so F1 pins the counters to the terminal listing.
+     */
+    private void runSummaryGroup(ICommandSender sender) {
+        ItemStack cellF1 = cellWithUuid(testUuid("f1"));
+        UnlimitedCellInventory f1 = new UnlimitedCellInventory(cellF1, null);
+        wipe(f1);
+        f1.setMode(2);
+        f1.setWorkMode(1);
+        f1.addWhitelist(key(Items.DIAMOND));                                      // 1 infinite type
+        f1.injectItems(stack(Items.STICK, 40L), Actionable.MODULATE, NO_SOURCE);  // 40 finite
+        IItemList<IAEItemStack> f1list = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        f1.getAvailableItems(f1list);
+        UnlimitedCellInventory.Summary f1sum = UnlimitedCellInventory.summaryOf(cellF1);
+        long f1expectBytes = 40L + UnlimitedCellInventory.INFINITE_BYTES;
+        check(sender, "F1", "tooltip 摘要（类型/字节）与终端实际列出的一致",
+                f1sum.types == f1list.size() && f1sum.types == 2 && f1sum.bytes.longValue() == f1expectBytes,
+                "types=2 bytes=" + f1expectBytes,
+                "types=" + f1sum.types + " list=" + f1list.size() + " bytes=" + f1sum.bytes);
+
+        ItemStack cellF2 = cellWithUuid(testUuid("f2"));
+        UnlimitedCellInventory f2 = new UnlimitedCellInventory(cellF2, null);
+        wipe(f2);
+        f2.setMode(3);
+        f2.setWorkMode(2);
+        f2.setThreshold(1234L);
+        UnlimitedCellInventory.Summary f2sum = UnlimitedCellInventory.summaryOf(cellF2);
+        check(sender, "F2", "摘要能读出模式/工作模式/阈值（tooltip 那几行据此生成）",
+                f2sum.mode == 3 && f2sum.workMode == 2 && f2sum.threshold == 1234L,
+                "3/2/1234", f2sum.mode + "/" + f2sum.workMode + "/" + f2sum.threshold);
     }
 
     /** Size the terminal would see for {@code key}, or -1 when the cell does not list it at all. */
