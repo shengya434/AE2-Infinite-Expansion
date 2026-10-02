@@ -36,5 +36,11 @@ public final class RejectListState {
     public List<ItemStack> on() { return on; }
     public List<ItemStack> off() { return off; }
     public boolean pending() { return expected != 0; }
+    public int expected() { return expected; }
+    public int received() {
+        int count = 0;
+        for (List<ItemStack> part : pendingOn) if (part != null) count++;
+        return count;
+    }
     public boolean timedOut() { return pending() && System.currentTimeMillis() - started > 5000; }
 }

@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.LinkedHashMap;
 
 import com.ae2addon.network.CellNetwork;
 import com.ae2addon.network.Mode2ConfigPacket;
@@ -22,6 +23,7 @@ import net.minecraft.inventory.Slot;
 import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
+import net.minecraftforge.oredict.OreDictionary;
 import org.lwjgl.input.Mouse;
 
 /** Mode2 editor for the P2 settings exposed through UnlimitedCellInventory. */
@@ -33,6 +35,13 @@ public final class Mode2ConfigScreen extends GuiContainer {
     private final List<Mode2ConfigPacket.PanelEntry> all = new ArrayList<>();
     private final List<Mode2ConfigPacket.PanelEntry> filtered = new ArrayList<>();
     private final Map<Integer, List<Mode2ConfigPacket.PanelEntry>> pending = new TreeMap<>();
+    private final RejectListState rejectList = new RejectListState();
+    private final List<ItemStack> blacklist = new ArrayList<>();
+    private final Map<String, String> committedAmounts = new LinkedHashMap<>();
+    private final Map<Integer, List<ItemStack>> pendingBlacklist = new TreeMap<>();
+    private final Map<String, Integer> oreRules = new LinkedHashMap<>(), modRules = new LinkedHashMap<>();
+    private int expectedBlacklist;
+    private final List<ItemStack> rejectItems = new ArrayList<>();
     private int expectedChunks;
     private long pendingSince;
     private int uiState; // 0: choose work mode, 1: editor
@@ -42,8 +51,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
     private boolean rejectDefault;
     private int rejectOnCount, rejectOffCount;
     private int scrollOffset;
-    private GuiTextField thresholdInput, searchInput, itemThresholdInput;
+    private GuiTextField thresholdInput, searchInput, itemThresholdInput, ruleInput, quantityInput;
     private ItemStack editing = ItemStack.EMPTY;
+    private ItemStack quantityEditing = ItemStack.EMPTY;
+    private boolean quantityLock;
+    private int categoryScroll;
+    private String activeRule;
     private GuiButton defaultButton;
     private String lastSearch = "";
     private boolean rebuildPending;
@@ -71,7 +84,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
         menu.slotsHidden = uiState == 0;
         int x = guiLeft, y = guiTop;
 
-        // NOTE (2026-10-02, spec-side fix): create these three text fields for BOTH uiState values.
+        // Create all text fields for BOTH uiState values.
         // They used to be created only inside the uiState == 1 branch below, but actionPerformed()
         // flips uiState to 1 while the rebuild (rebuildPending) is only consumed later in
         // updateScreen()/drawScreen(). The super.mouseClicked() call at the end of that same
@@ -86,6 +99,10 @@ public final class Mode2ConfigScreen extends GuiContainer {
         searchInput.setText(lastSearch);
         itemThresholdInput = new GuiTextField(2, fontRenderer, x + 10, y + 152, 166, 16);
         itemThresholdInput.setMaxStringLength(64);
+        ruleInput = new GuiTextField(3, fontRenderer, x + 10, y + 152, 166, 16);
+        ruleInput.setMaxStringLength(128);
+        quantityInput = new GuiTextField(4, fontRenderer, x + 10, y + 152, 166, 16);
+        quantityInput.setMaxStringLength(128);
 
         if (uiState == 0) {
             buttonList.add(new GuiButton(1, x + 48, y + 24, 160, 22,
@@ -105,7 +122,14 @@ public final class Mode2ConfigScreen extends GuiContainer {
         buttonList.add(new GuiButton(8, x + 192, y + 18, 54, 18, "§e⇄ " + workMode));
         buttonList.add(new GuiButton(9, x + 180, y + 151, 28, 18, "§a✓"));
         buttonList.add(new GuiButton(10, x + 212, y + 151, 28, 18, "§c✕"));
+        buttonList.add(new GuiButton(12, x + 10, y + 170, 48, 16, I18n.format("gui.ae2addon.p3.add_ore")));
+        buttonList.add(new GuiButton(13, x + 62, y + 170, 48, 16, I18n.format("gui.ae2addon.p3.add_mod")));
+        buttonList.add(new GuiButton(14, x + 112, y + 170, 43, 16, I18n.format("gui.ae2addon.p3.save_qty")));
+        buttonList.add(new GuiButton(15, x + 160, y + 170, 42, 16,
+                I18n.format(quantityLock ? "gui.ae2addon.p3.lock" : "gui.ae2addon.p3.unlock")));
         defaultButton = new GuiButton(11, x + 10, y + 172, 150, 16, "");
+        defaultButton.y = y + 35;
+        defaultButton.width = 126;
         buttonList.add(defaultButton);
         updateDefaultButton();
         updateEditingButtons();
@@ -120,6 +144,8 @@ public final class Mode2ConfigScreen extends GuiContainer {
         if (buttonList.size() > 5 && uiState == 1) {
             buttonList.get(4).visible = !editing.isEmpty();
             buttonList.get(5).visible = !editing.isEmpty();
+            buttonList.get(8).visible = !quantityEditing.isEmpty();
+            buttonList.get(9).visible = !quantityEditing.isEmpty();
         }
     }
 
@@ -142,6 +168,13 @@ public final class Mode2ConfigScreen extends GuiContainer {
             rejectDefault = !rejectDefault;
             updateDefaultButton();
             CellNetwork.send(new Mode2ConfigPacket(8, rejectDefault));
+        } else if (button.id == 12 || button.id == 13) {
+            String name = ruleInput.getText().trim();
+            if (!name.isEmpty()) { CellNetwork.send(Mode2ConfigPacket.rule(19, button.id == 12, name, 1)); ruleInput.setText(""); }
+        } else if (button.id == 14) saveQuantity();
+        else if (button.id == 15) {
+            quantityLock = !quantityLock;
+            button.displayString = I18n.format(quantityLock ? "gui.ae2addon.p3.lock" : "gui.ae2addon.p3.unlock");
         }
     }
 
@@ -157,6 +190,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
     }
 
     private void showItemThreshold(ItemStack item, long threshold) {
+        quantityEditing = ItemStack.EMPTY;
         editing = item;
         itemThresholdInput.setText(Long.toString(threshold));
         itemThresholdInput.setFocused(true);
@@ -179,12 +213,27 @@ public final class Mode2ConfigScreen extends GuiContainer {
             hideItemThreshold();
         } catch (NumberFormatException ex) { itemThresholdInput.setText(""); }
     }
+    private void saveQuantity() {
+        if (quantityEditing.isEmpty()) return;
+        CellNetwork.send(Mode2ConfigPacket.quantity(quantityEditing.copy(), quantityInput.getText(), quantityLock));
+        quantityEditing = ItemStack.EMPTY;
+        quantityInput.setFocused(false);
+        updateEditingButtons();
+    }
 
     public void accept(Mode2ConfigPacket packet) {
         if (packet.type == 18 && packet.state != null) {
             rejectDefault = packet.state.getBoolean("default");
-            rejectOnCount = packet.state.getInteger("onCount");
-            rejectOffCount = packet.state.getInteger("offCount");
+            rejectOnCount = packet.state.getTagList("on", 10).tagCount();
+            rejectOffCount = packet.state.getTagList("off", 10).tagCount();
+            committedAmounts.clear();
+            net.minecraft.nbt.NBTTagList committed = packet.state.getTagList("committed", 10);
+            for (int i = 0; i < committed.tagCount(); i++) {
+                net.minecraft.nbt.NBTTagCompound row = committed.getCompoundTagAt(i);
+                ItemStack stack = new ItemStack(row.getCompoundTag("key"));
+                if (!stack.isEmpty()) committedAmounts.put(itemId(stack), row.getString("amount")
+                        + (row.getBoolean("has") ? "" : " (threshold)"));
+            }
             updateDefaultButton();
         } else if (packet.type == 4) {
             if (packet.chunkIndex == 0) {
@@ -200,26 +249,90 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 pending.clear(); expectedChunks = 0;
                 applyFilters();
             }
+        } else if (packet.type == 21) {
+            rejectList.handleChunk(packet.on, packet.off, packet.chunkIndex, packet.totalChunks);
+            rejectItems.clear(); rejectItems.addAll(rejectList.on()); rejectItems.addAll(rejectList.off());
+            applyFilters();
+        } else if (packet.type == 12) {
+            if (packet.chunkIndex == 0) { pendingBlacklist.clear(); expectedBlacklist = packet.totalChunks; }
+            if (expectedBlacklist == packet.totalChunks) {
+                pendingBlacklist.put(packet.chunkIndex, packet.keys);
+                if (pendingBlacklist.size() == expectedBlacklist) {
+                    blacklist.clear();
+                    for (int i = 0; i < expectedBlacklist; i++) blacklist.addAll(pendingBlacklist.get(i));
+                    expectedBlacklist = 0; pendingBlacklist.clear();
+                    applyFilters();
+                }
+            }
+        } else if (packet.type == 9) {
+            Map<String, Integer> dest = packet.isOre ? oreRules : modRules;
+            dest.clear();
+            for (int i = 0; i < packet.rules.size(); i++) dest.put(packet.rules.get(i), packet.modes.get(i));
+            if (activeRule != null && activeRule.startsWith(packet.isOre ? "ore:" : "mod:")
+                    && !dest.containsKey(activeRule.substring(4))) activeRule = null;
+            applyFilters();
         }
+    }
+    private static String itemId(ItemStack stack) {
+        return stack.getItem().getRegistryName() + ":" + stack.getMetadata() + ":"
+                + (stack.hasTagCompound() ? stack.getTagCompound().toString() : "");
+    }
+    private static boolean sameKey(ItemStack a, ItemStack b) {
+        return ItemStack.areItemsEqual(a, b) && ItemStack.areItemStackTagsEqual(a, b);
+    }
+    private static boolean containsStack(List<ItemStack> list, ItemStack needle) {
+        for (ItemStack item : list) if (sameKey(item, needle)) return true;
+        return false;
     }
 
     private void applyFilters() {
         filtered.clear();
-        String query = searchInput == null ? lastSearch : searchInput.getText();
+        String query = searchInput.getText();
         lastSearch = query;
-        for (Mode2ConfigPacket.PanelEntry entry : all) {
+        List<Mode2ConfigPacket.PanelEntry> source = new ArrayList<>(all);
+        if (rejectTab) {
+            source.clear();
+            if (!rejectList.pending()) for (ItemStack item : rejectItems)
+                source.add(new Mode2ConfigPacket.PanelEntry(item, BigInteger.ZERO, false, 0L, 0L, false));
+        } else if ("blacklist".equals(activeRule)) {
+            for (ItemStack item : blacklist) {
+                boolean present = false;
+                for (Mode2ConfigPacket.PanelEntry entry : source) if (sameKey(entry.item, item)) { present = true; break; }
+                if (!present) source.add(new Mode2ConfigPacket.PanelEntry(item, BigInteger.ZERO, false, 0L, 0L, false));
+            }
+        }
+        for (Mode2ConfigPacket.PanelEntry entry : source) {
             ItemStack stack = entry.item;
+            if (!rejectTab && "blacklist".equals(activeRule) && !containsStack(blacklist, stack)) continue;
+            if (!rejectTab && activeRule != null && !"blacklist".equals(activeRule)
+                    && !"item".equals(activeRule) && !matchesRule(stack, activeRule)) continue;
             String id = stack.getItem().getRegistryName() == null ? ""
                     : stack.getItem().getRegistryName().toString();
             if (PinyinIndex.matches(query, stack.getDisplayName(), id)) filtered.add(entry);
         }
         scrollOffset = Math.min(scrollOffset, Math.max(0, filtered.size() - 4));
     }
+    private static boolean matchesRule(ItemStack stack, String rule) {
+        if (rule.startsWith("mod:")) return stack.getItem().getRegistryName() != null
+                && rule.substring(4).equals(stack.getItem().getRegistryName().getNamespace());
+        if (rule.startsWith("ore:")) {
+            for (int id : OreDictionary.getOreIDs(stack))
+                if (rule.substring(4).equals(OreDictionary.getOreName(id))) return true;
+        }
+        return false;
+    }
+    private int maxCategoryScroll() {
+        int width = fontRenderer.getStringWidth(I18n.format("gui.ae2addon.p3.cat_items")) + 8;
+        for (String name : oreRules.keySet()) width += fontRenderer.getStringWidth("O:" + name + " [I]") + 8;
+        for (String name : modRules.keySet()) width += fontRenderer.getStringWidth("M:" + name + " [I]") + 8;
+        width += fontRenderer.getStringWidth(I18n.format("gui.ae2addon.p3.cat_blacklist")) + 8;
+        return Math.max(0, width - 176);
+    }
 
     @Override public void updateScreen() {
         super.updateScreen();
         if (rebuildPending) { rebuildPending = false; buildControls(); }
-        if (uiState == 1 && searchInput != null && !lastSearch.equals(searchInput.getText())) applyFilters();
+        if (uiState == 1 && !lastSearch.equals(searchInput.getText())) applyFilters();
     }
 
     @Override protected void drawGuiContainerBackgroundLayer(float partialTicks, int mouseX, int mouseY) {
@@ -249,11 +362,41 @@ public final class Mode2ConfigScreen extends GuiContainer {
         String hint = rejectTab ? I18n.format("gui.ae2addon.mode2.hint_reject")
                 : I18n.format("gui.ae2addon.mode2.hint_bar");
         fontRenderer.drawString(fontRenderer.trimStringToWidth(hint, 235), guiLeft + 10, guiTop + 61, 0xBBBBBB);
-        fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_all") + "  (" + filtered.size() + ")",
+        fontRenderer.drawString(fontRenderer.trimStringToWidth(activeRule == null
+                ? I18n.format("gui.ae2addon.mode2.tab_all") : "[" + activeRule + "]", 54),
                 guiLeft + 12, guiTop + 75, 0xFFFF99);
+        int chipX = guiLeft + 70 - categoryScroll;
+        String itemChip = I18n.format("gui.ae2addon.p3.cat_items");
+        int itemChipWidth = fontRenderer.getStringWidth(itemChip) + 8;
+        if (chipX >= guiLeft + 70 && chipX + itemChipWidth <= guiLeft + 246)
+            fontRenderer.drawString(itemChip, chipX, guiTop + 75, 0xCCCCCC);
+        chipX += itemChipWidth;
+        for (Map.Entry<String, Integer> rule : oreRules.entrySet()) {
+            String label = "O:" + rule.getKey() + (rule.getValue() == 1 ? " [I]" : " [T]");
+            int width = fontRenderer.getStringWidth(label) + 8;
+            if (chipX >= guiLeft + 70 && chipX + width <= guiLeft + 246)
+                fontRenderer.drawString(label, chipX, guiTop + 75, 0x66CCFF);
+            chipX += width;
+        }
+        for (Map.Entry<String, Integer> rule : modRules.entrySet()) {
+            String label = "M:" + rule.getKey() + (rule.getValue() == 1 ? " [I]" : " [T]");
+            int width = fontRenderer.getStringWidth(label) + 8;
+            if (chipX >= guiLeft + 70 && chipX + width <= guiLeft + 246)
+                fontRenderer.drawString(label, chipX, guiTop + 75, 0xDD99FF);
+            chipX += width;
+        }
+        String blackChip = I18n.format("gui.ae2addon.p3.cat_blacklist");
+        if (chipX >= guiLeft + 70 && chipX + fontRenderer.getStringWidth(blackChip) <= guiLeft + 246)
+            fontRenderer.drawString(blackChip, chipX, guiTop + 75, 0xFF7777);
         if (expectedChunks > 0) fontRenderer.drawString(
                 I18n.format("gui.ae2addon.p3.partial", pending.size(), expectedChunks),
                 guiLeft + 12, guiTop + 98, System.currentTimeMillis() - pendingSince > 5000 ? 0xFF5555 : 0xFFFF77);
+        else if (rejectTab && rejectList.pending()) fontRenderer.drawString(
+                I18n.format("gui.ae2addon.p3.partial", rejectList.received(), rejectList.expected()),
+                guiLeft + 12, guiTop + 98, rejectList.timedOut() ? 0xFF5555 : 0xFFFF77);
+        else if (expectedBlacklist > 0) fontRenderer.drawString(
+                I18n.format("gui.ae2addon.p3.partial", pendingBlacklist.size(), expectedBlacklist),
+                guiLeft + 12, guiTop + 98, 0xFFFF77);
         else if (filtered.isEmpty()) fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.no_match"),
                 guiLeft + 12, guiTop + 100, 0xAAAAAA);
         for (int i = 0; i < 4 && i + scrollOffset < filtered.size(); i++) {
@@ -262,24 +405,32 @@ public final class Mode2ConfigScreen extends GuiContainer {
             String name = entry.item.getDisplayName();
             if (fontRenderer.getStringWidth(name) > 102) name = fontRenderer.trimStringToWidth(name, 99) + "…";
             fontRenderer.drawString(name, guiLeft + 13, y, 0xDDDDDD);
-            String status = rejectTab ? (entry.rejecting ? I18n.format("gui.ae2addon.mode2.reject_mark") :
-                    I18n.format("gui.ae2addon.mode2.reject_allow_mark"))
+            String status = rejectTab ? (containsStack(rejectList.on(), entry.item)
+                    ? I18n.format("gui.ae2addon.mode2.reject_mark") : I18n.format("gui.ae2addon.mode2.reject_allow_mark"))
                     : (entry.infinite ? "§b∞" : shortAmount(entry.amount))
-                    + (entry.whitelisted ? " §aW" : "") + (entry.rejecting ? " §c!" : "");
+                    + (entry.quantityLocked ? " §eL" : "")
+                    + (containsStack(blacklist, entry.item) ? " §cX" : "");
             fontRenderer.drawString(status, guiLeft + 149, y, 0xFFFFFF);
         }
         if (workMode == 1) thresholdInput.drawTextBox();
         searchInput.drawTextBox();
         if (!editing.isEmpty()) itemThresholdInput.drawTextBox();
+        else if (!quantityEditing.isEmpty()) quantityInput.drawTextBox();
+        else ruleInput.drawTextBox();
         if (mouseX >= guiLeft + 10 && mouseX < guiLeft + 246 && mouseY >= guiTop + 88
                 && mouseY < guiTop + 150) {
             int row = (mouseY - guiTop - 88) / ROW_H + scrollOffset;
             if (row >= 0 && row < filtered.size()) {
                 Mode2ConfigPacket.PanelEntry entry = filtered.get(row);
-                List<String> tooltip = new ArrayList<>();
-                tooltip.add(entry.item.getDisplayName());
+                List<String> tooltip = new ArrayList<>(getItemToolTip(entry.item));
                 tooltip.add(entry.infinite ? I18n.format("gui.ae2addon.mode2.infinite")
                         : I18n.format("gui.ae2addon.mode2.amount", entry.amount.toString()));
+                if (entry.infinite) tooltip.add(I18n.format("gui.ae2addon.p3.bytes", entry.bytes));
+                tooltip.add(I18n.format("gui.ae2addon.mode2.item_thr_title") + ": " + entry.threshold);
+                if (entry.quantityLocked) tooltip.add(I18n.format("gui.ae2addon.mode2.qty_lock_on"));
+                if (containsStack(blacklist, entry.item)) tooltip.add(I18n.format("gui.ae2addon.mode2.blacklisted"));
+                if (entry.infinite && committedAmounts.containsKey(itemId(entry.item)))
+                    tooltip.add(I18n.format("gui.ae2addon.p3.committed", committedAmounts.get(itemId(entry.item))));
                 if (rejectTab) tooltip.add(I18n.format("gui.ae2addon.mode2.reject_tip"));
                 drawHoveringText(tooltip, mouseX, mouseY);
             }
@@ -306,7 +457,46 @@ public final class Mode2ConfigScreen extends GuiContainer {
             if (mouseButton == 0 && y >= 36 && y < 47 && x >= 144 && x < 246) {
                 rejectTab = x >= 193; scrollOffset = 0; applyFilters(); return;
             }
-            if (x >= 10 && x < 246 && y >= 88 && y < 150) {
+            if (y >= 74 && y < 86 && x >= 70 && x < 246) {
+                int chipX = 70 - categoryScroll;
+                int itemChipWidth = fontRenderer.getStringWidth(I18n.format("gui.ae2addon.p3.cat_items")) + 8;
+                if (x >= chipX && x < chipX + itemChipWidth) {
+                    activeRule = "item"; applyFilters(); return;
+                }
+                chipX += itemChipWidth;
+                for (Map.Entry<String, Integer> rule : oreRules.entrySet()) {
+                    int width = fontRenderer.getStringWidth("O:" + rule.getKey() + " [I]") + 8;
+                    if (x >= chipX && x < chipX + width) {
+                        if (isShiftKeyDown() && mouseButton == 0)
+                            CellNetwork.send(Mode2ConfigPacket.rule(20, true, rule.getKey(), 1));
+                        else if (mouseButton == 1)
+                            CellNetwork.send(Mode2ConfigPacket.rule(15, true, rule.getKey(), rule.getValue() == 1 ? 2 : 1));
+                        else { activeRule = "ore:" + rule.getKey(); applyFilters(); }
+                        return;
+                    }
+                    chipX += width;
+                }
+                for (Map.Entry<String, Integer> rule : modRules.entrySet()) {
+                    int width = fontRenderer.getStringWidth("M:" + rule.getKey() + " [I]") + 8;
+                    if (x >= chipX && x < chipX + width) {
+                        if (isShiftKeyDown() && mouseButton == 0)
+                            CellNetwork.send(Mode2ConfigPacket.rule(20, false, rule.getKey(), 1));
+                        else if (mouseButton == 1)
+                            CellNetwork.send(Mode2ConfigPacket.rule(15, false, rule.getKey(), rule.getValue() == 1 ? 2 : 1));
+                        else { activeRule = "mod:" + rule.getKey(); applyFilters(); }
+                        return;
+                    }
+                    chipX += width;
+                }
+                int blackWidth = fontRenderer.getStringWidth(I18n.format("gui.ae2addon.p3.cat_blacklist")) + 8;
+                if (x >= chipX && x < chipX + blackWidth) {
+                    activeRule = "blacklist"; applyFilters(); return;
+                }
+            }
+            if (y >= 74 && y < 86 && x >= 10 && x < 70 && mouseButton == 0) {
+                activeRule = null; applyFilters(); return;
+            }
+            if (x >= 10 && x < 246 && y >= 88 && y < 150 && !(rejectTab && rejectList.pending())) {
                 int row = (y - 88) / ROW_H + scrollOffset;
                 if (row >= 0 && row < filtered.size()) {
                     Mode2ConfigPacket.PanelEntry entry = filtered.get(row);
@@ -314,7 +504,18 @@ public final class Mode2ConfigScreen extends GuiContainer {
                         CellNetwork.send(new Mode2ConfigPacket(7, entry.item.copy()));
                     else if (rejectTab && mouseButton == 1)
                         CellNetwork.send(new Mode2ConfigPacket(22, entry.item.copy()));
-                    else if (!rejectTab && mouseButton == 0 && isShiftKeyDown() && entry.infinite)
+                    else if (!rejectTab && mouseButton == 1 && isShiftKeyDown())
+                        CellNetwork.send(new Mode2ConfigPacket(11, entry.item.copy()));
+                    else if (!rejectTab && mouseButton == 0 && isCtrlKeyDown()) {
+                        hideItemThreshold();
+                        quantityEditing = entry.item.copy(); quantityLock = entry.quantityLocked;
+                        quantityInput.setText(entry.amount.toString()); quantityInput.setFocused(true);
+                        updateEditingButtons();
+                        for (GuiButton button : buttonList) if (button.id == 15)
+                            button.displayString = I18n.format(quantityLock ? "gui.ae2addon.p3.lock"
+                                    : "gui.ae2addon.p3.unlock");
+                    }
+                    else if (!rejectTab && mouseButton == 0 && isShiftKeyDown())
                         CellNetwork.send(new Mode2ConfigPacket(5, entry.item.copy()));
                     else if (!rejectTab && mouseButton == 1 && !isShiftKeyDown())
                         showItemThreshold(entry.item.copy(), entry.threshold);
@@ -327,6 +528,8 @@ public final class Mode2ConfigScreen extends GuiContainer {
             if (workMode == 1) thresholdInput.mouseClicked(mouseX, mouseY, mouseButton);
             searchInput.mouseClicked(mouseX, mouseY, mouseButton);
             if (!editing.isEmpty()) itemThresholdInput.mouseClicked(mouseX, mouseY, mouseButton);
+            else if (!quantityEditing.isEmpty()) quantityInput.mouseClicked(mouseX, mouseY, mouseButton);
+            else ruleInput.mouseClicked(mouseX, mouseY, mouseButton);
         }
     }
 
@@ -337,6 +540,11 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 if (keyCode == 1) { hideItemThreshold(); return; }
                 if (itemThresholdInput.textboxKeyTyped(typedChar, keyCode)) return;
             }
+            if (!quantityEditing.isEmpty()) {
+                if (keyCode == 28 || keyCode == 156) { saveQuantity(); return; }
+                if (keyCode == 1) { quantityEditing = ItemStack.EMPTY; updateEditingButtons(); return; }
+                if (quantityInput.textboxKeyTyped(typedChar, keyCode)) return;
+            } else if (ruleInput.textboxKeyTyped(typedChar, keyCode)) return;
             if (workMode == 1 && thresholdInput.textboxKeyTyped(typedChar, keyCode)) return;
             if (searchInput.textboxKeyTyped(typedChar, keyCode)) return;
         }
@@ -347,8 +555,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
         super.handleMouseInput();
         if (uiState != 1) return;
         int wheel = Mouse.getDWheel();
-        if (wheel != 0) scrollOffset = Math.max(0, Math.min(Math.max(0, filtered.size() - 4),
-                scrollOffset + (wheel < 0 ? 1 : -1)));
+        if (wheel != 0) {
+            if (isShiftKeyDown()) categoryScroll = Math.max(0,
+                    Math.min(maxCategoryScroll(), categoryScroll + (wheel < 0 ? 24 : -24)));
+            else scrollOffset = Math.max(0, Math.min(Math.max(0, filtered.size() - 4),
+                    scrollOffset + (wheel < 0 ? 1 : -1)));
+        }
     }
 
     @Override public boolean doesGuiPauseGame() { return false; }

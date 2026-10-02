@@ -3,8 +3,6 @@ package com.ae2addon.gui;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.HashSet;
-import java.util.Set;
 
 import com.ae2addon.network.CellNetwork;
 import com.ae2addon.network.Mode2ConfigPacket;
@@ -27,11 +25,10 @@ public final class ModeSelectScreen extends GuiContainer {
     private boolean rejectDefault;
     private int onCount;
     private int offCount;
-    private final List<Mode2ConfigPacket.PanelEntry> visibleRejects = new ArrayList<>();
-    private final Set<Integer> receivedChunks = new HashSet<>();
-    private int expectedChunks;
+    private final RejectListState rejectList = new RejectListState();
+    private final List<ItemStack> visibleRejects = new ArrayList<>();
     private int rejectScroll;
-    private long pendingSince;
+    private boolean formatConfirmed;
     private GuiButton defaultButton;
     private GuiTextField formatInput;
 
@@ -47,11 +44,10 @@ public final class ModeSelectScreen extends GuiContainer {
         buttonList.add(new GuiButton(3, x + 15, y + 62, 150, 22, I18n.format("gui.ae2addon.mode_select.btn3")));
         GuiButton format = new GuiButton(4, x + 15, y + 90, 150, 20,
                 I18n.format("gui.ae2addon.mode_select.format_btn"));
-        format.enabled = false;
         buttonList.add(format);
-        formatInput = new GuiTextField(0, fontRenderer, x + 10, y + 116, 118, 16);
+        formatInput = new GuiTextField(0, fontRenderer, x + 10, y + 121, 118, 16);
         formatInput.setMaxStringLength(32);
-        formatInput.setEnabled(false);
+        buttonList.add(new GuiButton(5, x + 132, y + 121, 33, 16, "§a✓"));
         defaultButton = new GuiButton(8, x + 10, y + 215, 150, 16, "");
         buttonList.add(defaultButton);
         buttonList.add(new GuiButton(9, x + 150, y + 152, 20, 16, "R"));
@@ -66,7 +62,11 @@ public final class ModeSelectScreen extends GuiContainer {
 
     @Override protected void actionPerformed(GuiButton button) {
         if (button.id >= 1 && button.id <= 3) CellNetwork.send(new SetCellModePacket(button.id));
-        else if (button.id == 8) {
+        else if (button.id == 5) formatConfirmed = "DELETE".equals(formatInput.getText());
+        else if (button.id == 4 && formatConfirmed && "DELETE".equals(formatInput.getText())) {
+            CellNetwork.send(new Mode2ConfigPacket(14));
+            formatConfirmed = false; formatInput.setText("");
+        } else if (button.id == 8) {
             rejectDefault = !rejectDefault;
             updateDefaultButton();
             CellNetwork.send(new Mode2ConfigPacket(8, rejectDefault));
@@ -76,20 +76,14 @@ public final class ModeSelectScreen extends GuiContainer {
     public void accept(Mode2ConfigPacket packet) {
         if (packet.type == 18 && packet.state != null) {
             rejectDefault = packet.state.getBoolean("default");
-            onCount = packet.state.getInteger("onCount");
-            offCount = packet.state.getInteger("offCount");
+            onCount = packet.state.getTagList("on", 10).tagCount();
+            offCount = packet.state.getTagList("off", 10).tagCount();
             updateDefaultButton();
-        } else if (packet.type == 4 && packet.chunkIndex == 0) {
+        } else if (packet.type == 21) {
+            rejectList.handleChunk(packet.on, packet.off, packet.chunkIndex, packet.totalChunks);
             visibleRejects.clear();
-            receivedChunks.clear();
-            expectedChunks = packet.totalChunks;
-            pendingSince = System.currentTimeMillis();
-        }
-        if (packet.type == 4 && expectedChunks == packet.totalChunks && receivedChunks.add(packet.chunkIndex)) {
-            for (Mode2ConfigPacket.PanelEntry entry : packet.entries) {
-                if (entry.rejecting) visibleRejects.add(entry);
-            }
-            if (receivedChunks.size() == expectedChunks) expectedChunks = 0;
+            visibleRejects.addAll(rejectList.on());
+            visibleRejects.addAll(rejectList.off());
             rejectScroll = Math.min(rejectScroll, Math.max(0, visibleRejects.size() - 3));
         }
     }
@@ -105,29 +99,47 @@ public final class ModeSelectScreen extends GuiContainer {
         super.drawScreen(mouseX, mouseY, partialTicks);
         fontRenderer.drawString(I18n.format("gui.ae2addon.mode_select.title"), guiLeft + 10, guiTop, 0xFFFFFF);
         fontRenderer.drawString(fontRenderer.trimStringToWidth(
-                I18n.format("gui.ae2addon.mode_select.format_warn"), 160), guiLeft + 10, guiTop + 138, 0xBBBBBB);
+                I18n.format("gui.ae2addon.mode_select.format_warn"), 160), guiLeft + 10, guiTop + 141, 0xBBBBBB);
         fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_reject") + " (" + onCount + "/" + offCount + ")",
                 guiLeft + 10, guiTop + 158, 0xFFFFFF);
-        if (expectedChunks > 0) fontRenderer.drawString(
-                I18n.format("gui.ae2addon.p3.partial", receivedChunks.size(), expectedChunks),
-                guiLeft + 10, guiTop + 174, System.currentTimeMillis() - pendingSince > 5000 ? 0xFF5555 : 0xFFFF77);
+        if (rejectList.pending()) fontRenderer.drawString(
+                I18n.format("gui.ae2addon.p3.partial", rejectList.received(), rejectList.expected()),
+                guiLeft + 10, guiTop + 174, rejectList.timedOut() ? 0xFF5555 : 0xFFFF77);
         else if (visibleRejects.isEmpty()) fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.reject_empty"),
                 guiLeft + 10, guiTop + 174, 0xAAAAAA);
-        for (int i = 0; expectedChunks == 0 && i < 3 && i + rejectScroll < visibleRejects.size(); i++) {
-            ItemStack stack = visibleRejects.get(i + rejectScroll).item;
+        for (int i = 0; !rejectList.pending() && i < 3 && i + rejectScroll < visibleRejects.size(); i++) {
+            ItemStack stack = visibleRejects.get(i + rejectScroll);
             fontRenderer.drawString(fontRenderer.trimStringToWidth(stack.getDisplayName(), 110),
                     guiLeft + 12, guiTop + 174 + i * 14, 0xDDDDDD);
+            fontRenderer.drawString(i + rejectScroll < rejectList.on().size()
+                    ? I18n.format("gui.ae2addon.mode2.reject_mark")
+                    : I18n.format("gui.ae2addon.mode2.reject_allow_mark"),
+                    guiLeft + 124, guiTop + 174 + i * 14, 0xFFAAAA);
+        }
+        if (!rejectList.pending() && mouseX >= guiLeft + 10 && mouseX < guiLeft + 172
+                && mouseY >= guiTop + 174 && mouseY < guiTop + 216) {
+            int row = (mouseY - guiTop - 174) / 14 + rejectScroll;
+            if (row >= 0 && row < visibleRejects.size()) {
+                List<String> tooltip = new ArrayList<>(getItemToolTip(visibleRejects.get(row)));
+                tooltip.add(row < rejectList.on().size()
+                        ? I18n.format("gui.ae2addon.mode2.reject_mark")
+                        : I18n.format("gui.ae2addon.mode2.reject_allow_mark"));
+                drawHoveringText(tooltip, mouseX, mouseY);
+            }
         }
         formatInput.drawTextBox();
+        fontRenderer.drawString(fontRenderer.trimStringToWidth(formatConfirmed ?
+                I18n.format("gui.ae2addon.mode_select.format_ok") :
+                I18n.format("gui.ae2addon.mode_select.format_hint"), 160), guiLeft + 10, guiTop + 111, 0xFFFFFF);
     }
 
     @Override protected void mouseClicked(int mouseX, int mouseY, int mouseButton) throws IOException {
         int x = mouseX - guiLeft, y = mouseY - guiTop;
-        if (mouseButton == 0 && !isShiftKeyDown() && !isCtrlKeyDown()
+        if (mouseButton == 0 && !rejectList.pending() && !isShiftKeyDown() && !isCtrlKeyDown()
                 && x >= 10 && x < 178 && y >= 171 && y < 213) {
             int row = (y - 171) / 14 + rejectScroll;
             if (row >= 0 && row < visibleRejects.size())
-                CellNetwork.send(new Mode2ConfigPacket(7, visibleRejects.get(row).item.copy()));
+                CellNetwork.send(new Mode2ConfigPacket(7, visibleRejects.get(row).copy()));
             return;
         }
         super.mouseClicked(mouseX, mouseY, mouseButton);
@@ -142,6 +154,10 @@ public final class ModeSelectScreen extends GuiContainer {
     }
 
     @Override protected void keyTyped(char typedChar, int keyCode) throws IOException {
+        if (keyCode == 28 || keyCode == 156) {
+            formatConfirmed = "DELETE".equals(formatInput.getText());
+            return;
+        }
         if (!formatInput.textboxKeyTyped(typedChar, keyCode)) super.keyTyped(typedChar, keyCode);
     }
 

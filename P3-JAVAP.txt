@@ -241,3 +241,58 @@
   public java.lang.String displayString;
   public boolean enabled;
   public boolean visible;
+
+=== P3 round 2: newly used Forge / Minecraft 1.12.2 signatures ===
+=== net.minecraft.network.PacketBuffer
+  public net.minecraft.network.PacketBuffer writeByteArray(byte[]);
+  public byte[] readByteArray();
+  public byte[] readByteArray(int);
+  public net.minecraft.network.PacketBuffer writeVarIntArray(int[]);
+  public int[] readVarIntArray();
+  public int[] readVarIntArray(int);
+  public int readVarInt();
+  public long readVarLong();
+  public net.minecraft.network.PacketBuffer writeVarInt(int);
+  public net.minecraft.network.PacketBuffer writeVarLong(long);
+  public net.minecraft.network.PacketBuffer writeItemStack(net.minecraft.item.ItemStack);
+  public net.minecraft.item.ItemStack readItemStack() throws java.io.IOException;
+  public java.lang.String readString(int);
+  public net.minecraft.network.PacketBuffer writeString(java.lang.String);
+  public boolean getBoolean(int);
+  public io.netty.buffer.ByteBuf setBoolean(int, boolean);
+  public boolean readBoolean();
+  public io.netty.buffer.ByteBuf writeBoolean(boolean);
+=== net.minecraftforge.oredict.OreDictionary
+  public static java.lang.String getOreName(int);
+  public static int[] getOreIDs(net.minecraft.item.ItemStack);
+  public static boolean doesOreNameExist(java.lang.String);
+  public static java.lang.String[] getOreNames();
+=== net.minecraftforge.fml.common.Loader
+  public static boolean isModLoaded(java.lang.String);
+=== net.minecraft.client.gui.GuiButton
+  public int width;
+  public int y;
+=== net.minecraft.client.gui.GuiScreen
+  public int width;
+  public java.util.List<java.lang.String> getItemToolTip(net.minecraft.item.ItemStack);
+=== net.minecraft.item.ItemStack
+  public net.minecraft.item.ItemStack(net.minecraft.nbt.NBTTagCompound);
+  public net.minecraft.nbt.NBTTagCompound writeToNBT(net.minecraft.nbt.NBTTagCompound);
+  public int getMetadata();
+  public static boolean areItemStackTagsEqual(net.minecraft.item.ItemStack, net.minecraft.item.ItemStack);
+  public static boolean areItemsEqual(net.minecraft.item.ItemStack, net.minecraft.item.ItemStack);
+  public static boolean areItemsEqualIgnoreDurability(net.minecraft.item.ItemStack, net.minecraft.item.ItemStack);
+=== net.minecraft.nbt.NBTTagCompound
+  public void setTag(java.lang.String, net.minecraft.nbt.NBTBase);
+  public void setString(java.lang.String, java.lang.String);
+  public void setBoolean(java.lang.String, boolean);
+  public java.lang.String getString(java.lang.String);
+  public net.minecraft.nbt.NBTTagCompound getCompoundTag(java.lang.String);
+  public net.minecraft.nbt.NBTTagList getTagList(java.lang.String, int);
+  public boolean getBoolean(java.lang.String);
+=== net.minecraft.nbt.NBTTagList
+  public void appendTag(net.minecraft.nbt.NBTBase);
+  public net.minecraft.nbt.NBTTagCompound getCompoundTagAt(int);
+  public int tagCount();
+=== net.minecraft.util.ResourceLocation
+  public java.lang.String getNamespace();
