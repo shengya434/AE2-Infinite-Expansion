@@ -30,7 +30,7 @@ import net.minecraft.util.text.TextComponentString;
  */
 public class CommandCell extends CommandBase {
 
-    private static final String USAGE = "/ae2addoncell <mode|wm|thr|wl|info|cancel|reject|ore> ...";
+    private static final String USAGE = "/ae2addoncell <mode|wm|thr|wl|info|cancel|reject|rule|ore> ...";
 
     @Override
     public String getName() {
@@ -51,7 +51,13 @@ public class CommandCell extends CommandBase {
     public List<String> getTabCompletions(MinecraftServer server, ICommandSender sender, String[] args,
             @Nullable net.minecraft.util.math.BlockPos pos) {
         if (args.length == 1) {
-            return getListOfStringsMatchingLastWord(args, "mode", "wm", "thr", "wl", "info", "cancel", "reject", "ore");
+            return getListOfStringsMatchingLastWord(args, "mode", "wm", "thr", "wl", "info", "cancel", "reject", "rule", "ore");
+        }
+        if (args.length == 2 && "rule".equals(args[0])) {
+            return getListOfStringsMatchingLastWord(args, "add", "del");
+        }
+        if (args.length == 3 && "rule".equals(args[0])) {
+            return getListOfStringsMatchingLastWord(args, "ore", "mod");
         }
         if (args.length == 2 && "mode".equals(args[0])) {
             return getListOfStringsMatchingLastWord(args, "1", "2", "3");
@@ -149,6 +155,35 @@ public class CommandCell extends CommandBase {
                 }
                 break;
             }
+            case "rule": {
+                // Command-side counterpart of the GUI's rule bar, and the target of the clickable names that
+                // /ae2addoncell ore prints. Without it those names would have to be retyped by hand.
+                if (args.length < 4) {
+                    throw new CommandException("/ae2addoncell rule <add|del> <ore|mod> <名字>");
+                }
+                String op = args[1].toLowerCase();
+                String kind = args[2].toLowerCase();
+                String name = args[3];
+                boolean ore = "ore".equals(kind);
+                if (!ore && !"mod".equals(kind)) {
+                    throw new CommandException("第二项只能是 ore 或 mod");
+                }
+                if ("add".equals(op)) {
+                    if (ore && !net.minecraftforge.oredict.OreDictionary.doesOreNameExist(name)) {
+                        reply(sender, "§e警告: 矿辞 " + name + " 当前没有注册过，这条规则不会命中任何物品");
+                    }
+                    boolean added = ore ? inv.addOreRule(name) : inv.addModRule(name);
+                    reply(sender, (added ? "已添加" : "已存在，未重复添加") + (ore ? "矿辞" : "模组")
+                            + "规则: " + name);
+                } else if ("del".equals(op)) {
+                    boolean removed = ore ? inv.removeOreRule(name) : inv.removeModRule(name);
+                    reply(sender, (removed ? "已删除" : "没有这条规则") + (ore ? "矿辞" : "模组")
+                            + "规则: " + name);
+                } else {
+                    throw new CommandException("第一项只能是 add 或 del");
+                }
+                break;
+            }
             case "info": {
                 reply(sender, inv.describeSettings());
                 break;
@@ -215,22 +250,49 @@ public class CommandCell extends CommandBase {
             throw new CommandException("手上没有物品：拿一个想查的物品再敲一次");
         }
         net.minecraft.util.ResourceLocation id = held.getItem().getRegistryName();
+        String namespace = id == null ? null : id.getNamespace();
         reply(sender, "物品: " + held.getDisplayName());
         reply(sender, "注册名: " + (id == null ? "?" : id.toString()));
-        reply(sender, "模组 id: " + (id == null ? "?" : id.getNamespace()));
+
+        // The point of this command is to get a working rule into the cell. 1.12.2 chat has no
+        // "copy to clipboard" click action, so instead of making the name selectable we make it CLICKABLE:
+        // one click runs the command that adds that very rule to the cell in your hand. No retyping.
+        sender.sendMessage(label("模组 id: "));
+        sender.sendMessage(clickable(namespace == null ? "?" : namespace,
+                "/ae2addoncell rule add mod " + namespace,
+                "点击把模组规则加到手上的元件: " + namespace));
+
         int[] oreIds = net.minecraftforge.oredict.OreDictionary.getOreIDs(held);
         if (oreIds == null || oreIds.length == 0) {
             reply(sender, "矿词: 无（该物品没有注册任何矿词）");
             return;
         }
-        StringBuilder names = new StringBuilder();
+        sender.sendMessage(label("矿词（点一个直接加规则）:"));
         for (int oreId : oreIds) {
-            if (names.length() > 0) {
-                names.append(", ");
+            String ore = net.minecraftforge.oredict.OreDictionary.getOreName(oreId);
+            if (ore == null) {
+                continue;
             }
-            names.append(net.minecraftforge.oredict.OreDictionary.getOreName(oreId));
+            sender.sendMessage(clickable(ore, "/ae2addoncell rule add ore " + ore,
+                    "点击把矿辞规则加到手上的元件: " + ore));
         }
-        reply(sender, "矿词: " + names);
+    }
+
+    private static TextComponentString label(String text) {
+        return new TextComponentString("§7[ae2addon] " + text);
+    }
+
+    /** A chat line that looks like a button: running {@code command} on click, {@code hint} on hover. */
+    private static TextComponentString clickable(String text, String command, String hint) {
+        TextComponentString line = new TextComponentString("  ");
+        line.appendSibling(new TextComponentString("§b§n" + text + "§r")
+                .setStyle(new net.minecraft.util.text.Style()
+                        .setClickEvent(new net.minecraft.util.text.event.ClickEvent(
+                                net.minecraft.util.text.event.ClickEvent.Action.RUN_COMMAND, command))
+                        .setHoverEvent(new net.minecraft.util.text.event.HoverEvent(
+                                net.minecraft.util.text.event.HoverEvent.Action.SHOW_TEXT,
+                                new TextComponentString("§7" + hint)))));
+        return line;
     }
 
     private static void reply(ICommandSender sender, String message) {
