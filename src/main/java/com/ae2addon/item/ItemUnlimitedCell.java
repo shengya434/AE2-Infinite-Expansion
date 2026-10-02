@@ -4,11 +4,16 @@ import java.util.List;
 
 import com.ae2addon.AE2Addon;
 import com.ae2addon.cell.UnlimitedCellInventory;
+import com.ae2addon.gui.CellScreens;
 
 import net.minecraft.client.util.ITooltipFlag;
 import net.minecraft.creativetab.CreativeTabs;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.util.ActionResult;
+import net.minecraft.util.EnumActionResult;
+import net.minecraft.util.EnumHand;
 import net.minecraft.world.World;
 
 /**
@@ -27,6 +32,15 @@ public class ItemUnlimitedCell extends Item {
         // getItemStackDisplayName appends ".name", so the lang key is:
         //     item.ae2addon:unlimited_cell.name
         setTranslationKey(AE2Addon.MODID + ":" + AE2Addon.CELL_NAME);
+    }
+
+    @Override
+    public ActionResult<ItemStack> onItemRightClick(World world, EntityPlayer player, EnumHand hand) {
+        ItemStack stack = player.getHeldItem(hand);
+        if (!world.isRemote) {
+            CellScreens.open(player, stack, hand);
+        }
+        return new ActionResult<>(EnumActionResult.SUCCESS, stack);
     }
 
     @Override

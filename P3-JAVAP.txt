@@ -1,0 +1,243 @@
+﻿javap -p evidence; Forge stable_39 and AE2-UEL mapped stable_39; 2026-10-02
+=== net.minecraft.item.Item
+  public net.minecraft.util.ActionResult<net.minecraft.item.ItemStack> onItemRightClick(net.minecraft.world.World, net.minecraft.entity.player.EntityPlayer, net.minecraft.util.EnumHand);
+  public net.minecraft.inventory.EntityEquipmentSlot getEquipmentSlot(net.minecraft.item.ItemStack);
+=== net.minecraft.util.ActionResult
+  public net.minecraft.util.ActionResult(net.minecraft.util.EnumActionResult, T);
+=== net.minecraft.entity.Entity
+  public net.minecraft.world.World world;
+  public void setItemStackToSlot(net.minecraft.inventory.EntityEquipmentSlot, net.minecraft.item.ItemStack);
+  public net.minecraft.util.text.ITextComponent getDisplayName();
+  public net.minecraft.server.MinecraftServer getServer();
+=== net.minecraft.entity.EntityLivingBase
+  public net.minecraft.item.ItemStack getHeldItem(net.minecraft.util.EnumHand);
+  public boolean hasItemInSlot(net.minecraft.inventory.EntityEquipmentSlot);
+  public abstract net.minecraft.item.ItemStack getItemStackFromSlot(net.minecraft.inventory.EntityEquipmentSlot);
+  public abstract void setItemStackToSlot(net.minecraft.inventory.EntityEquipmentSlot, net.minecraft.item.ItemStack);
+=== net.minecraft.entity.player.EntityPlayer
+  public net.minecraft.inventory.Container openContainer;
+  public net.minecraft.item.ItemStack dropItemAndGetStack(net.minecraft.entity.item.EntityItem);
+  public net.minecraft.item.ItemStack getItemStackFromSlot(net.minecraft.inventory.EntityEquipmentSlot);
+  public void setItemStackToSlot(net.minecraft.inventory.EntityEquipmentSlot, net.minecraft.item.ItemStack);
+  public net.minecraft.util.text.ITextComponent getDisplayName();
+  public void openGui(java.lang.Object, int, net.minecraft.world.World, int, int, int);
+=== net.minecraft.entity.player.EntityPlayerMP
+=== net.minecraft.world.World
+  public final boolean isRemote;
+=== net.minecraft.server.MinecraftServer
+  public net.minecraft.server.MinecraftServer getServer();
+  public com.google.common.util.concurrent.ListenableFuture<java.lang.Object> addScheduledTask(java.lang.Runnable);
+=== net.minecraft.network.NetHandlerPlayServer
+  public net.minecraft.entity.player.EntityPlayerMP player;
+=== net.minecraftforge.fml.common.network.NetworkRegistry
+  public net.minecraftforge.fml.common.network.simpleimpl.SimpleNetworkWrapper newSimpleChannel(java.lang.String);
+  public void registerGuiHandler(java.lang.Object, net.minecraftforge.fml.common.network.IGuiHandler);
+  public net.minecraft.inventory.Container getRemoteGuiContainer(net.minecraftforge.fml.common.ModContainer, net.minecraft.entity.player.EntityPlayerMP, int, net.minecraft.world.World, int, int, int);
+  public java.lang.Object getLocalGuiContainer(net.minecraftforge.fml.common.ModContainer, net.minecraft.entity.player.EntityPlayer, int, net.minecraft.world.World, int, int, int);
+=== net.minecraftforge.fml.common.network.IGuiHandler
+  public abstract java.lang.Object getServerGuiElement(int, net.minecraft.entity.player.EntityPlayer, net.minecraft.world.World, int, int, int);
+  public abstract java.lang.Object getClientGuiElement(int, net.minecraft.entity.player.EntityPlayer, net.minecraft.world.World, int, int, int);
+=== net.minecraftforge.fml.common.network.simpleimpl.SimpleNetworkWrapper
+  public <REQ extends net.minecraftforge.fml.common.network.simpleimpl.IMessage, REPLY extends net.minecraftforge.fml.common.network.simpleimpl.IMessage> void registerMessage(java.lang.Class<? extends net.minecraftforge.fml.common.network.simpleimpl.IMessageHandler<REQ, REPLY>>, java.lang.Class<REQ>, int, net.minecraftforge.fml.relauncher.Side);
+  public <REQ extends net.minecraftforge.fml.common.network.simpleimpl.IMessage, REPLY extends net.minecraftforge.fml.common.network.simpleimpl.IMessage> void registerMessage(net.minecraftforge.fml.common.network.simpleimpl.IMessageHandler<? super REQ, ? extends REPLY>, java.lang.Class<REQ>, int, net.minecraftforge.fml.relauncher.Side);
+  public void sendTo(net.minecraftforge.fml.common.network.simpleimpl.IMessage, net.minecraft.entity.player.EntityPlayerMP);
+  public void sendToServer(net.minecraftforge.fml.common.network.simpleimpl.IMessage);
+=== net.minecraftforge.fml.common.network.simpleimpl.IMessage
+  public abstract void fromBytes(io.netty.buffer.ByteBuf);
+  public abstract void toBytes(io.netty.buffer.ByteBuf);
+=== net.minecraftforge.fml.common.network.simpleimpl.IMessageHandler
+  public abstract REPLY onMessage(REQ, net.minecraftforge.fml.common.network.simpleimpl.MessageContext);
+=== net.minecraftforge.fml.common.network.simpleimpl.MessageContext
+  public net.minecraft.network.NetHandlerPlayServer getServerHandler();
+=== net.minecraft.network.PacketBuffer
+  public net.minecraft.network.PacketBuffer(io.netty.buffer.ByteBuf);
+  public net.minecraft.network.PacketBuffer writeByteArray(byte[]);
+  public byte[] readByteArray();
+  public byte[] readByteArray(int);
+  public net.minecraft.network.PacketBuffer writeVarIntArray(int[]);
+  public int[] readVarIntArray();
+  public int[] readVarIntArray(int);
+  public net.minecraft.network.PacketBuffer writeLongArray(long[]);
+  public long[] readLongArray(long[]);
+  public long[] readLongArray(long[], int);
+  public int readVarInt();
+  public net.minecraft.network.PacketBuffer writeVarInt(int);
+  public net.minecraft.network.PacketBuffer writeCompoundTag(net.minecraft.nbt.NBTTagCompound);
+  public net.minecraft.nbt.NBTTagCompound readCompoundTag() throws java.io.IOException;
+  public net.minecraft.network.PacketBuffer writeItemStack(net.minecraft.item.ItemStack);
+  public net.minecraft.item.ItemStack readItemStack() throws java.io.IOException;
+  public java.lang.String readString(int);
+  public net.minecraft.network.PacketBuffer writeString(java.lang.String);
+  public net.minecraft.util.ResourceLocation readResourceLocation();
+  public net.minecraft.network.PacketBuffer writeResourceLocation(net.minecraft.util.ResourceLocation);
+  public boolean getBoolean(int);
+  public long getLong(int);
+  public io.netty.buffer.ByteBuf setBoolean(int, boolean);
+  public io.netty.buffer.ByteBuf setLong(int, long);
+  public boolean readBoolean();
+  public long readLong();
+  public long readLongLE();
+  public io.netty.buffer.ByteBuf writeBoolean(boolean);
+  public io.netty.buffer.ByteBuf writeLong(long);
+  public io.netty.buffer.ByteBuf writeLongLE(long);
+  public io.netty.buffer.ByteBuf copy();
+  public io.netty.buffer.ByteBuf copy(int, int);
+=== net.minecraft.inventory.Container
+  public java.util.List<net.minecraft.inventory.Slot> inventorySlots;
+  protected net.minecraft.inventory.Slot addSlotToContainer(net.minecraft.inventory.Slot);
+  public net.minecraft.inventory.Slot getSlot(int);
+  public net.minecraft.item.ItemStack transferStackInSlot(net.minecraft.entity.player.EntityPlayer, int);
+  public boolean canMergeSlot(net.minecraft.item.ItemStack, net.minecraft.inventory.Slot);
+  public void putStackInSlot(int, net.minecraft.item.ItemStack);
+  public abstract boolean canInteractWith(net.minecraft.entity.player.EntityPlayer);
+  public static boolean canAddItemToSlot(net.minecraft.inventory.Slot, net.minecraft.item.ItemStack, boolean);
+  public boolean canDragIntoSlot(net.minecraft.inventory.Slot);
+=== net.minecraft.inventory.Slot
+  public int xPos;
+  public int yPos;
+  public net.minecraft.inventory.Slot(net.minecraft.inventory.IInventory, int, int, int);
+  public net.minecraft.item.ItemStack getStack();
+  public boolean isEnabled();
+=== net.minecraft.client.gui.inventory.GuiContainer
+  public net.minecraft.inventory.Container inventorySlots;
+  public net.minecraft.client.gui.inventory.GuiContainer(net.minecraft.inventory.Container);
+  public void initGui();
+  public void drawScreen(int, int, float);
+  protected void drawGuiContainerForegroundLayer(int, int);
+  protected abstract void drawGuiContainerBackgroundLayer(float, int, int);
+  private void drawSlot(net.minecraft.inventory.Slot);
+  protected void mouseClicked(int, int, int) throws java.io.IOException;
+  private boolean isMouseOverSlot(net.minecraft.inventory.Slot, int, int);
+  protected void keyTyped(char, int) throws java.io.IOException;
+  public boolean doesGuiPauseGame();
+  public void updateScreen();
+=== net.minecraft.client.gui.GuiScreen
+  protected java.util.List<net.minecraft.client.gui.GuiButton> buttonList;
+  protected net.minecraft.client.gui.FontRenderer fontRenderer;
+  public void drawScreen(int, int, float);
+  protected void keyTyped(char, int) throws java.io.IOException;
+  public void drawHoveringText(java.lang.String, int, int);
+  public void setFocused(boolean);
+  public void drawHoveringText(java.util.List<java.lang.String>, int, int);
+  protected void drawHoveringText(java.util.List<java.lang.String>, int, int, net.minecraft.client.gui.FontRenderer);
+  protected void setText(java.lang.String, boolean);
+  protected void mouseClicked(int, int, int) throws java.io.IOException;
+  protected void actionPerformed(net.minecraft.client.gui.GuiButton) throws java.io.IOException;
+  public void initGui();
+  public void handleMouseInput() throws java.io.IOException;
+  public void updateScreen();
+  public void drawDefaultBackground();
+  public boolean doesGuiPauseGame();
+  public static boolean isCtrlKeyDown();
+  public static boolean isShiftKeyDown();
+=== net.minecraft.client.gui.GuiButton
+  public net.minecraft.client.gui.GuiButton(int, int, int, java.lang.String);
+  public net.minecraft.client.gui.GuiButton(int, int, int, int, int, java.lang.String);
+=== net.minecraft.client.gui.GuiTextField
+  private final net.minecraft.client.gui.FontRenderer fontRenderer;
+  public net.minecraft.client.gui.GuiTextField(int, net.minecraft.client.gui.FontRenderer, int, int, int, int);
+  public void setText(java.lang.String);
+  public java.lang.String getText();
+  public boolean textboxKeyTyped(char, int);
+  public boolean mouseClicked(int, int, int);
+  public void drawTextBox();
+  public void setMaxStringLength(int);
+  public void setFocused(boolean);
+  public void setEnabled(boolean);
+=== net.minecraft.client.gui.Gui
+  public static void drawRect(int, int, int, int, int);
+  public void drawString(net.minecraft.client.gui.FontRenderer, java.lang.String, int, int, int);
+  public void drawTexturedModalRect(int, int, int, int, int, int);
+  public void drawTexturedModalRect(float, float, int, int, int, int);
+  public void drawTexturedModalRect(int, int, net.minecraft.client.renderer.texture.TextureAtlasSprite, int, int);
+=== net.minecraft.client.gui.FontRenderer
+  public int drawString(java.lang.String, int, int, int);
+  public int drawString(java.lang.String, float, float, int, boolean);
+  public int getStringWidth(java.lang.String);
+  public java.lang.String trimStringToWidth(java.lang.String, int);
+  public java.lang.String trimStringToWidth(java.lang.String, int, boolean);
+  protected void bindTexture(net.minecraft.util.ResourceLocation);
+=== net.minecraft.client.Minecraft
+  public net.minecraft.client.gui.FontRenderer fontRenderer;
+  public net.minecraft.client.gui.FontRenderer standardGalacticFontRenderer;
+  public net.minecraft.client.renderer.texture.TextureManager getTextureManager();
+  public <V> com.google.common.util.concurrent.ListenableFuture<V> addScheduledTask(java.util.concurrent.Callable<V>);
+  public com.google.common.util.concurrent.ListenableFuture<java.lang.Object> addScheduledTask(java.lang.Runnable);
+=== net.minecraft.client.renderer.texture.TextureManager
+  public void bindTexture(net.minecraft.util.ResourceLocation);
+=== net.minecraft.util.ResourceLocation
+  protected net.minecraft.util.ResourceLocation(int, java.lang.String...);
+  public net.minecraft.util.ResourceLocation(java.lang.String);
+  public net.minecraft.util.ResourceLocation(java.lang.String, java.lang.String);
+=== net.minecraft.client.resources.I18n
+  public static java.lang.String format(java.lang.String, java.lang.Object...);
+  public static boolean hasKey(java.lang.String);
+=== net.minecraft.item.ItemStack
+  public boolean isEmpty();
+  public net.minecraft.item.Item getItem();
+  public net.minecraft.item.ItemStack copy();
+  public boolean hasTagCompound();
+  public net.minecraft.nbt.NBTTagCompound getTagCompound();
+  public java.lang.String getDisplayName();
+=== net.minecraft.nbt.NBTTagCompound
+  public void setInteger(java.lang.String, int);
+  public void setLong(java.lang.String, long);
+  public void setBoolean(java.lang.String, boolean);
+  public boolean hasKey(java.lang.String);
+  public boolean hasKey(java.lang.String, int);
+  public int getInteger(java.lang.String);
+  public long getLong(java.lang.String);
+  public net.minecraft.nbt.NBTTagCompound getCompoundTag(java.lang.String);
+  public boolean getBoolean(java.lang.String);
+  public boolean isEmpty();
+  public net.minecraft.nbt.NBTTagCompound copy();
+  public net.minecraft.nbt.NBTBase copy();
+=== net.minecraftforge.registries.IForgeRegistryEntry
+  public abstract net.minecraft.util.ResourceLocation getRegistryName();
+=== appeng.api.storage.data.IAEItemStack
+  public abstract net.minecraft.item.ItemStack createItemStack();
+  public abstract boolean hasTagCompound();
+  public abstract appeng.api.storage.data.IAEItemStack copy();
+  public abstract net.minecraft.item.Item getItem();
+  public appeng.api.storage.data.IAEStack copy();
+=== appeng.api.storage.data.IAEStack
+  public abstract long getStackSize();
+  public abstract T setStackSize(long);
+  public abstract T copy();
+=== appeng.api.storage.IStorageChannel
+  public abstract appeng.api.storage.data.IItemList<T> createList();
+=== appeng.util.item.AEItemStack
+  public static appeng.util.item.AEItemStack fromItemStack(net.minecraft.item.ItemStack);
+  public appeng.api.storage.data.IAEItemStack copy();
+  public net.minecraft.item.ItemStack createItemStack();
+  public net.minecraft.item.Item getItem();
+  public java.lang.String getDisplayName();
+  public boolean hasTagCompound();
+  public appeng.api.storage.data.IAEStack copy();
+=== additional platform signatures
+=== net.minecraft.client.Minecraft
+  public net.minecraft.client.gui.GuiScreen currentScreen;
+  public void displayGuiScreen(net.minecraft.client.gui.GuiScreen);
+  public static net.minecraft.client.Minecraft getMinecraft();
+=== net.minecraft.item.ItemStack
+  public static final net.minecraft.item.ItemStack EMPTY;
+  private boolean isEmpty;
+=== net.minecraft.util.EnumHand
+  public static final net.minecraft.util.EnumHand MAIN_HAND;
+  public static final net.minecraft.util.EnumHand OFF_HAND;
+=== net.minecraft.util.EnumActionResult
+  public static final net.minecraft.util.EnumActionResult SUCCESS;
+=== org.lwjgl.input.Mouse
+  public static int getDWheel();
+=== io.netty.buffer.ByteBuf (PacketBuffer inherited methods)
+  public abstract byte readByte();
+  public abstract short readUnsignedByte();
+  public abstract int readInt();
+  public abstract io.netty.buffer.ByteBuf writeByte(int);
+  public abstract io.netty.buffer.ByteBuf writeInt(int);
+=== net.minecraftforge.fml.common.network.NetworkRegistry
+  public static final net.minecraftforge.fml.common.network.NetworkRegistry INSTANCE;
+=== net.minecraft.client.gui.GuiButton
+  public java.lang.String displayString;
+  public boolean enabled;
+  public boolean visible;

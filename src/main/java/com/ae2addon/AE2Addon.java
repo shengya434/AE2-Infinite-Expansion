@@ -5,6 +5,8 @@ import org.apache.logging.log4j.Logger;
 import com.ae2addon.cell.UnlimitedCellHandler;
 import com.ae2addon.command.CommandCell;
 import com.ae2addon.command.CommandCellSelfTest;
+import com.ae2addon.gui.CellScreens;
+import com.ae2addon.network.CellNetwork;
 
 import net.minecraft.item.Item;
 import net.minecraftforge.fml.common.Mod;
@@ -24,10 +26,14 @@ public class AE2Addon {
 
     public static Logger LOG;
     public static Item UNLIMITED_CELL;
+    public static AE2Addon INSTANCE;
 
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
+        INSTANCE = this;
         LOG = event.getModLog();
+        CellNetwork.register();
+        CellScreens.register(this);
     }
 
     /**
