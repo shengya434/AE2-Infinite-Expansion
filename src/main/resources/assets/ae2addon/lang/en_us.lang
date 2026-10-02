@@ -111,3 +111,8 @@ gui.ae2addon.cell.bytes=§7Bytes: §b%s
 gui.ae2addon.cell.types=§7Types: §b%s
 gui.ae2addon.cell.limit=§7Limit: §eitems only
 gui.ae2addon.cell.switch_hint=§7Right-click to open the config
+# Item name (1.20 renders the mode in it too; mode 2 additionally shows its sub-mode)
+gui.ae2addon.cell.name=§5Infinite Cell [%s]
+gui.ae2addon.cell.short1=Unlimited
+gui.ae2addon.cell.short2=Custom
+gui.ae2addon.cell.short3=All-Types

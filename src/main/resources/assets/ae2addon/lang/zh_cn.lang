@@ -111,3 +111,8 @@ gui.ae2addon.cell.bytes=§7字节: §b%s
 gui.ae2addon.cell.types=§7类型: §b%s
 gui.ae2addon.cell.limit=§7限制: §e仅物品类型
 gui.ae2addon.cell.switch_hint=§7右键打开配置界面
+# 物品名（照 1.20 的做法带上模式；mode2 再带子模式）
+gui.ae2addon.cell.name=§5无限存储元件 [%s]
+gui.ae2addon.cell.short1=无限制
+gui.ae2addon.cell.short2=自定义无限
+gui.ae2addon.cell.short3=全类型无限

@@ -46,6 +46,28 @@ public class ItemUnlimitedCell extends Item {
     }
 
     @Override
+    public String getItemStackDisplayName(ItemStack stack) {
+        // Ported from the 1.20 line, whose getDescription() renders "Universal Infinite [<mode>]". Mode 2
+        // additionally shows the sub-mode, because "custom infinite" alone does not tell you whether the
+        // cell is threshold-, store- or cherish-driven.
+        //
+        // Uses the translation-side I18n on purpose: a display name is also read server-side (command
+        // output, chat), where net.minecraft.client.resources.I18n does not exist. Fully qualified because
+        // both classes are named "I18n" and this file already imports the client one.
+        // Method names verified with javap against stable_39: this class has translateToLocal /
+        // translateToLocalFormatted (NOT format -- that one only exists on the client class).
+        UnlimitedCellInventory.Summary summary = UnlimitedCellInventory.summaryOf(stack);
+        String mode = net.minecraft.util.text.translation.I18n
+                .translateToLocal("gui.ae2addon.cell.short" + summary.mode);
+        if (summary.mode == 2) {
+            mode = mode + "·" + net.minecraft.util.text.translation.I18n
+                    .translateToLocal("gui.ae2addon.cell.workmode" + summary.workMode);
+        }
+        return net.minecraft.util.text.translation.I18n
+                .translateToLocalFormatted("gui.ae2addon.cell.name", mode);
+    }
+
+    @Override
     public void addInformation(ItemStack stack, World worldIn, List<String> tooltip, ITooltipFlag flagIn) {
         // Ported from the 1.20 line's appendHoverText: mode line, mode description, then the summary the
         // cell writes into its own NBT (see UnlimitedCellInventory#writeSmallFields). The totals come from
