@@ -1,0 +1,14 @@
+﻿unicode_to_hanyu_pinyin.txt
+--------------------------
+Source : pinyin4j 2.5.1 (https://github.com/belerweb/pinyin4j), file pinyindb/unicode_to_hanyu_pinyin.txt
+License: BSD (see the project; the jar's own pom.xml declares <name>BSD</name>)
+SHA256 : F41A310AE6874351A4ABF65D6D7AA4B80BEE13C88A71D5EE601981D422D1CCA6
+
+Why the raw data and not the library: Forge 1.12.2 has no jar-in-jar, and the Shadow plugin
+(needed to bundle+relocate pinyin4j) is no longer obtainable for Gradle 4.9. Shipping only this
+data file plus our own ~30-line parser in com.ae2addon.util.PinyinIndex avoids third-party
+classes entirely -- no relocation, no version clash with other mods that also bundle pinyin4j
+(or its com.hp.hpl.sparta XML parser).
+
+Format: one entry per line, "<hex codepoint> (<pinyin with tone digit>[,<alt readings>])".
+A reading of "none0" means the character has no pinyin reading.

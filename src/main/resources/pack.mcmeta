@@ -1,0 +1,7 @@
+{
+    "pack": {
+        "description": "ae2addon resources",
+        "pack_format": 3,
+        "_comment": "pack_format 3 = MC 1.11+ and requires lowercase resource paths (en_us.lang, not en_US.lang)."
+    }
+}

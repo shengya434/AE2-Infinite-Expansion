@@ -1,0 +1,16 @@
+[
+{
+  "modid": "ae2addon",
+  "name": "AE2 Addon",
+  "description": "AE2 addon for 1.12.2 (AE2-UEL). P1: minimal unlimited item storage cell.",
+  "version": "${version}",
+  "mcversion": "${mcversion}",
+  "url": "",
+  "updateUrl": "",
+  "authorList": ["sensei"],
+  "credits": "",
+  "logoFile": "",
+  "screenshots": [],
+  "dependencies": ["appliedenergistics2"]
+}
+]
