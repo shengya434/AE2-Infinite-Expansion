@@ -18,6 +18,7 @@ import appeng.api.networking.security.IActionSource;
 import appeng.api.storage.ICellInventory;
 import appeng.api.storage.ICellInventoryHandler;
 import appeng.api.storage.IStorageChannel;
+import appeng.api.storage.channels.IItemStorageChannel;
 import appeng.api.storage.data.IAEItemStack;
 import appeng.api.storage.data.IItemList;
 import appeng.util.item.AEItemStack;
@@ -355,6 +356,7 @@ public class CommandCellSelfTest extends CommandBase {
 
         runRejectGroup(sender);
         runRuleGroup(sender);
+        runTerminalGroup(sender);
 
         finish(sender);
     }
@@ -660,6 +662,70 @@ public class CommandCellSelfTest extends CommandBase {
         tag.setString("ae2addon_selftest", marker);
         stack.setTagCompound(tag);
         return stack;
+    }
+
+    /**
+     * E group: what the ME terminal is allowed to see. A cell that can hand an item out but does not list it
+     * is invisible in the terminal even though extraction works -- exactly the bug sensei hit on 2026-10-02
+     * with manually marked and JEI-dragged items, which the A-D groups never covered.
+     */
+    private void runTerminalGroup(ICommandSender sender) {
+        final long infinite = UnlimitedCellInventory.INFINITE;
+
+        // E1: whitelist -- what the panel's "mark infinite" and a JEI drag both produce
+        UnlimitedCellInventory e1 = newInventory("e1");
+        e1.setMode(2);
+        e1.setWorkMode(1);
+        e1.addWhitelist(key(Items.DIAMOND));
+        long e1seen = listedSize(e1, key(Items.DIAMOND));
+        check(sender, "E1", "白名单物品在终端列表里可见（无限）", e1seen == infinite,
+                String.valueOf(infinite), String.valueOf(e1seen));
+
+        // E2: the ul path (panel's infinite toggle)
+        UnlimitedCellInventory e2 = newInventory("e2");
+        e2.setMode(2);
+        e2.setWorkMode(1);
+        e2.injectItems(stack(Items.DIAMOND, 10L), Actionable.MODULATE, NO_SOURCE);
+        e2.togglePanelInfinite(key(Items.DIAMOND));
+        long e2seen = listedSize(e2, key(Items.DIAMOND));
+        check(sender, "E2", "面板标记无限（ul）的物品在终端列表里可见", e2seen == infinite,
+                String.valueOf(infinite), String.valueOf(e2seen));
+
+        // E3: rule promotion writes ca only, never ul -- so ca must be reported too
+        UnlimitedCellInventory e3 = newInventory("e3");
+        e3.setMode(2);
+        e3.setWorkMode(1);
+        e3.addModRule("minecraft");
+        e3.setRuleMode(UnlimitedCellInventory.ruleKey(false, "minecraft"), 2);
+        e3.injectItems(stack(Items.STICK, 3L), Actionable.MODULATE, NO_SOURCE); // Touch rule -> ca
+        long e3seen = listedSize(e3, key(Items.STICK));
+        check(sender, "E3", "规则推进（只写 ca、不进 ul）的物品在终端列表里可见", e3seen == infinite,
+                String.valueOf(infinite), String.valueOf(e3seen));
+
+        // E4: two unlimited cells aggregating into one grid list must not overflow to a negative size
+        IItemList<IAEItemStack> list = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        UnlimitedCellInventory e4a = newInventory("e4a");
+        e4a.setMode(2);
+        e4a.addWhitelist(key(Items.DIAMOND));
+        e4a.getAvailableItems(list);
+        UnlimitedCellInventory e4b = newInventory("e4b");
+        e4b.setMode(2);
+        e4b.addWhitelist(key(Items.DIAMOND));
+        e4b.getAvailableItems(list);
+        IAEItemStack found = list.findPrecise(key(Items.DIAMOND));
+        long e4seen = found == null ? -1L : found.getStackSize();
+        check(sender, "E4", "两片无限盘聚合到同一列表不溢出（仍是 INFINITE，不是负数）", e4seen == infinite,
+                String.valueOf(infinite), String.valueOf(e4seen));
+    }
+
+    /** Size the terminal would see for {@code key}, or -1 when the cell does not list it at all. */
+    private static long listedSize(UnlimitedCellInventory inv, IAEItemStack key) {
+        IItemList<IAEItemStack> list = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        inv.getAvailableItems(list);
+        IAEItemStack found = list.findPrecise(key);
+        return found == null ? -1L : found.getStackSize();
     }
 
     private static long size(IAEItemStack stack) {

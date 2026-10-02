@@ -387,12 +387,27 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
                 // versioned cache). On 1.12.2 that would push thousands of keys into the storage grid on
                 // every rebuild, so we only list what we have actually seen. Extraction still works for
                 // any item (insert/extract do not consult this list).
-                reportKeys(out, data.m3, INFINITE);
+                reportInfinite(out, data.m3);
                 break;
-            case 2:
-                reportMap(out, data.s2);
-                reportKeys(out, data.ul, INFINITE);
+            case 2: {
+                // EVERYTHING that can hand items out has to be listed here, or the terminal shows nothing
+                // even though extraction works. That covers three separate sources, and missing any of
+                // them makes items invisible in the terminal:
+                //   * wl  -- the whitelist, which is what the panel's "mark infinite" and a JEI drag add to
+                //   * ul  -- the infinite set written by promotion and by togglePanelInfinite
+                //   * ca  -- the committed-amount map; a rule promotion writes ca WITHOUT touching ul
+                // (Bug found by sensei 2026-10-02: only ul used to be reported, so whitelisted and
+                // rule-promoted items existed and could be extracted, but never appeared in the terminal.)
+                Set<IAEItemStack> infinite = new LinkedHashSet<>();
+                infinite.addAll(data.wl);
+                infinite.addAll(data.ul);
+                infinite.addAll(data.ca.keySet());
+                reportInfinite(out, infinite);
+                // Finite rows must not be added on top of a key already reported as infinite: the list
+                // sums on add, and INFINITE + n overflows to a negative size.
+                reportMap(out, data.s2, infinite);
                 break;
+            }
             default:
                 reportMap(out, data.s1);
                 break;
@@ -400,21 +415,43 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return out;
     }
 
+    /**
+     * Reports keys as infinite WITHOUT accumulating.
+     *
+     * <p>rv6's {@code IItemList.add} merges by summing sizes, so when two unlimited cells report
+     * {@code Long.MAX_VALUE} into the same grid list the result overflows to a negative number -- the
+     * terminal then shows negative stock and extraction fails. The 1.20 line hit exactly this and fixed it
+     * by taking the maximum instead of adding. rv6 has no {@code set}, so we mutate the entry that
+     * {@code findPrecise} hands back.
+     */
+    private static void reportInfinite(IItemList<IAEItemStack> out, Iterable<IAEItemStack> keys) {
+        for (IAEItemStack key : keys) {
+            IAEItemStack existing = out.findPrecise(key);
+            if (existing == null) {
+                IAEItemStack stack = key.copy();
+                stack.setStackSize(INFINITE);
+                out.add(stack);
+            } else if (existing.getStackSize() < INFINITE) {
+                existing.setStackSize(INFINITE);
+            }
+        }
+    }
+
     private static void reportMap(IItemList<IAEItemStack> out, Map<IAEItemStack, BigInteger> map) {
+        reportMap(out, map, null);
+    }
+
+    private static void reportMap(IItemList<IAEItemStack> out, Map<IAEItemStack, BigInteger> map,
+            Set<IAEItemStack> skip) {
         for (Map.Entry<IAEItemStack, BigInteger> entry : map.entrySet()) {
+            if (skip != null && skip.contains(entry.getKey())) {
+                continue;
+            }
             long size = clamp(entry.getValue());
             if (size <= 0) {
                 continue;
             }
             IAEItemStack stack = entry.getKey().copy();
-            stack.setStackSize(size);
-            out.add(stack);
-        }
-    }
-
-    private static void reportKeys(IItemList<IAEItemStack> out, Iterable<IAEItemStack> keys, long size) {
-        for (IAEItemStack key : keys) {
-            IAEItemStack stack = key.copy();
             stack.setStackSize(size);
             out.add(stack);
         }
