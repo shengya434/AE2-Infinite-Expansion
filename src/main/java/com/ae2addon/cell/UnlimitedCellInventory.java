@@ -1155,11 +1155,19 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         // seen with NBT live in m3 and are reported separately.
         for (net.minecraft.util.ResourceLocation id : net.minecraft.item.Item.REGISTRY.getKeys()) {
             Item item = net.minecraft.item.Item.REGISTRY.getObject(id);
-            if (item == null) {
+            // minecraft:air is IN the item registry, and new ItemStack(air) is an EMPTY stack, for which
+            // AEItemStack.fromItemStack returns null -- that NPE'd the whole server tick loop on 2026-10-02
+            // (thrown from here, via getAvailableItems <- TileDrive.recalculateDisplay). Skip it, and skip
+            // anything else that cannot produce a key, instead of trusting every registry entry to be
+            // convertible.
+            if (item == null || item == net.minecraft.init.Items.AIR) {
                 continue;
             }
-            IAEItemStack key = lookupKey(AEItemStack.fromItemStack(new ItemStack(item)));
-            if (seen.add(key)) {
+            IAEItemStack key = AEItemStack.fromItemStack(new ItemStack(item));
+            if (key == null) {
+                continue;
+            }
+            if (seen.add(lookupKey(key))) {
                 found.add(key);
             }
         }

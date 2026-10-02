@@ -875,6 +875,19 @@ public class CommandCellSelfTest extends CommandBase {
                 "listed=" + warmList.size() + " registry=" + inv.registryKeyCount()
                         + " allInfinite=" + allInfinite);
 
+        // H3: the registry scan must not emit an empty/air entry. minecraft:air is in the item registry but
+        // new ItemStack(air) is EMPTY and AEItemStack.fromItemStack(empty) is null -- that null crashed the
+        // server tick loop on 2026-10-02, so the guard is pinned by an assertion instead of a comment.
+        boolean noEmpty = true;
+        for (IAEItemStack stack : warmList) {
+            if (stack == null || stack.getDefinition() == null || stack.getDefinition().isEmpty()) {
+                noEmpty = false;
+                break;
+            }
+        }
+        check(sender, "H3", "注册表扫描不产出空物品（air 必须被跳过，否则 NPE 崩 tick 循环）",
+                noEmpty, "true", String.valueOf(noEmpty));
+
         // The number itself is the answer to "会不会卡"; the assertion is just a headroom gate.
         sender.sendMessage(new TextComponentString(String.format(
                 "[ae2addon] [H2] mode3 列出 %d 个键：冷 %.1f ms（含一次注册表扫描，只发生一次）/ "
