@@ -22,6 +22,9 @@ apply plugin: 'maven-publish'
 repositories {
     // 2026-10-02: CurseMaven serves the AE2-UEL jar pinned below (CurseForge has no usable maven of its own).
     maven { url = 'https://cursemaven.com' }
+    // BlameJared's maven is where JEI 1.12.2 lives (verified 2026-10-02: the pom and the 680,403-byte jar
+    // both return HTTP 200, and maven-metadata lists 4.16.5.1030 among the published versions).
+    maven { url = 'https://maven.blamejared.com' }
     // CN mirrors first, then upstream: maven.minecraftforge.net sometimes drops the TLS handshake here.
     maven { url = 'https://bmclapi2.bangbang93.com/maven/' }
     maven { url = 'https://maven.aliyun.com/repository/public' }
@@ -117,6 +120,28 @@ dependencies {
     //     states the descriptor must be `<modname>-<projectid>`, so the group+name must be
     //     `ae2-extended-life-570458`. Verified: that URL returns the 4,451,298-byte jar.
     compile fg.deobf('curse.maven:ae2-extended-life-570458:6302098')
+
+    // JEI 4.16.5.1030 -- COMPILE ONLY, and compiled against a local copy on purpose.
+    //
+    // WHY A LOCAL FILE instead of fg.deobf('mezz.jei:jei_1.12.2:4.16.5.1030'):
+    //   fg.deobf rewrites the dependency to a `4.16.5.1030_mapped_stable_39-1.12` coordinate and then tries
+    //   to *find* that in the repositories (it assumes a mapped artifact already exists), which fails with
+    //   "Could not find mezz.jei:jei_1.12.2:4.16.5.1030_mapped_stable_39-1.12". AE2 resolves because its
+    //   jar goes through ForgeGradle's own remap cache; JEI's does not.
+    //   We do not actually need the remap: JEI keeps its `mezz.jei.api` package unobfuscated, and the
+    //   classes we touch only ever reference Minecraft by *class* name (net.minecraft.client.gui.GuiScreen)
+    //   plus java.awt.Rectangle -- verified with javap on this exact jar. No MCP method names are involved.
+    //
+    // WHAT THIS JAR IS: libs/jei_1.12.2-4.16.5.1030.jar, 680,403 B, SHA256
+    //   73357B5C3B5F44F6D0CE667BBED21BA4C5DB49070944CA2BC0FA73B8D9061D51
+    //   -- verified byte-identical to both the jar installed in the 1.12.2 test instance and the copy
+    //   served by https://maven.blamejared.com/mezz/jei/jei_1.12.2/4.16.5.1030/ (checked 2026-10-02).
+    //
+    // IT MUST NEVER BE BUNDLED: there is no Shadow plugin and no relocation here, so shipping JEI inside our
+    // jar would simply collide with the real mod. compileOnly guarantees it stays out.
+    // With JEI absent at runtime nothing loads our @JEIPlugin class (only JEI's scanner looks for it), so no
+    // defensive isModLoaded guard is needed.
+    compileOnly files('libs/jei_1.12.2-4.16.5.1030.jar')
 
     // 拼音搜索：不引第三方库。只把 pinyin4j 的**数据表**（BSD，见 resources/ae2addon/pinyin/NOTICE.txt）
     // 打进 jar，解析在 com.ae2addon.util.PinyinIndex 里自己做。

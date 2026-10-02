@@ -619,4 +619,43 @@ public final class Mode2ConfigScreen extends GuiContainer {
     }
 
     @Override public boolean doesGuiPauseGame() { return false; }
+
+    // ------------------------------------------------------------------
+    // JEI ghost-ingredient support (see com.ae2addon.integration.jei)
+    // ------------------------------------------------------------------
+
+    /**
+     * Screen-space rectangle that accepts a dragged ingredient, or {@code null} when this page takes no
+     * drops. Kept in sync with the row hit area in mouseClicked (x 10..246, y 88..150).
+     */
+    public java.awt.Rectangle ghostArea() {
+        if (uiState != 1) {
+            return null; // the work-mode chooser takes no drops
+        }
+        if (rejectTab && rejectList.pending()) {
+            return null; // the explicit reject list is only half received; a drop now would mean nothing
+        }
+        return new java.awt.Rectangle(guiLeft + 10, guiTop + 88, 236, 62);
+    }
+
+    /**
+     * Applies an ingredient dragged in from JEI, with the same semantics as clicking a row in the matching
+     * tab: the reject page toggles rejection (type 7), the item page adds to the whitelist (type 1).
+     *
+     * @return whether anything was sent.
+     */
+    public boolean applyGhostIngredient(net.minecraft.item.ItemStack stack) {
+        if (stack == null || stack.isEmpty() || uiState != 1) {
+            return false;
+        }
+        if (rejectTab) {
+            if (rejectList.pending()) {
+                return false;
+            }
+            CellNetwork.send(new Mode2ConfigPacket(7, stack.copy()));
+        } else {
+            CellNetwork.send(new Mode2ConfigPacket(1, stack.copy()));
+        }
+        return true;
+    }
 }
