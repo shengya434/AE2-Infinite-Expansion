@@ -11,6 +11,8 @@ import com.ae2addon.cell.CellChannelRegistry;
 import com.ae2addon.cell.CellInventories;
 import com.ae2addon.cell.ChannelCellCore;
 import com.ae2addon.cell.FluidCellChannel;
+import com.ae2addon.cell.ItemCellChannel;
+import com.ae2addon.cell.FluidCellChannel;
 import com.ae2addon.cell.FluidCellInventory;
 import com.ae2addon.cell.CellStorageData;
 import com.ae2addon.cell.UnlimitedCellInventory;
@@ -399,6 +401,7 @@ public class CommandCellSelfTest extends CommandBase {
         runSaveFormatGroup(sender);
         runFluidChannelGroup(sender);
         runPanelChannelGroup(sender);
+        runChannelCompletenessGroup(sender);
         runOptionalChannelGroups(sender);
 
         finish(sender);
@@ -1497,6 +1500,100 @@ public class CommandCellSelfTest extends CommandBase {
         check(sender, "Q4", "面板行带显示名（非物品通道没有图标，只能显示标签）",
                 label != null && !label.isEmpty() && !rowLabel.isEmpty(), "非空/非空",
                 label + "/" + rowLabel);
+    }
+    /**
+     * R group: per-channel completeness of the mode 3 listing, which is what "the terminal only shows one kind
+     * of storage type" (sensei 2026-10-03) has to be diagnosed against.
+     *
+     * <p>Mode 3 means "everything this channel can hold is infinite", and each channel's cell inventory answers
+     * for its OWN registry. So this walks every REGISTERED channel and checks, without naming their stack types:
+     * the cell registry really hands back a handler for that channel, that handler's listing is complete
+     * (as many rows as the channel has keys), and the reported type count agrees with the listing.
+     */
+    private void runChannelCompletenessGroup(ICommandSender sender) {
+        ItemStack cell = cellWithUuid(testUuid("r1"));
+        UnlimitedCellInventory items = new UnlimitedCellInventory(cell, null);
+        wipe(items);
+        items.setMode(3);
+
+        java.util.List<com.ae2addon.cell.CellChannel<?>> channels =
+                new java.util.ArrayList<>(com.ae2addon.cell.CellChannelRegistry.all());
+        StringBuilder detail = new StringBuilder();
+        int complete = 0;
+        int registered = 0;
+        for (com.ae2addon.cell.CellChannel<?> channel : channels) {
+            ChannelCellCore<?> core = CellInventories.open(cell, null, channel.id());
+            registered++;
+            if (core == null) {
+                detail.append(channel.id()).append("=noCore ");
+                continue;
+            }
+            core.setMode(3);
+            int rows = core.listedRowCount();
+            int keys = channel.allKeys().size();
+            long types = core.getStoredItemTypes();
+            boolean ok = rows == keys && types == rows && keys > 0;
+            if (ok) {
+                complete++;
+            }
+            detail.append(channel.id()).append("=").append(rows).append("/").append(keys)
+                    .append(ok ? " " : "! ");
+        }
+        check(sender, "R1", "★ 每个通道被单独问到时，mode3 列表都是完整的（行数 = 该通道键数）",
+                registered > 0 && complete == registered, "所有通道都 full",
+                detail.toString().trim());
+
+        // R2: the cell registry -- the exact call a drive makes -- answers for every channel
+        int answers = 0;
+        StringBuilder which = new StringBuilder();
+        for (com.ae2addon.cell.CellChannel<?> channel : channels) {
+            boolean has = cellHandlerFor(cell, channel) != null;
+            if (has) {
+                answers++;
+            }
+            which.append(channel.id()).append(has ? "=ok " : "=NULL ");
+        }
+        check(sender, "R2", "★ 元件注册表对每个通道都能给出 handler（驱动器就是这样逐通道问的）",
+                answers == channels.size() && !channels.isEmpty(), "全部 ok", which.toString().trim());
+
+        // R3: mode 3 must not depend on what other channels hold -- store a fluid and re-check the item view
+        FluidCellInventory fluids = new FluidCellInventory(cell, null);
+        fluids.injectItems(fluidStack(FluidRegistry.WATER, 1234), Actionable.MODULATE, NO_SOURCE);
+        ChannelCellCore<?> itemView = CellInventories.open(cell, null, CellChannelRegistry.ITEM);
+        ChannelCellCore<?> fluidView = CellInventories.open(cell, null, CellChannelRegistry.FLUID);
+        int itemRows = itemView == null ? -1 : itemView.listedRowCount();
+        int fluidRows = fluidView == null ? -1 : fluidView.listedRowCount();
+        int itemKeys = ItemCellChannel.INSTANCE.allKeys().size();
+        int fluidKeys = FluidCellChannel.INSTANCE.allKeys().size();
+        check(sender, "R3", "★ 另一通道有数据不影响本通道：物品视图列全部物品、流体视图列全部流体",
+                itemRows == itemKeys && fluidRows == fluidKeys, itemKeys + "/" + fluidKeys,
+                itemRows + "/" + fluidRows);
+
+        // R4: and the reported type count still equals the listing for both
+        check(sender, "R4", "mode3 下每个通道「类型数 == 列出条数」（不漂移）",
+                itemView != null && fluidView != null
+                        && itemView.getStoredItemTypes() == itemRows
+                        && fluidView.getStoredItemTypes() == fluidRows,
+                "相等", (itemView == null ? "?" : itemView.getStoredItemTypes()) + "/" + itemRows + " "
+                        + (fluidView == null ? "?" : fluidView.getStoredItemTypes()) + "/" + fluidRows);
+    }
+
+    /**
+     * Asks the cell registry for one channel's handler, the way a drive does.
+     *
+     * <p>Raw on purpose: this has to ask about EVERY registered channel without naming their stack types, and
+     * the registry method's own type parameter cannot be expressed for a wildcard channel. The cast is safe --
+     * the channel instance comes from the adapter that owns it.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static ICellInventoryHandler<?> cellHandlerFor(ItemStack cell,
+            com.ae2addon.cell.CellChannel<?> channel) {
+        try {
+            return AEApi.instance().registries().cell().getCellInventory(cell, null,
+                    (IStorageChannel) channel.storage());
+        } catch (RuntimeException | LinkageError failed) {
+            return null;
+        }
     }
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
     private static String firstOreName(ItemStack definition) {

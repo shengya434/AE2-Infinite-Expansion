@@ -1434,6 +1434,26 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         saveChanges();
     }
 
+    /**
+     * Diagnostic for the self-test (and anyone debugging the terminal): how many rows THIS channel would report
+     * right now. Lives here because only the core knows T, and the per-channel completeness check has to be
+     * run for every registered channel without naming their stack types.
+     */
+    public int listedRowCount() {
+        IItemList<T> list = channel.createList();
+        getAvailableItems(list);
+        int rows = 0;
+        for (T ignored : list) {
+            rows++;
+        }
+        return rows;
+    }
+
+    /** The channel id this core speaks (handy for diagnostics and for the panel's row tags). */
+    public String channelId() {
+        return cellChannel.id();
+    }
+
     // ------------------------------------------------------------------
     // untyped delegates for the config panel
     //
@@ -1612,7 +1632,9 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
                 // Must match what getAvailableItems reports in mode 3: everything the registry yields, plus
                 // the NBT variants we have seen.
                 Set<IAEStack<?>> all = new LinkedHashSet<>(allRegistryKeys());
-                all.addAll(data.m3);
+                // mine(...) on purpose: m3 is a SHARED collection, so an unfiltered addAll would count other
+                // channels' seen keys here and make the reported type count disagree with the listing.
+                all.addAll(mine(data.m3));
                 return all.size();
             }
             case 2: {
