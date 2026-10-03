@@ -51,7 +51,7 @@ public class CommandCell extends CommandBase {
     public List<String> getTabCompletions(MinecraftServer server, ICommandSender sender, String[] args,
             @Nullable net.minecraft.util.math.BlockPos pos) {
         if (args.length == 1) {
-            return getListOfStringsMatchingLastWord(args, "mode", "wm", "thr", "wl", "info", "cancel", "reject", "rule", "ore");
+            return getListOfStringsMatchingLastWord(args, "mode", "wm", "thr", "wl", "info", "diag", "cancel", "reject", "rule", "ore");
         }
         if (args.length == 2 && "rule".equals(args[0])) {
             return getListOfStringsMatchingLastWord(args, "add", "del");
@@ -188,12 +188,71 @@ public class CommandCell extends CommandBase {
                 reply(sender, inv.describeSettings());
                 break;
             }
+            case "diag": {
+                reportDiagnostics(sender, player);
+                break;
+            }
             default:
                 throw new CommandException(USAGE);
         }
     }
 
     // ------------------------------------------------------------------
+
+    /**
+     * Prints what the cell REALLY holds, from both sides of the fence, because "the cell looks empty" can mean
+     * three different things (sensei BUG1/BUG2, 2026-10-03):
+     * <ul>
+     * <li>the cell item NBT (what the tooltip and the drive slot show -- summary bytes/types, mode, uuid),</li>
+     * <li>the world-saved record keyed by that uuid (the authoritative counts, per channel),</li>
+     * <li>and, per registered channel, what a channel view would list and whether AE2's registry answers at all.</li>
+     * </ul>
+     * A mismatch between the first two is exactly the "0 bytes until you open the panel" symptom, and a uuid in
+     * the NBT that no longer matches the record is how data gets orphaned.
+     */
+    private static void reportDiagnostics(ICommandSender sender, EntityPlayerMP player) throws CommandException {
+        ItemStack held = player.getHeldItemMainhand();
+        if (held.isEmpty() || !(held.getItem() instanceof ItemUnlimitedCell)) {
+            throw new CommandException("请手持无限存储元件再执行 diag");
+        }
+        reply(sender, "§e===== 元件诊断 =====");
+        reply(sender, "§7物品 NBT（tooltip/驱动器的数字来源）:");
+        if (held.getTagCompound() == null) {
+            reply(sender, "  §c整个物品没有 NBT（= 从没被写过的元件）");
+        } else {
+            net.minecraft.nbt.NBTTagCompound itemTag = held.getTagCompound();
+            if (itemTag.hasKey("ae2addonCell", 10)) {
+                reply(sender, "  " + itemTag.getCompoundTag("ae2addonCell").toString());
+            } else {
+                reply(sender, "  §c没有 ae2addonCell 标签，实际标签: " + itemTag.getKeySet());
+            }
+        }
+        UnlimitedCellInventory.Summary summary = UnlimitedCellInventory.summaryOf(held);
+        reply(sender, String.format("§7NBT 摘要: mode=%d wm=%d thr=%d 类型=%d 字节=%s",
+                summary.mode, summary.workMode, summary.threshold, summary.types, summary.bytes));
+        reply(sender, "§7共享存档记录（服务端权威）: " + heldCell(player).describeSettings());
+        reply(sender, "§7逐通道（handler / 存量 / 类型 / mode3 应列条数 / 该通道键数）:");
+        for (com.ae2addon.cell.CellChannel<?> channel : com.ae2addon.cell.CellChannelRegistry.all()) {
+            com.ae2addon.cell.ChannelCellCore<?> core = com.ae2addon.cell.CellInventories.open(held, null, channel.id());
+            boolean handled = false;
+            try {
+                @SuppressWarnings("rawtypes")
+                appeng.api.storage.ICellInventoryHandler h = AEApi.instance().registries().cell()
+                        .getCellInventory(held, null, (appeng.api.storage.IStorageChannel) channel.storage());
+                handled = h != null && h.getCellInv() != null;
+            } catch (RuntimeException | LinkageError failed) {
+                handled = false;
+            }
+            if (core == null) {
+                reply(sender, "  §c" + channel.id() + ": 打不开这个通道视图");
+                continue;
+            }
+            reply(sender, String.format("  %s: handler=%s 存量=%d 类型=%d mode3应列=%d 键数=%d",
+                    channel.id(), handled ? "ok" : "§cNULL", core.getStoredItemCount(), core.getStoredItemTypes(),
+                    core.listedRowCount(), channel.allKeys().size()));
+        }
+        reply(sender, "§7提示：NBT 摘要与共享记录不一致 → 就是 BUG2（打开面板会把 NBT 重写一遍）");
+    }
 
     private static UnlimitedCellInventory heldCell(EntityPlayerMP player) throws CommandException {
         ItemStack held = player.getHeldItemMainhand();
