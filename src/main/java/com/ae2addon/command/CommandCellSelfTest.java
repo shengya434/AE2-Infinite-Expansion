@@ -397,6 +397,7 @@ public class CommandCellSelfTest extends CommandBase {
         runBigQuantityGroup(sender);
         runSaveFormatGroup(sender);
         runFluidChannelGroup(sender);
+        runOptionalChannelGroups(sender);
 
         finish(sender);
     }
@@ -1376,6 +1377,41 @@ public class CommandCellSelfTest extends CommandBase {
         inv.getAvailableItems(list);
         IAEFluidStack found = list.findPrecise(key);
         return found == null ? -1L : found.getStackSize();
+    }
+    /**
+     * Optional channels (gas, and later essentia): their assertions live in a class that only loads together
+     * with the bridge mod. This method names nothing but the DOOR before deciding, and class loading is lazy,
+     * so a missing bridge mod costs a skipped group instead of a NoClassDefFoundError in the self-test.
+     */
+    private void runOptionalChannelGroups(ICommandSender sender) {
+        if (com.ae2addon.cell.gas.GasChannelDoor.isLoaded()) {
+            com.ae2addon.cell.gas.GasChannelSelfTest.run(sender, this);
+        } else {
+            sender.sendMessage(new TextComponentString(
+                    "[ae2addon] 跳过 M 组：没装气体通道（Mekanism Energistics）"));
+        }
+    }
+
+    /** Reporting bridge for the optional-channel groups, which live in their own (lazily loaded) class. */
+    public void report(ICommandSender sender, String id, String what, boolean ok, String expected, String actual) {
+        check(sender, id, what, ok, expected, actual);
+    }
+
+    // ---- scaffolding for the optional-channel groups ----------------------------------------------
+
+    /** A fresh cell stack on a fixed uuid, so an optional group can build its own inventories. */
+    public static ItemStack testCell(String tag) {
+        return cellWithUuid(testUuid(tag));
+    }
+
+    /** Clears a cell record (all channel stocks + the shared settings), for rerunnable groups. */
+    public static void wipeCell(CellStorageData data) {
+        wipe(data);
+    }
+
+    /** The same key builder the item-group assertions use. */
+    public static IAEItemStack itemStackOf(Item item, long count) {
+        return stack(item, count);
     }
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
     private static String firstOreName(ItemStack definition) {

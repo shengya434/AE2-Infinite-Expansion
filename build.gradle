@@ -143,6 +143,14 @@ dependencies {
     // defensive isModLoaded guard is needed.
     compileOnly files('libs/jei_1.12.2-4.16.5.1030.jar')
 
+    // 气体通道（可选依赖）：Mekanism Energistics 的 IGasStorageChannel/IAEGasStack 只在编译期可见，
+    // 运行期一律走三段式（门 = ModList 只查 modid；工厂类才引用对方类型；按需加载），
+    // 所以实例里没装 mekeng 时我们的类不会被加载、也不会缺类崩。
+    // 为什么连 Mekanism 本体也要 compileOnly：气体枚举要用 mekanism.api.gas.GasRegistry / Gas / GasStack，
+    // 而我们的代码直接引用这些类型 ⇒ 编译需要它们，但**绝不能打进 jar**（compileOnly 保证不进）。
+    compileOnly files('libs/MekanismEnergistics-0.1.5.jar')
+    compileOnly files('libs/Mekanism-CE-Unofficial-All-10.0.5.021.jar')
+
     // 拼音搜索：不引第三方库。只把 pinyin4j 的**数据表**（BSD，见 resources/ae2addon/pinyin/NOTICE.txt）
     // 打进 jar，解析在 com.ae2addon.util.PinyinIndex 里自己做。
     // 为什么不 shade pinyin4j 本体：Shadow 插件在 Gradle 4.9 上已取不到（插件门户只留 8.1.x，需 Gradle 8，
