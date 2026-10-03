@@ -34,10 +34,10 @@ import net.minecraftforge.items.ItemStackHandler;
  * <p>Mode matrix (ported from the 1.20.1 line, which was read line by line -- see
  * {@code md/p2-modes-and-persistence-spec.md}):
  * <ul>
- * <li><b>mode() 1</b> 无限制存储: everything goes into {@code s1}, no threshold() logic.</li>
- * <li><b>mode() 2</b> 自定义无限, driven by {@code workMode()}:
+ * <li><b>mode 1</b> 无限制存储: everything goes into {@code s1}, no threshold logic.</li>
+ * <li><b>mode 2</b> 自定义无限, driven by {@code workMode}:
  *   <ul>
- *   <li>wm 1 阈值: accumulate into {@code s2}; once the total reaches the item's threshold() it is
+ *   <li>wm 1 阈值: accumulate into {@code s2}; once the total reaches the item's threshold it is
  *       promoted to infinite -- the real total moves into {@code ca} (committed), the key joins
  *       {@code ul}, and leaves {@code s2}.</li>
  *   <li>wm 2 存入无限: storing anything at all promotes it immediately (same three-step promotion).</li>
@@ -45,7 +45,7 @@ import net.minecraftforge.items.ItemStackHandler;
  *       is ordinary finite storage in {@code s2}.</li>
  *   </ul>
  * </li>
- * <li><b>mode() 3</b> 全类型无限: any item can be extracted up to {@link #INFINITE}; nothing is counted.</li>
+ * <li><b>mode 3</b> 全类型无限: any item can be extracted up to {@link #INFINITE}; nothing is counted.</li>
  * </ul>
  *
  * <p>The promotion is one atomic three-step action on purpose: 1.20 once recorded only part of it and
@@ -70,7 +70,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     private static final String NBT_ITEMS = "items";   // v1 payload
     private static final String NBT_KEY = "key";
     private static final String NBT_COUNT = "count";
-    private static final String NBT_MODE = "mode()";
+    private static final String NBT_MODE = "mode";
     private static final String NBT_WORKMODE = "wm";
     private static final String NBT_THR = "thr";
     private static final String NBT_UUID = "uuid";
@@ -97,8 +97,8 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     // settings are NOT instance state any more
     //
     // They used to be cached here (read once from the cell item NBT). The drive keeps one inventory per CHANNEL
-    // alive, so a mode() switch only reached the instance rebuilt afterwards: the other channels kept running the
-    // old mode() and the terminal showed "only one storage type is infinite" (sensei, 2026-10-03). They now live in
+    // alive, so a mode switch only reached the instance rebuilt afterwards: the other channels kept running the
+    // old mode and the terminal showed "only one storage type is infinite" (sensei, 2026-10-03). They now live in
     // CellStorageData -- one record per cell, shared by every channel view -- and these three below are only the
     // values read from the cell item NBT at construction, used to seed that record for pre-existing saves.
     // ------------------------------------------------------------------
@@ -106,7 +106,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     private int nbtWorkMode = 1;
     private long nbtThreshold = DEFAULT_THRESHOLD;
 
-    /** Live mode(): always the shared record, never a per-instance copy. */
+    /** Live mode: always the shared record, never a per-instance copy. */
     public int getMode() {
         return data.mode;
     }
@@ -166,7 +166,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         nbtMode = clampToRange(root.getInteger(NBT_MODE), 1, 3, 1);
         nbtWorkMode = clampToRange(root.getInteger(NBT_WORKMODE), 1, 3, 1);
         nbtThreshold = root.getLong(NBT_THR);
-        if (threshold() <= 0) {
+        if (nbtThreshold <= 0) {
             nbtThreshold = DEFAULT_THRESHOLD;
         }
 
@@ -274,7 +274,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             return bytes;
         }
         if (mode() != 2) {
-            return bytes; // mode() 3 reports infinity in the tooltip, no accounting needed
+            return bytes; // mode 3 reports infinity in the tooltip, no accounting needed
         }
         for (BigInteger amount : stocks().s2.values()) {
             bytes = bytes.add(amount);
@@ -288,7 +288,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     }
 
     /**
-     * Distinct keys the cell can hand out as infinite in mode() 2: the whitelist (wl), the promoted/infinite
+     * Distinct keys the cell can hand out as infinite in mode 2: the whitelist (wl), the promoted/infinite
      * set (ul) and the live rule matches.
      *
      * <p>{@code ca} is deliberately NOT a source here. It records how much an infinite key absorbed, so that
@@ -327,7 +327,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         return java.util.Objects.equals(key.getChannel(), channel);
     }
 
-    /** Distinct keys the cell can hand out as infinite in mode() 2 (wl u ul u live rule matches). */
+    /** Distinct keys the cell can hand out as infinite in mode 2 (wl u ul u live rule matches). */
     private int getInfiniteTypeCount() {
         return infiniteKeys().size();
     }
@@ -679,14 +679,14 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
 
 
     /**
-     * Switching the main mode() switches to a COMPLETELY ISOLATED storage space -- sensei's original spec for
-     * this cell, restated on 2026-10-03: mode() 1's pile, mode() 2's pile and mode() 3 ("nothing is stored,
+     * Switching the main mode switches to a COMPLETELY ISOLATED storage space -- sensei's original spec for
+     * this cell, restated on 2026-10-03: mode 1's pile, mode 2's pile and mode 3 ("nothing is stored,
      * everything is handed out") are three different rooms. Nothing moves between them, so nothing is lost
      * either: switching back finds the previous room exactly as it was left.
      *
-     * <p>Before 2026-10-03 this method MERGED the two piles so that a mode() switch could not make the other
-     * store invisible. That was my own invention and it contradicted the spec -- switching to mode() 1 showed
-     * mode() 2's contents, so the two modes behaved like one shared store, which is exactly what sensei
+     * <p>Before 2026-10-03 this method MERGED the two piles so that a mode switch could not make the other
+     * store invisible. That was my own invention and it contradicted the spec -- switching to mode 1 showed
+     * mode 2's contents, so the two modes behaved like one shared store, which is exactly what sensei
      * noticed. Removed.
      */
     public void setMode(int newMode) {
@@ -703,7 +703,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     }
 
     /**
-     * Switching work mode() promotes everything that already qualifies; it never demotes. Promotion is
+     * Switching work mode promotes everything that already qualifies; it never demotes. Promotion is
      * the same atomic three-step action as on insert. Demotion is a deliberate user action
      * ({@link #cancelInfinite}).
      */
@@ -748,7 +748,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         return perItem != null && perItem > 0 ? perItem : threshold();
     }
 
-    /** value &lt;= 0 clears the per-item threshold() so the global one applies again. */
+    /** value &lt;= 0 clears the per-item threshold so the global one applies again. */
     public void setItemThreshold(T key, long value) {
         T k = lookupKey(key);
         if (value <= 0) {
@@ -864,10 +864,10 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
      * 1.20 shipped a bug here (it promoted without recording, so cancelling gave back nothing) -- hence
      * the explicit committed map.
      *
-     * <p>{@code ca} only ever exists because of a MODE 2 feature (rule hit, threshold() promotion, 存入无限, the
-     * panel toggle), so its refund belongs to mode() 2's room -- {@code s2} -- whatever mode() you happen to be
-     * standing in. Writing it to "the current mode()'s store" would drop mode() 2's items into mode() 1's isolated
-     * room when the cancel is issued from there (the command works in every mode()), which is exactly the
+     * <p>{@code ca} only ever exists because of a MODE 2 feature (rule hit, threshold promotion, 存入无限, the
+     * panel toggle), so its refund belongs to mode 2's room -- {@code s2} -- whatever mode you happen to be
+     * standing in. Writing it to "the current mode's store" would drop mode 2's items into mode 1's isolated
+     * room when the cancel is issued from there (the command works in every mode), which is exactly the
      * isolation the 2026-10-03 spec correction is about.
      */
     public boolean cancelInfinite(T key) {
@@ -884,8 +884,8 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     }
 
     /**
-     * Stored amount for display/tests, read from the CURRENT mode()'s own store (they are isolated):
-     * mode() 1 -> s1; mode() 2 -> s2 plus the committed amount; mode() 3 -> flat zero, because mode() 3 stores nothing
+     * Stored amount for display/tests, read from the CURRENT mode's own store (they are isolated):
+     * mode 1 -> s1; mode 2 -> s2 plus the committed amount; mode 3 -> flat zero, because mode 3 stores nothing
      * and hands every item out from nothing.
      */
     public BigInteger storedAmount(T key) {
@@ -1016,7 +1016,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         if (!(isOre ? data.oreRules : data.modRules).contains(name)) {
             return; // unknown rule: no-op
         }
-        int normalized = mode() == 2 ? 2 : 1;
+        int normalized = mode == 2 ? 2 : 1;
         if (getRuleMode(key) == normalized) {
             return;
         }
@@ -1034,8 +1034,8 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
      * Global "make every rule instant" switch.
      *
      * <p>The 1.20 line only flips this flag and never consults it while matching (each rule carries its
-     * own mode()), which would make the switch a no-op. Here it actually does something: flipping it
-     * rewrites every existing rule's mode(), which is what the UI toggle implies.
+     * own mode), which would make the switch a no-op. Here it actually does something: flipping it
+     * rewrites every existing rule's mode, which is what the UI toggle implies.
      */
     public void setRuleInstant(boolean instant) {
         if (data.ruleInstant == instant) {
@@ -1139,8 +1139,8 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             }
             BigInteger amount = stocks().ca.remove(k);
             if (amount != null && amount.signum() > 0) {
-                // Always mode() 2's room: ca is a mode() 2 concept (see cancelInfinite), so a rule deleted while
-                // the cell sits in mode() 1 must not dump mode() 2's amount into mode() 1's isolated store.
+                // Always mode 2's room: ca is a mode 2 concept (see cancelInfinite), so a rule deleted while
+                // the cell sits in mode 1 must not dump mode 2's amount into mode 1's isolated store.
                 stocks().s2.merge(k, amount, BigInteger::add);
             }
             changed = true;
@@ -1169,7 +1169,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         ruleStateVersion++;
     }
 
-    /** Pure rule test: does any rule matching this key run in Instant mode()? Blacklist is applied later. */
+    /** Pure rule test: does any rule matching this key run in Instant mode? Blacklist is applied later. */
     private boolean matchesInstantRule(T key) {
         if (data.oreRules.isEmpty() && data.modRules.isEmpty() || cellChannel.hasExtraData(key)) {
             return false;
@@ -1248,7 +1248,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         return found;
     }
 
-    /** Every key this channel can ever hand out (mode() 3 listing / Instant-rule scan). Read-only. */
+    /** Every key this channel can ever hand out (mode 3 listing / Instant-rule scan). Read-only. */
     private List<T> allRegistryKeys() {
         return cellChannel.allKeys();
     }
@@ -1290,9 +1290,9 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     /**
      * Pins a key's stored amount; {@code lock} also marks it so inserts/extracts stay capped.
      *
-     * <p>Always writes mode() 2's store ({@code s2}): this is the mode() 2 config screen's "元件内数量" field, and
-     * the whole quantity-lock / whitelist / committed family is a mode() 2 concept, so it must not be able to
-     * write into mode() 1's isolated room.
+     * <p>Always writes mode 2's store ({@code s2}): this is the mode 2 config screen's "元件内数量" field, and
+     * the whole quantity-lock / whitelist / committed family is a mode 2 concept, so it must not be able to
+     * write into mode 1's isolated room.
      */
     public void setStoredQuantity(T key, BigInteger quantity, boolean lock) {
         if (key == null || quantity == null) {
@@ -1372,8 +1372,8 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
                 items.add(panelItem(castKey(entry.getKey()), entry.getValue(), false));
             }
         }
-        // Zero-count entries: a key that only carries a per-item threshold() must stay listed, otherwise
-        // there is no way to edit that threshold() again once its count reaches zero.
+        // Zero-count entries: a key that only carries a per-item threshold must stay listed, otherwise
+        // there is no way to edit that threshold again once its count reaches zero.
         for (Map.Entry<IAEStack<?>, Long> entry : data.itemThr.entrySet()) {
             T k = castKey(entry.getKey());
             if (data.wl.contains(k) || data.ul.contains(k) || stocks().s2.containsKey(k)) {
@@ -1421,7 +1421,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         return true;
     }
 
-    /** Falls back to this item's effective threshold() when nothing was ever committed (1.20 L1185). */
+    /** Falls back to this item's effective threshold when nothing was ever committed (1.20 L1185). */
     public BigInteger getCommitedAmount(IAEStack<?> key) {
         T k = lookupKey(castKey(key));
         BigInteger committed = stocks().ca.get(k);
@@ -1436,7 +1436,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     // wipe / accessors for the GUI + network layer
     // ------------------------------------------------------------------
 
-    /** Clears this cell's configuration and both finite stores. mode() 3's seen-set is kept (1.20 L243). */
+    /** Clears this cell's configuration and both finite stores. mode 3's seen-set is kept (1.20 L243). */
     public void wipeAllData() {
         stocks().s1.clear();
         stocks().s2.clear();
@@ -1629,11 +1629,11 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
 
     @Override
     public long getStoredItemCount() {
-        // Mode-aware on purpose: the three main modes are ISOLATED stores, so folding another mode()'s pile in
+        // Mode-aware on purpose: the three main modes are ISOLATED stores, so folding another mode's pile in
         // here would make the figure the cell reports disagree with what its terminal actually lists (the
         // same "two sides drift apart" class that produced the 2026-10-03 listing bugs).
-        //   mode() 1 -> s1; mode() 2 -> s2 (committed amounts belong to infinite keys, which are not counted);
-        //   mode() 3 -> nothing is ever stored.
+        //   mode 1 -> s1; mode 2 -> s2 (committed amounts belong to infinite keys, which are not counted);
+        //   mode 3 -> nothing is ever stored.
         BigInteger total = BigInteger.ZERO;
         if (mode() == 1) {
             for (BigInteger amount : stocks().s1.values()) {
@@ -1655,7 +1655,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         // omission class as the "invisible in the terminal" bug sensei hit.
         switch (mode()) {
             case 3: {
-                // Must match what getAvailableItems reports in mode() 3: everything the registry yields, plus
+                // Must match what getAvailableItems reports in mode 3: everything the registry yields, plus
                 // the NBT variants we have seen.
                 Set<IAEStack<?>> all = new LinkedHashSet<>(allRegistryKeys());
                 // mine(...) on purpose: m3 is a SHARED collection, so an unfiltered addAll would count other
