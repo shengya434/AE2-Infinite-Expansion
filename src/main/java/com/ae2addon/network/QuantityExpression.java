@@ -5,22 +5,34 @@ import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.util.Locale;
 
-/** Java 8 quantity grammar used by the type 17 server handler. */
-final class QuantityExpression {
+/**
+ * Java 8 quantity grammar used by the type 17 server handler.
+ *
+ * <p>Public so the in-game self-test can pin the parsing rules directly (J group).
+ */
+public final class QuantityExpression {
 
     /**
-     * Pre-computation bound for {@code ^}. The packet field is read with {@code readString(128)}, so the
-     * input length is already capped -- but "MAX^99999" is only 11 characters while its result has about
-     * 1.9 million digits. We refuse anything whose estimated size exceeds this instead of computing it.
+     * The ONLY bound on a parsed quantity, counted in decimal digits.
+     *
+     * <p>This is not a storage limit -- the cell keeps quantities as {@code BigInteger}. It is a <b>cost</b>
+     * limit: this parser runs on the server over a client-supplied string (read with
+     * {@code readString(128)}), the result is written to the world save as a decimal string, and {@code ^}
+     * makes enormous results cheap to write down ("MAX^99999" is 11 characters with about 1.9M digits).
+     * 1000 digits is about 2^3321: far beyond anything a player means, and at most ~1 KB of NBT per entry.
+     *
+     * <p>2026-10-03: this replaced a 63-bit clamp that silently rewrote {@code 2^128} into 9.22e18 (sensei
+     * typed exactly that into the quantity box). The box is allowed to mean what it says; only "absurdly
+     * expensive to compute or store" is refused, and then with a message rather than a substitution.
      */
-    private static final long MAX_RESULT_DIGITS = 10000L;
+    private static final long MAX_RESULT_DIGITS = 1000L;
 
     private final String source;
     private int pos;
 
     private QuantityExpression(String source) { this.source = source; }
 
-    static BigInteger parse(String input) {
+    public static BigInteger parse(String input) {
         String s = input.trim().toUpperCase(Locale.ROOT)
                 .replace("LONG.MAX", "MAX").replace("LONGMAX", "MAX")
                 .replace("INFINITE", "MAX").replace("INF", "MAX")
@@ -42,14 +54,26 @@ final class QuantityExpression {
         if (parser.pos != s.length() || amount.signum() < 0)
             throw new NumberFormatException("Invalid quantity expression");
         BigInteger result = amount.toBigInteger();
-        // HARDENING (2026-10-02, spec side): this runs on the SERVER over a client-supplied string, so
-        // the result must be bounded. Negative is already rejected above. We saturate at Long.MAX_VALUE,
-        // the same ceiling the rest of the mod uses for "effectively infinite" -- otherwise a player
-        // could store a million-digit quantity, which then lands in world-save NBT as a decimal string.
-        if (result.bitLength() > 63) {
-            return BigInteger.valueOf(Long.MAX_VALUE);
+        // BOUND BY DIGITS, NOT BY 63 BITS (2026-10-03). The old clamp here returned Long.MAX_VALUE for
+        // anything wider than a long, which silently turned a typed 2^128 into 9.22e18. Storage holds
+        // BigInteger, so a huge pinned amount is legitimate; what has to stay bounded is the computation and
+        // the decimal string that lands in the world save. Over the bound we refuse (the caller reports it)
+        // instead of substituting a number the player never asked for.
+        if (digits(result) > MAX_RESULT_DIGITS) {
+            throw new NumberFormatException("结果超过 " + MAX_RESULT_DIGITS + " 位数字上限");
         }
         return result;
+    }
+
+    /**
+     * Upper bound on the decimal digit count, without formatting the number.
+     *
+     * <p>{@code bitLength * log10(2) + 1} is an exact upper bound, so anything that fits the limit is
+     * accepted straight away; only values that look too big pay for {@code toString()}.
+     */
+    private static long digits(BigInteger value) {
+        long estimate = (long) (value.bitLength() * 0.30103D) + 2L;
+        return estimate > MAX_RESULT_DIGITS ? (long) value.toString().length() : estimate;
     }
 
     private void space() {

@@ -20,6 +20,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.network.PacketBuffer;
+import net.minecraft.util.text.TextComponentString;
 import net.minecraftforge.fml.common.network.simpleimpl.IMessage;
 import net.minecraftforge.fml.common.network.simpleimpl.IMessageHandler;
 import net.minecraftforge.fml.common.network.simpleimpl.MessageContext;
@@ -265,12 +266,17 @@ public final class Mode2ConfigPacket implements IMessage {
         } else if (msg.type == 17) {
             IAEItemStack key = key(msg.item); if (key == null) return;
             try {
+                // 2026-10-03: no clamp to Long.MAX here any more. The cell stores the quantity as a
+                // BigInteger, so "元件内数量 = 2^128" is a legitimate thing to ask for -- clamping it made the
+                // box silently mean 9.22e18 instead. Only the parser's digit bound applies, and a refusal is
+                // reported instead of substituted.
                 BigInteger amount = QuantityExpression.parse(msg.quantityText);
-                if (msg.lock && amount.compareTo(BigInteger.valueOf(Long.MAX_VALUE)) > 0)
-                    amount = BigInteger.valueOf(Long.MAX_VALUE);
                 inv.setStoredQuantity(key, amount, msg.lock);
             }
-            catch (NumberFormatException badQuantity) { return; }
+            catch (NumberFormatException badQuantity) {
+                player.sendMessage(new TextComponentString(
+                        "§c[ae2addon] 数量算式无效：" + badQuantity.getMessage()));
+            }
         } else if (msg.type == 19) {
             if (msg.isOre) { if (OreDictionary.doesOreNameExist(msg.text)) inv.addOreRule(msg.text); }
             else if (Loader.isModLoaded(msg.text)) inv.addModRule(msg.text);

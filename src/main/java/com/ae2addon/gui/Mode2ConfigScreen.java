@@ -487,6 +487,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
     }
 
     private static String shortAmount(BigInteger amount) {
+        // Past Long.MAX a digit run stops being readable at a glance (2^128 is 39 digits), so only that range
+        // switches to scientific notation. The exact value still lives in the tooltip and in the quantity box.
+        if (amount.bitLength() > 63) {
+            String digits = amount.toString();
+            return digits.charAt(0) + "." + digits.substring(1, 3) + "e" + (digits.length() - 1);
+        }
         if (amount.compareTo(BigInteger.valueOf(1000000)) >= 0) return amount.divide(BigInteger.valueOf(1000000)) + "M";
         if (amount.compareTo(BigInteger.valueOf(1000)) >= 0) return amount.divide(BigInteger.valueOf(1000)) + "K";
         return amount.toString();

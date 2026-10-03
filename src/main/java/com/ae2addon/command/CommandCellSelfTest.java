@@ -10,6 +10,7 @@ import com.ae2addon.AE2Addon;
 import com.ae2addon.cell.CellStorageData;
 import com.ae2addon.cell.UnlimitedCellInventory;
 import com.ae2addon.data.CellWorldData;
+import com.ae2addon.network.QuantityExpression;
 
 import appeng.api.AEApi;
 import appeng.api.config.Actionable;
@@ -361,6 +362,7 @@ public class CommandCellSelfTest extends CommandBase {
         runRuleVisibilityGroup(sender);
         runAllTypesCostGroup(sender);
         runListingIntegrityGroup(sender);
+        runBigQuantityGroup(sender);
 
         finish(sender);
     }
@@ -1063,6 +1065,81 @@ public class CommandCellSelfTest extends CommandBase {
                 "checked>=4/broken=0/types=list",
                 "checked=" + i7checked + " broken=" + i7broken + " types=" + i7.getStoredItemTypes()
                         + " list=" + i7list.size());
+    }
+
+    /**
+     * J group: the "元件内数量" box may hold numbers WIDER than a long.
+     *
+     * <p>The cell keeps quantities as {@code BigInteger}. On 2026-10-03 sensei typed {@code 2^128} into that
+     * box and the parser silently rewrote it into 9.22e18, because the parser clamped anything wider than 63
+     * bits. The clamp is gone -- the bound is now a digit count, and an over-limit input is refused with a
+     * message instead of being substituted. These assertions pin both halves: the big value survives
+     * verbatim, and the anti-DoS bound on {@code ^} still refuses absurd input.
+     */
+    private void runBigQuantityGroup(ICommandSender sender) {
+        final BigInteger twoPow128 = BigInteger.ONE.shiftLeft(128);
+        final long longMax = Long.MAX_VALUE;
+
+        // J1: the parser returns 2^128 exactly, not Long.MAX
+        BigInteger j1 = null;
+        try {
+            j1 = QuantityExpression.parse("2^128");
+        } catch (NumberFormatException ignored) {
+            // j1 stays null and the assertion reports it
+        }
+        check(sender, "J1", "★ 数量算式 2^128 精确解析（不再被夹成 Long.MAX）",
+                twoPow128.equals(j1), twoPow128.toString(), String.valueOf(j1));
+
+        // J2: the shortcuts still mean Long.MAX, and a plain big power is exact
+        BigInteger j2max = null;
+        BigInteger j2pow = null;
+        try {
+            j2max = QuantityExpression.parse("MAX");
+            j2pow = QuantityExpression.parse("10^40");
+        } catch (NumberFormatException ignored) {
+            // reported below
+        }
+        check(sender, "J2", "快捷写法 MAX 仍是 Long.MAX；10^40 精确为 10^40",
+                BigInteger.valueOf(longMax).equals(j2max) && BigInteger.TEN.pow(40).equals(j2pow),
+                longMax + "/" + BigInteger.TEN.pow(40), j2max + "/" + j2pow);
+
+        // J3: the anti-DoS bound must NOT be relaxed along with the clamp
+        boolean j3refused = false;
+        try {
+            QuantityExpression.parse("2^99999");
+        } catch (NumberFormatException expected) {
+            j3refused = true;
+        }
+        check(sender, "J3", "防炸护栏仍在：2^99999（约 3 万位数字）被拒绝，而不是硬算",
+                j3refused, "拒绝", String.valueOf(j3refused));
+
+        // J4: a locked 2^128 record -- exact ledger, Long.MAX towards AE2, extraction capped but lossless
+        UnlimitedCellInventory j4 = newInventory("j4");
+        j4.setMode(2);
+        j4.setWorkMode(1);
+        j4.setStoredQuantity(key(Items.DIAMOND), twoPow128, true);
+        BigInteger j4stored = j4.storedAmount(key(Items.DIAMOND));
+        long j4listed = listedSize(j4, key(Items.DIAMOND));
+        long j4take = size(j4.extractItems(stack(Items.DIAMOND, longMax), Actionable.MODULATE, NO_SOURCE));
+        BigInteger j4after = j4.storedAmount(key(Items.DIAMOND));
+        check(sender, "J4", "元件内数量 = 2^128（锁定）：账本精确、列表按 AE2 的 long 口径报 Long.MAX、取 Long.MAX 且账本不变",
+                twoPow128.equals(j4stored) && j4listed == longMax && j4take == longMax
+                        && twoPow128.equals(j4after),
+                twoPow128 + "/" + longMax + "/" + longMax + "/" + twoPow128,
+                j4stored + "/" + j4listed + "/" + j4take + "/" + j4after);
+
+        // J5: unlocked -- extracting Long.MAX leaves the exact remainder, which is what proves the ledger
+        // really runs past a long instead of saturating at it
+        UnlimitedCellInventory j5 = newInventory("j5");
+        j5.setMode(2);
+        j5.setWorkMode(1);
+        j5.setStoredQuantity(key(Items.EMERALD), twoPow128, false);
+        long j5take = size(j5.extractItems(stack(Items.EMERALD, longMax), Actionable.MODULATE, NO_SOURCE));
+        BigInteger j5left = j5.storedAmount(key(Items.EMERALD));
+        BigInteger j5expect = twoPow128.subtract(BigInteger.valueOf(longMax));
+        check(sender, "J5", "元件内数量 = 2^128（未锁定）：取走 Long.MAX 后余数精确（账本真的超过 long）",
+                j5take == longMax && j5expect.equals(j5left),
+                longMax + "/" + j5expect, j5take + "/" + j5left);
     }
 
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
