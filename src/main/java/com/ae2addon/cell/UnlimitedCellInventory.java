@@ -246,16 +246,25 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return bytes;
     }
 
-    /** Distinct keys the cell can hand out as infinite in mode 2: whitelist, infinite set, committed, rules. */
+    /**
+     * Distinct keys the cell can hand out as infinite in mode 2: the whitelist (wl), the promoted/infinite
+     * set (ul) and the live rule matches.
+     *
+     * <p>{@code ca} is deliberately NOT a source here. It records how much an infinite key absorbed, so that
+     * cancelling the infinite state can hand it back -- it is not itself an infinite claim. Every legitimate
+     * infinite state that writes ca also writes ul (promotion, 存入无限, panel toggle) or matches a live rule
+     * (rule hits write touched), so nothing is lost by leaving ca out. Listing it was 2026-10-03 bug 2:
+     * delete the rule and the item stayed "infinite" in the terminal, while extraction fell through to the
+     * finite store and returned nothing.
+     */
     private Set<IAEItemStack> infiniteKeys() {
         Set<IAEItemStack> infinite = new LinkedHashSet<>(data.wl);
         infinite.addAll(data.ul);
-        infinite.addAll(data.ca.keySet());
         infinite.addAll(ruleInfiniteKeys());
         return infinite;
     }
 
-    /** Distinct keys the cell can hand out as infinite in mode 2 (wl u ul u ca). */
+    /** Distinct keys the cell can hand out as infinite in mode 2 (wl u ul u live rule matches). */
     private int getInfiniteTypeCount() {
         return infiniteKeys().size();
     }
@@ -495,9 +504,11 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
                 // which made "Instant" indistinguishable from "Touch" from the player's side.)
                 Set<IAEItemStack> infinite = infiniteKeys();
                 reportInfinite(out, infinite);
-                // Finite rows must not be added on top of a key already reported as infinite: the list
-                // sums on add, and INFINITE + n overflows to a negative size.
-                reportMap(out, data.s2, infinite);
+                // Finite rows must not land on top of a key that is already infinite -- in this cell or in
+                // another cell of the same network. reportMap decides that per entry via findPrecise, the
+                // identity IItemList.add itself uses, because the list SUMS and INFINITE + n wraps negative
+                // (sensei's "the item vanished from the terminal", 2026-10-03).
+                reportMap(out, data.s2);
                 break;
             }
             default:
@@ -529,21 +540,30 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         }
     }
 
+    /**
+     * Reports finite amounts, never ON TOP of an entry that is already infinite.
+     *
+     * <p>{@code IItemList.add} SUMS (rv6: {@code AEItemStack.add -> incStackSize}), so adding a finite
+     * amount to an {@code INFINITE} row wraps around to a negative size -- and a negative row is simply
+     * not there as far as the terminal is concerned. That is 2026-10-03 bug 1 ("the item disappears from
+     * the list"), and it happens whenever two reports for one key meet in one list: two cells of the same
+     * network, one claiming infinity by rule and the other still holding the item as ordinary storage.
+     *
+     * <p>So the decision is made with {@code findPrecise} -- the very identity {@code ItemList.add} uses to
+     * find its record -- instead of a Set lookup, which can disagree with it and let the add through.
+     */
     private static void reportMap(IItemList<IAEItemStack> out, Map<IAEItemStack, BigInteger> map) {
-        reportMap(out, map, null);
-    }
-
-    private static void reportMap(IItemList<IAEItemStack> out, Map<IAEItemStack, BigInteger> map,
-            Set<IAEItemStack> skip) {
         for (Map.Entry<IAEItemStack, BigInteger> entry : map.entrySet()) {
-            if (skip != null && skip.contains(entry.getKey())) {
-                continue;
-            }
             long size = clamp(entry.getValue());
             if (size <= 0) {
                 continue;
             }
-            IAEItemStack stack = entry.getKey().copy();
+            IAEItemStack key = entry.getKey();
+            IAEItemStack existing = out.findPrecise(key);
+            if (existing != null && existing.getStackSize() >= INFINITE) {
+                continue;
+            }
+            IAEItemStack stack = key.copy();
             stack.setStackSize(size);
             out.add(stack);
         }
@@ -862,6 +882,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         }
         data.ruleModes.remove(ruleKey(true, name));
         invalidateInstantMatchCache();
+        reconcileCommitted();
         saveChanges();
         return true;
     }
@@ -890,6 +911,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         }
         data.ruleModes.remove(ruleKey(false, name));
         invalidateInstantMatchCache();
+        reconcileCommitted();
         saveChanges();
         return true;
     }
@@ -919,6 +941,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         }
         data.ruleModes.put(key, normalized);
         invalidateInstantMatchCache();
+        reconcileCommitted();
         saveChanges();
     }
 
@@ -1047,6 +1070,46 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return mode == 2 && ruleActive(lookupKey(key));
     }
 
+    /**
+     * Hands orphaned committed amounts back to the finite store.
+     *
+     * <p>{@code ca} holds what an infinite key absorbed, so cancelling infinity can give it back. It is not
+     * itself an infinite claim: a key is infinite only through wl, ul or a rule that is still ACTIVE.
+     * Whenever a rule goes away (deleted, or vetoed by a fresh blacklist entry) a key whose only trace was ca
+     * would otherwise be listed as infinite while extraction fell through to the finite store and returned
+     * nothing -- exactly 2026-10-03 bug 2, where the goods were visible as "infinite" but could not be pulled
+     * out. Moving the amount back into the finite store keeps every item and makes listing and extraction
+     * agree again.
+     *
+     * <p>The "still infinite?" test is {@link #ruleActive}, not {@link #ruleAllowsInfinite}: it has to be the
+     * same predicate the listing and extraction use, blacklist and quantity lock included, or the amount is
+     * stranded by exactly the vetoes this method exists to respect.
+     *
+     * @return whether anything moved.
+     */
+    private boolean reconcileCommitted() {
+        if (data.ca.isEmpty()) {
+            return false;
+        }
+        Map<IAEItemStack, BigInteger> back = mode == 1 ? data.s1 : data.s2;
+        List<IAEItemStack> keys = new ArrayList<>(data.ca.keySet());
+        boolean changed = false;
+        for (IAEItemStack k : keys) {
+            if (data.wl.contains(k) || data.ul.contains(k) || ruleActive(k)) {
+                continue;
+            }
+            BigInteger amount = data.ca.remove(k);
+            if (amount != null && amount.signum() > 0) {
+                back.merge(k, amount, BigInteger::add);
+            }
+            changed = true;
+        }
+        if (changed) {
+            saveChanges();
+        }
+        return changed;
+    }
+
     // ------------------------------------------------------------------
     // rule-match enumeration
     //
@@ -1141,7 +1204,26 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return found;
     }
 
-    /** Canonical key for every registered item, meta 0 and no NBT. Cached forever: the registry is frozen. */
+    /**
+     * Canonical key for every registered item, <b>metadata variants included</b>, no NBT.
+     *
+     * <p>Meta 0 alone is not enough: a pack registers one Item with many metas and nothing else distinguishes
+     * them. Mekanism CE's {@code ItemIngot} implements {@code IMetaItem}, so refined obsidian and osmium share
+     * one item id and differ only by meta -- scanning just {@code new ItemStack(item)} made an Instant rule
+     * infinite for the first meta of such a sequence and left every other meta Touch-only. That is
+     * 2026-10-03 bug 3 (sensei: "立即无限只会无限某一序列号的第一位物品").
+     *
+     * <p>So every item is asked for its sub-items the way the creative inventory does it
+     * ({@code Item#getSubItems}). {@code CreativeTabs.displayAllRelevantItems} is deliberately not used: it
+     * is client-only, and this scan also runs on the server. Items that refuse to answer fall back to
+     * meta 0, and a mod whose getSubItems throws cannot kill the scan.
+     *
+     * <p>Tagged stacks are skipped on purpose: the canonical key is (item, meta, no NBT) -- the rule
+     * predicate cannot speak about NBT variants, and mode 3 reports the ones we have actually seen (m3)
+     * separately.
+     *
+     * <p>The whole scan is cached forever: the item registry is frozen once the game has loaded.
+     */
     private transient List<IAEItemStack> registryKeyCache = null;
 
     private List<IAEItemStack> allRegistryKeys() {
@@ -1150,9 +1232,6 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         }
         List<IAEItemStack> found = new ArrayList<>();
         Set<IAEItemStack> seen = new LinkedHashSet<>();
-        // Meta variants are not enumerated: the canonical key is (item, meta 0, no NBT), which is all the
-        // rule predicate can speak about (it sees an Item and that item's ore names). Items we have actually
-        // seen with NBT live in m3 and are reported separately.
         for (net.minecraft.util.ResourceLocation id : net.minecraft.item.Item.REGISTRY.getKeys()) {
             Item item = net.minecraft.item.Item.REGISTRY.getObject(id);
             // minecraft:air is IN the item registry, and new ItemStack(air) is an EMPTY stack, for which
@@ -1163,16 +1242,58 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             if (item == null || item == net.minecraft.init.Items.AIR) {
                 continue;
             }
-            IAEItemStack key = AEItemStack.fromItemStack(new ItemStack(item));
-            if (key == null) {
-                continue;
-            }
-            if (seen.add(lookupKey(key))) {
-                found.add(key);
+            for (ItemStack def : subItemStacks(item)) {
+                IAEItemStack key = AEItemStack.fromItemStack(def);
+                if (key == null) {
+                    continue;
+                }
+                if (seen.add(lookupKey(key))) {
+                    found.add(key);
+                }
             }
         }
         registryKeyCache = found;
         return found;
+    }
+
+    /** Every stack this item offers to the creative inventory, meta 0 when it will not answer. */
+    private static List<ItemStack> subItemStacks(Item item) {
+        List<ItemStack> out = new ArrayList<>();
+        collectSubItems(item, net.minecraft.creativetab.CreativeTabs.SEARCH, out);
+        // Mods that gate their variants on their own tab rather than going through isInCreativeTab only
+        // answer for that tab, so ask those too.
+        net.minecraft.creativetab.CreativeTabs[] tabs = item.getCreativeTabs();
+        if (tabs != null) {
+            for (net.minecraft.creativetab.CreativeTabs tab : tabs) {
+                collectSubItems(item, tab, out);
+            }
+        }
+        if (out.isEmpty()) {
+            out.add(new ItemStack(item));
+        }
+        return out;
+    }
+
+    private static void collectSubItems(Item item, net.minecraft.creativetab.CreativeTabs tab,
+            List<ItemStack> out) {
+        if (tab == null) {
+            return;
+        }
+        try {
+            net.minecraft.util.NonNullList<ItemStack> sub = net.minecraft.util.NonNullList.create();
+            item.getSubItems(tab, sub);
+            for (ItemStack stack : sub) {
+                if (stack == null || stack.isEmpty() || stack.getItem() == net.minecraft.init.Items.AIR
+                        || stack.hasTagCompound()) {
+                    continue;
+                }
+                out.add(stack);
+            }
+        } catch (Throwable t) {
+            // One bad mod must not cost us the whole scan: fall back to whatever else answered (meta 0 at
+            // the very least).
+            AE2Addon.LOG.warn("[ae2addon] {} 的 getSubItems 失败，跳过该来源：{}", item.getRegistryName(), t);
+        }
     }
 
     /** How many canonical keys the item registry yields (for the self-test's report). */
@@ -1194,6 +1315,9 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         data.blacklist.add(k);
         // A blacklisted key must not keep showing as infinite through a rule.
         data.touched.remove(k);
+        // ... and if a rule had already absorbed its amount, that amount is now orphaned: give it back to
+        // the finite store so it stays visible and extractable (same class as bug 2).
+        reconcileCommitted();
         saveChanges();
         return true;
     }

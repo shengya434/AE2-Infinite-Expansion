@@ -360,6 +360,7 @@ public class CommandCellSelfTest extends CommandBase {
         runSummaryGroup(sender);
         runRuleVisibilityGroup(sender);
         runAllTypesCostGroup(sender);
+        runListingIntegrityGroup(sender);
 
         finish(sender);
     }
@@ -694,15 +695,16 @@ public class CommandCellSelfTest extends CommandBase {
         check(sender, "E2", "面板标记无限（ul）的物品在终端列表里可见", e2seen == infinite,
                 String.valueOf(infinite), String.valueOf(e2seen));
 
-        // E3: rule promotion writes ca only, never ul -- so ca must be reported too
+        // E3: a rule hit writes touched + ca and never ul -- it must be listed through the RULE path (ca is
+        // not an infinite claim on its own; see I5, where deleting the rule has to hand the amount back)
         UnlimitedCellInventory e3 = newInventory("e3");
         e3.setMode(2);
         e3.setWorkMode(1);
         e3.addModRule("minecraft");
         e3.setRuleMode(UnlimitedCellInventory.ruleKey(false, "minecraft"), 2);
-        e3.injectItems(stack(Items.STICK, 3L), Actionable.MODULATE, NO_SOURCE); // Touch rule -> ca
+        e3.injectItems(stack(Items.STICK, 3L), Actionable.MODULATE, NO_SOURCE); // Touch rule -> touched + ca
         long e3seen = listedSize(e3, key(Items.STICK));
-        check(sender, "E3", "规则推进（只写 ca、不进 ul）的物品在终端列表里可见", e3seen == infinite,
+        check(sender, "E3", "规则推进（只写 ca、不进 ul）的物品靠规则命中路径在终端列表里可见", e3seen == infinite,
                 String.valueOf(infinite), String.valueOf(e3seen));
 
         // E4: two unlimited cells aggregating into one grid list must not overflow to a negative size
@@ -895,6 +897,187 @@ public class CommandCellSelfTest extends CommandBase {
                 warmList.size(), coldNanos / 1e6, warmNanos / 1e6)));
         check(sender, "H2", "mode3 热重建耗时 < 50 ms（超了就该退回按需列出）",
                 warmNanos < 50_000_000L, "<50ms", String.format("%.2f ms", warmNanos / 1e6));
+    }
+
+    /**
+     * I group: the three listing bugs sensei reported on 2026-10-03. They are one theme -- what the cell
+     * CLAIMS to hold and what it can really hand out drifted apart:
+     * <ul>
+     * <li>I1/I2 multi-meta items: an Instant rule only ever covered meta 0 of a sequence, so a mod rule made
+     *     the first entry of Mekanism CE's ingot sequence infinite and left the rest Touch-only.</li>
+     * <li>I3/I4 one key reported twice into one list: {@code IItemList.add} SUMS, so a finite report landing
+     *     on an {@code INFINITE} row wraps to a negative size and the row disappears from the terminal.</li>
+     * <li>I5/I6 a deleted (or blacklisted) rule left an orphaned committed amount that was listed as infinite
+     *     but could not be extracted.</li>
+     * <li>I7 the invariant behind all of them: everything listed as infinite must actually come out.</li>
+     * </ul>
+     */
+    private void runListingIntegrityGroup(ICommandSender sender) {
+        final long infinite = UnlimitedCellInventory.INFINITE;
+        IStorageChannel<IAEItemStack> channel = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class);
+        String modRule = UnlimitedCellInventory.ruleKey(false, "minecraft");
+
+        // I1: a mod rule has to cover every meta of one item, not just meta 0 -- the shape Mekanism CE's
+        // ItemIngot has (one item, many metas). Vanilla dye is the same shape with 16 metas.
+        UnlimitedCellInventory i1 = newInventory("i1");
+        i1.setMode(2);
+        i1.setWorkMode(1);
+        i1.addModRule("minecraft");
+        IItemList<IAEItemStack> i1list = channel.createList();
+        i1.getAvailableItems(i1list);
+        int dyeMetas = 0;
+        for (IAEItemStack listed : i1list) {
+            if (listed.getItem() == Items.DYE) {
+                dyeMetas++;
+            }
+        }
+        long i1meta15 = listedSize(i1, aeStack(new ItemStack(Items.DYE, 1, 15), 1L));
+        check(sender, "I1", "★ 多 meta 物品：「立即」规则要覆盖全部 meta（染料 16 色都无限），不是只有 meta 0",
+                dyeMetas >= 8 && i1meta15 == infinite, ">=8/infinite",
+                "dyeMetas=" + dyeMetas + " meta15=" + i1meta15);
+
+        // I2: coal (meta 0) and charcoal (meta 1) are one item; the rule must cover both
+        IAEItemStack charcoal = aeStack(new ItemStack(Items.COAL, 1, 1), 1L);
+        boolean i2rule = i1.isInfiniteByRule(charcoal);
+        long i2listed = listedSize(i1, charcoal);
+        check(sender, "I2", "煤/木炭（同 id 不同 meta）都在「立即」规则下无限且已列出",
+                i2rule && i2listed == infinite, "true/infinite",
+                "rule=" + i2rule + " listed=" + i2listed);
+
+        // I3: one item matched by BOTH an ore rule and a mod rule (sensei's bug 1), plus the whole-list
+        // invariant that no entry comes out non-positive -- that is what "the item vanished" looks like.
+        Item probeItem = null;
+        String probeOre = null;
+        for (Item candidate : new Item[] { Items.STICK, Items.IRON_INGOT, Items.COAL, Items.DIAMOND }) {
+            String ore = firstOreName(new ItemStack(candidate));
+            if (ore != null) {
+                probeItem = candidate;
+                probeOre = ore;
+                break;
+            }
+        }
+        UnlimitedCellInventory i3 = newInventory("i3");
+        i3.setMode(2);
+        i3.setWorkMode(1);
+        i3.addModRule("minecraft");
+        if (probeOre != null) {
+            i3.addOreRule(probeOre);
+        }
+        IItemList<IAEItemStack> i3list = channel.createList();
+        i3.getAvailableItems(i3list);
+        IAEItemStack probeKey = probeItem == null ? key(Items.STICK) : key(probeItem);
+        int i3hits = 0;
+        long i3size = -1L;
+        int i3bad = 0;
+        for (IAEItemStack listed : i3list) {
+            if (listed.isSameType(probeKey)) {
+                i3hits++;
+                i3size = listed.getStackSize();
+            }
+            if (listed.getStackSize() <= 0) {
+                i3bad++;
+            }
+        }
+        check(sender, "I3", "★ 矿词+模组双重命中：该物品只出现一次、仍是无限，且列表里没有非正数条目",
+                probeOre != null && i3hits == 1 && i3size == infinite && i3bad == 0,
+                "ore!=null/1/infinite/0",
+                "ore=" + probeOre + " hits=" + i3hits + " size=" + i3size + " bad=" + i3bad);
+
+        // I4: the mechanism behind bug 1 -- two cells feeding ONE list, one of them claiming infinity by rule
+        // while the other still holds the item as ordinary storage. A naive finite report SUMS onto the
+        // INFINITE row, wraps negative, and the terminal drops the item.
+        IItemList<IAEItemStack> i4list = channel.createList();
+        UnlimitedCellInventory i4rule = newInventory("i4rule");
+        i4rule.setMode(2);
+        i4rule.setWorkMode(1);
+        i4rule.addModRule("minecraft");
+        i4rule.getAvailableItems(i4list);
+        UnlimitedCellInventory i4plain = newInventory("i4plain");
+        i4plain.setMode(2);
+        i4plain.setWorkMode(1);
+        i4plain.injectItems(stack(Items.STICK, 5L), Actionable.MODULATE, NO_SOURCE);
+        i4plain.getAvailableItems(i4list);
+        IAEItemStack i4found = i4list.findPrecise(key(Items.STICK));
+        long i4seen = i4found == null ? -1L : i4found.getStackSize();
+        check(sender, "I4", "★ 一片盘按规则无限 + 另一片盘里它仍是普通存储 → 合并列表还是无限（不能负成 0 以下）",
+                i4seen == infinite, String.valueOf(infinite), String.valueOf(i4seen));
+
+        // I5: bug 2 -- delete the rule and what it had absorbed must come back as ordinary storage
+        UnlimitedCellInventory i5 = newInventory("i5");
+        i5.setMode(2);
+        i5.setWorkMode(1);
+        i5.addModRule("minecraft");
+        i5.injectItems(stack(Items.STICK, 7L), Actionable.MODULATE, NO_SOURCE); // rule hit -> touched + ca
+        i5.removeModRule("minecraft");
+        long i5listed = listedSize(i5, key(Items.STICK));
+        long i5take = size(i5.extractItems(stack(Items.STICK, 100L), Actionable.MODULATE, NO_SOURCE));
+        check(sender, "I5", "★ 删掉规则：原来被规则吸进去的 7 个回到普通存储（列表显示 7、能取出 7）",
+                i5listed == 7L && i5take == 7L, "7/7", i5listed + "/" + i5take);
+
+        // I6: same class -- blacklisting a rule-matched item must not strand its amount either
+        UnlimitedCellInventory i6 = newInventory("i6");
+        i6.setMode(2);
+        i6.setWorkMode(1);
+        i6.addModRule("minecraft");
+        i6.injectItems(stack(Items.PAPER, 7L), Actionable.MODULATE, NO_SOURCE);
+        i6.toggleBlacklist(key(Items.PAPER));
+        long i6listed = listedSize(i6, key(Items.PAPER));
+        long i6take = size(i6.extractItems(stack(Items.PAPER, 100L), Actionable.MODULATE, NO_SOURCE));
+        check(sender, "I6", "★ 把规则命中的物品拉黑：7 个也不能被黑洞吞掉（列表 7、能取出 7）",
+                i6listed == 7L && i6take == 7L, "7/7", i6listed + "/" + i6take);
+
+        // I7: the invariant that covers all of the above -- every listed key must really come out, and the
+        // reported type count must still match the listing (wl + ul + Touch rule + plain storage in one cell).
+        UnlimitedCellInventory i7 = newInventory("i7");
+        i7.setMode(2);
+        i7.setWorkMode(1);
+        i7.setThreshold(1000000L);
+        i7.addWhitelist(key(Items.DIAMOND));                                    // wl
+        i7.injectItems(stack(Items.STICK, 5L), Actionable.MODULATE, NO_SOURCE); // s2, finite
+        i7.injectItems(stack(Items.EMERALD, 9L), Actionable.MODULATE, NO_SOURCE);
+        i7.togglePanelInfinite(key(Items.EMERALD));                             // ul
+        i7.addModRule("minecraft");
+        i7.setRuleMode(modRule, 2);                                             // Touch
+        i7.injectItems(stack(Items.PAPER, 3L), Actionable.MODULATE, NO_SOURCE); // rule hit
+        IItemList<IAEItemStack> i7list = channel.createList();
+        i7.getAvailableItems(i7list);
+        int i7checked = 0;
+        int i7broken = 0;
+        for (IAEItemStack listed : i7list) {
+            if (listed.getStackSize() <= 0) {
+                i7broken++;
+                i7checked++;
+                continue;
+            }
+            IAEItemStack probe = listed.copy();
+            probe.setStackSize(1L);
+            long take = size(i7.extractItems(probe, Actionable.SIMULATE, NO_SOURCE));
+            i7checked++;
+            if (take <= 0) {
+                i7broken++;
+            }
+        }
+        check(sender, "I7", "★ 一致性总断言：列表里每一条都取得到（无限条目取得到、有限条目至少 1），且类型数与条数一致",
+                i7checked >= 4 && i7broken == 0 && i7.getStoredItemTypes() == i7list.size(),
+                "checked>=4/broken=0/types=list",
+                "checked=" + i7checked + " broken=" + i7broken + " types=" + i7.getStoredItemTypes()
+                        + " list=" + i7list.size());
+    }
+
+    /** The first ore-dictionary name this stack really carries, or null when it carries none. */
+    private static String firstOreName(ItemStack definition) {
+        int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(definition);
+        if (ids == null || ids.length == 0) {
+            return null;
+        }
+        for (int id : ids) {
+            String name = net.minecraftforge.oredict.OreDictionary.getOreName(id);
+            if (name != null && !name.isEmpty()) {
+                return name;
+            }
+        }
+        return null;
     }
 
     /** Size the terminal would see for {@code key}, or -1 when the cell does not list it at all. */
