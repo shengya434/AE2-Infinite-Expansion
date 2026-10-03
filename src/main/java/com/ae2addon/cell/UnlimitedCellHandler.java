@@ -37,6 +37,21 @@ public class UnlimitedCellHandler implements ICellHandler {
         AE2Addon.LOG.info("[ae2addon] 无限存储元件的 ICellHandler 已注册");
     }
 
+    /** Throttled diagnostic sink; delete once BUG1/BUG2 are closed. */
+    private static final java.util.Map<String, long[]> PROBE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static void probe(String what) {
+        long[] slot = PROBE.computeIfAbsent(what, key -> new long[2]);
+        long now = System.currentTimeMillis();
+        slot[1]++;
+        if (now - slot[0] < 5000L) {
+            return;
+        }
+        slot[0] = now;
+        AE2Addon.LOG.info("[ae2addon] PROBE {}（近 5 秒 {} 次）", what, slot[1]);
+        slot[1] = 0L;
+    }
+
     @Override
     public boolean isCell(ItemStack stack) {
         return stack != null && !stack.isEmpty() && stack.getItem() instanceof ItemUnlimitedCell;
@@ -51,10 +66,11 @@ public class UnlimitedCellHandler implements ICellHandler {
         // rv6 asks ONE CHANNEL AT A TIME, and the same universal cell answers for each channel it speaks:
         // that is what makes "one cell, every storage type" possible without AE2 knowing about it.
         CellChannel<?> adapter = CellChannelRegistry.byStorage(channel);
-        if (adapter != null && AE2Addon.LOG.isDebugEnabled()) {
-            AE2Addon.LOG.debug("[ae2addon] 被问通道 {}：provider={} nbt={}", adapter.id(), saveProvider != null,
-                    stack.getTagCompound());
-        }
+        // Temporary probe for BUG1/BUG2 (2026-10-03): shows exactly which channels the drive/network asks us for,
+        // and whether the stack it hands us still carries our NBT. Throttled, because a grid rebuild can call this
+        // thousands of times per second.
+        probe("问通道=" + (adapter == null ? "未知" : adapter.id()) + " provider=" + (saveProvider != null)
+                + " nbt=" + (stack.getTagCompound() == null ? "无" : stack.getTagCompound().getKeySet()));
         if (adapter == ItemCellChannel.INSTANCE) {
             return new BasicCellInventoryHandler<>(new UnlimitedCellInventory(stack, saveProvider), channel);
         }
