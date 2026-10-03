@@ -39,20 +39,23 @@ public abstract class SingleKeyCellChannel<T extends IAEStack<T>> implements Cel
 
     @Override
     public T readNbt(NBTTagCompound tag) {
-        try {
-            IStorageChannel<T> storage = storage();
-            return storage == null ? null : storage.createFromNBT(tag);
-        } catch (Throwable broken) {
-            // A bridge mod's parser failing must skip one key, not wipe the cell (the data layer skips nulls).
-            return null;
-        }
+        // Nothing in the tag identifies a single-key resource, and its key class may compare by INSTANCE
+        // (FluxStack overrides equals without hashCode, see normalize below), so a freshly parsed instance would
+        // never match what AE2 hands us later. Hand back the canonical instance instead.
+        return singleKey();
     }
 
+    /**
+     * Identity form of this channel's key: the canonical instance, NOT a copy.
+     *
+     * <p>Copying is wrong here. {@code com.flux_applied.ae2.FluxStack} overrides {@code equals} but not
+     * {@code hashCode} (javap, 2026-10-03), so two equal-valued instances hash differently and a copied key
+     * never matches the stored one in our maps -- that was self-test P2 ("store 512, take 512 -> null") and P4
+     * ("never reaches the threshold"). Single-key channels therefore canonicalise instead of copying.
+     */
     @Override
     public T normalize(T key) {
-        T copy = key.copy();
-        copy.setStackSize(1);
-        return copy;
+        return singleKey();
     }
 
     @Override

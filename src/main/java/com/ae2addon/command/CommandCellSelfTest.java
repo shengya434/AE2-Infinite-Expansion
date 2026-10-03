@@ -402,6 +402,7 @@ public class CommandCellSelfTest extends CommandBase {
         runFluidChannelGroup(sender);
         runPanelChannelGroup(sender);
         runChannelCompletenessGroup(sender);
+        runSharedSettingsGroup(sender);
         runOptionalChannelGroups(sender);
 
         finish(sender);
@@ -1594,6 +1595,51 @@ public class CommandCellSelfTest extends CommandBase {
         } catch (RuntimeException | LinkageError failed) {
             return null;
         }
+    }
+    /**
+     * S group: the settings are SHARED, so a change made through one channel's view is visible through every
+     * other one immediately.
+     *
+     * <p>This is the pin for sensei's bug of 2026-10-03 ("in mode 3 the terminal only shows one storage type as
+     * infinite"). The drive keeps one cell inventory per CHANNEL alive across grid rebuilds, so while the
+     * settings were per-instance fields, a mode switch only reached the instances rebuilt afterwards.
+     */
+    private void runSharedSettingsGroup(ICommandSender sender) {
+        ItemStack cell = cellWithUuid(testUuid("s1"));
+        UnlimitedCellInventory itemView = new UnlimitedCellInventory(cell, null);
+        wipe(itemView);
+        FluidCellInventory fluidView = new FluidCellInventory(cell, null);
+
+        // S1: a mode switch through the item view is what the fluid view reports at once
+        itemView.setMode(3);
+        int fluidSeesMode = fluidView.getMode();
+        check(sender, "S1", "★ 设置是共享的：从物品视图切到 mode3，流体视图立刻也读到 3（不是各存一份）",
+                fluidSeesMode == 3 && itemView.getMode() == 3, "3/3", fluidSeesMode + "/" + itemView.getMode());
+
+        // S2: same for the work mode
+        itemView.setMode(2);
+        itemView.setWorkMode(3);
+        check(sender, "S2", "★ 工作模式同样共享：物品视图设 3，流体视图读到 3",
+                fluidView.getWorkMode() == 3, "3", String.valueOf(fluidView.getWorkMode()));
+
+        // S3: and for the升级阈值
+        itemView.setThreshold(4242L);
+        check(sender, "S3", "★ 阈值同样共享：物品视图设 4242，流体视图读到 4242",
+                fluidView.getThreshold() == 4242L, "4242", String.valueOf(fluidView.getThreshold()));
+
+        // S4: the tooltip copy on the cell item still follows (the client cannot read the world save)
+        ChannelCellCore.Summary summary = ChannelCellCore.summaryOf(cell);
+        check(sender, "S4", "元件 NBT 里的设置副本跟着更新（tooltip 用，客户端读不到世界存档）",
+                summary.mode == 2 && summary.workMode == 3 && summary.threshold == 4242L, "2/3/4242",
+                summary.mode + "/" + summary.workMode + "/" + summary.threshold);
+
+        // S5: and a NEW view opened later sees the same settings (the drive rebuilds views on grid changes)
+        ChannelCellCore<?> freshView = CellInventories.open(cell, null, CellChannelRegistry.FLUID);
+        check(sender, "S5", "新开的视图读到的也是共享设置（mode2/wm3/thr4242）",
+                freshView != null && freshView.getMode() == 2 && freshView.getWorkMode() == 3
+                        && freshView.getThreshold() == 4242L,
+                "2/3/4242", freshView == null ? "null" : freshView.getMode() + "/" + freshView.getWorkMode()
+                        + "/" + freshView.getThreshold());
     }
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
     private static String firstOreName(ItemStack definition) {

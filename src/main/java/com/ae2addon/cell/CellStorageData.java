@@ -54,6 +54,38 @@ public class CellStorageData {
         }
     }
 
+    // ------------------------------------------------------------------
+    // settings: SHARED and AUTHORITATIVE
+    //
+    // These used to live in each ChannelCellCore instance (read once from the cell item NBT). That broke as soon
+    // as one cell spoke several channels: the drive keeps one inventory per CHANNEL alive, so switching to mode 3
+    // only reached the instance rebuilt afterwards -- the other channels kept running mode 1 and the terminal
+    // showed "only one storage type is infinite" (sensei, 2026-10-03).
+    //
+    // Now they live here, in the per-cell record every channel view shares; the cell item NBT keeps a copy for
+    // the tooltip only (the client cannot read the world save).
+    // ------------------------------------------------------------------
+    public int mode = 1;
+    public int workMode = 1;
+    public long threshold = 65536L;
+
+    /**
+     * False until a view seeded these from the cell item NBT. Saves written before the settings moved here have
+     * no mode/wm/thr in the world data, so the first view to attach copies them across once.
+     */
+    public boolean settingsSeeded = false;
+
+    /** Seeds the settings from the cell item NBT (once), for cells saved before the move. */
+    public void seedSettingsIfAbsent(int modeFromNbt, int workModeFromNbt, long thresholdFromNbt) {
+        if (settingsSeeded) {
+            return;
+        }
+        mode = modeFromNbt;
+        workMode = workModeFromNbt;
+        threshold = thresholdFromNbt;
+        settingsSeeded = true;
+    }
+
     private final Map<String, Stocks> stocks = new LinkedHashMap<>();
 
     /** @return this channel's count maps, created on demand. */
@@ -131,6 +163,11 @@ public class CellStorageData {
     private static final String K_TOUCHED = "rt";
     private static final String K_BLACKLIST = "bl";
     private static final String K_QTY_LOCKED = "ql";
+    private static final String K_SET_MODE = "setmode";
+    private static final String K_SET_WM = "setwm";
+    private static final String K_SET_THR = "setthr";
+    private static final String K_SET_SEEDED = "setseed";
+
     private static final String K_RULE_INSTANT = "ri";
     private static final String K_KEY = "k";
     private static final String K_NUM = "n";
@@ -170,6 +207,10 @@ public class CellStorageData {
             stockRoot.setTag(entry.getKey(), one);
         }
         root.setTag(K_STOCKS, stockRoot);
+        root.setInteger(K_SET_MODE, mode);
+        root.setInteger(K_SET_WM, workMode);
+        root.setLong(K_SET_THR, threshold);
+        root.setBoolean(K_SET_SEEDED, settingsSeeded);
         root.setTag(K_IT, writeChannelLongMap(itemThr));
         root.setTag(K_WL, writeChannelKeySet(wl));
         root.setTag(K_UL, writeChannelKeySet(ul));
@@ -232,6 +273,12 @@ public class CellStorageData {
         readChannelKeySet(root.getTagList(K_QTY_LOCKED, 10), qtyLocked);
         // Default true, matching 1.20: a fresh rule is Instant unless the player switches it.
         ruleInstant = !root.hasKey(K_RULE_INSTANT) || root.getBoolean(K_RULE_INSTANT);
+        // Settings moved here from the cell item NBT (see the field block above). A record without them keeps
+        // settingsSeeded == false so the first view seeds from the item once.
+        mode = root.hasKey(K_SET_MODE) ? root.getInteger(K_SET_MODE) : 1;
+        workMode = root.hasKey(K_SET_WM) ? root.getInteger(K_SET_WM) : 1;
+        threshold = root.hasKey(K_SET_THR) ? root.getLong(K_SET_THR) : 65536L;
+        settingsSeeded = root.getBoolean(K_SET_SEEDED);
     }
 
     // ------------------------------------------------------------------

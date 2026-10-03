@@ -35,7 +35,7 @@ public final class ManaCellChannel extends SingleKeyCellChannel<nyonio.ae2.ManaS
 
     @Override
     protected nyonio.ae2.ManaStack singleKey() {
-        return new ManaStack(1);
+        return ManaStack.STATIC_STACK;
     }
 
     @Override

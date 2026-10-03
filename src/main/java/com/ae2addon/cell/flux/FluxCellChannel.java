@@ -35,7 +35,7 @@ public final class FluxCellChannel extends SingleKeyCellChannel<com.flux_applied
 
     @Override
     protected com.flux_applied.ae2.FluxStack singleKey() {
-        return new FluxStack(1);
+        return FluxStack.STATIC_STACK;
     }
 
     @Override
