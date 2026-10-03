@@ -44,14 +44,16 @@ public final class Mode2ConfigScreen extends GuiContainer {
     /** One clickable category entry of the strip, positioned in screen space. */
     private static final class Chip {
         final String id;     // "item" | "blacklist" | "ore:<name>" | "mod:<name>"
-        final String label;
+        final String label;  // possibly shortened for display
+        final String full;   // the untruncated label, shown on hover
         final int color;
         final int x;
         final int width;
 
-        Chip(String id, String label, int color, int x, int width) {
+        Chip(String id, String label, String full, int color, int x, int width) {
             this.id = id;
             this.label = label;
+            this.full = full;
             this.color = color;
             this.x = x;
             this.width = width;
@@ -402,32 +404,38 @@ public final class Mode2ConfigScreen extends GuiContainer {
         int x = guiLeft + CATEGORY_LEFT - scroll;
         x = addChip(chips, "item", I18n.format("gui.ae2addon.p3.cat_items"), 0xCCCCCC, x);
         for (Map.Entry<String, Integer> rule : oreRules.entrySet()) {
-            x = addChip(chips, "ore:" + rule.getKey(), chipLabel("O:", rule.getKey(), rule.getValue()),
+            x = addChip(chips, "ore:" + rule.getKey(), ruleLabel("O:", rule.getKey(), rule.getValue()),
                     0x66CCFF, x);
         }
         for (Map.Entry<String, Integer> rule : modRules.entrySet()) {
-            x = addChip(chips, "mod:" + rule.getKey(), chipLabel("M:", rule.getKey(), rule.getValue()),
+            x = addChip(chips, "mod:" + rule.getKey(), ruleLabel("M:", rule.getKey(), rule.getValue()),
                     0xDD99FF, x);
         }
         addChip(chips, "blacklist", I18n.format("gui.ae2addon.p3.cat_blacklist"), 0xFF7777, x);
         return chips;
     }
 
-    private int addChip(List<Chip> chips, String id, String label, int color, int x) {
+    /** The untruncated label of one rule chip: prefix, rule name, and the Instant/Touch marker. */
+    private static String ruleLabel(String prefix, String name, int mode) {
+        return prefix + name + (mode == 1 ? " [I]" : " [T]");
+    }
+
+    private int addChip(List<Chip> chips, String id, String full, int color, int x) {
+        String label = capLabel(full);
         int width = fontRenderer.getStringWidth(label) + CHIP_GAP;
-        chips.add(new Chip(id, label, color, x, width));
+        chips.add(new Chip(id, label, full, color, x, width));
         return x + width;
     }
 
     /** Caps one chip's label so a single long rule name cannot push every other category off the strip. */
-    private String chipLabel(String prefix, String name, int mode) {
-        String suffix = mode == 1 ? " [I]" : " [T]";
-        String label = prefix + name + suffix;
-        if (fontRenderer.getStringWidth(label) <= CHIP_MAX_LABEL_W) {
-            return label;
+    private String capLabel(String full) {
+        if (fontRenderer.getStringWidth(full) <= CHIP_MAX_LABEL_W) {
+            return full;
         }
-        int room = CHIP_MAX_LABEL_W - fontRenderer.getStringWidth(prefix + "…" + suffix);
-        return prefix + fontRenderer.trimStringToWidth(name, Math.max(12, room)) + "…" + suffix;
+        String suffix = full.endsWith(" [I]") || full.endsWith(" [T]") ? full.substring(full.length() - 4) : "";
+        String head = suffix.isEmpty() ? full : full.substring(0, full.length() - 4);
+        int room = Math.max(12, CHIP_MAX_LABEL_W - fontRenderer.getStringWidth("…" + suffix));
+        return fontRenderer.trimStringToWidth(head, room) + "…" + suffix;
     }
 
     private int maxCategoryScroll() {
@@ -579,6 +587,14 @@ public final class Mode2ConfigScreen extends GuiContainer {
             if (onLeftArrow || onRightArrow) {
                 drawHoveringText(java.util.Collections.singletonList(
                         I18n.format("gui.ae2addon.mode2.cat_scroll_tip")), mouseX, mouseY);
+            } else {
+                // A truncated chip loses its tail, so hovering shows the full rule name it stands for.
+                for (Chip chip : buildChips()) {
+                    if (chipVisible(chip) && chip.contains(mouseX)) {
+                        drawHoveringText(java.util.Collections.singletonList(chip.full), mouseX, mouseY);
+                        break;
+                    }
+                }
             }
         }
     }
