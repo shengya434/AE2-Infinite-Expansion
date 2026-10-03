@@ -55,9 +55,33 @@ public final class CellChannelRegistry {
         return id == null ? null : BY_ID.get(id);
     }
 
-    /** @return the adapter AE2 is asking about, or {@code null} when this cell does not serve that channel. */
+    /**
+     * @return the adapter AE2 is asking about, or {@code null} when this cell does not serve that channel.
+     *
+     * <p>Matches by INSTANCE first, then by CLASS, and that fallback is load-bearing. AE2's {@code ApiStorage} is
+     * not guaranteed to keep handing out the same {@code IStorageChannel} objects it had when we registered: it
+     * is rebuilt on side changes. A stale identity match answers "I do not serve that channel" for every channel
+     * at once, which makes the cell invisible to the ME network -- the terminal lists nothing and accepts
+     * nothing, and the cell in a drive shows 0 bytes/types (sensei's BUG1/BUG2, 2026-10-03).
+     *
+     * <p>That is exactly what began when this map lookup replaced the live {@code channel != itemChannel()}
+     * comparison in the fluid commit {@code a8d7baf}: a live comparison can never go stale, a cached key can.
+     */
     public static synchronized CellChannel<?> byStorage(IStorageChannel<?> storage) {
-        return storage == null ? null : BY_STORAGE.get(storage);
+        if (storage == null) {
+            return null;
+        }
+        CellChannel<?> direct = BY_STORAGE.get(storage);
+        if (direct != null) {
+            return direct;
+        }
+        for (CellChannel<?> adapter : BY_STORAGE.values()) {
+            IStorageChannel<?> registered = adapter.storage();
+            if (registered != null && registered.getClass() == storage.getClass()) {
+                return adapter;
+            }
+        }
+        return null;
     }
 
     public static synchronized List<CellChannel<?>> all() {
