@@ -494,14 +494,16 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             }
             case 2: {
                 // EVERYTHING that can hand items out has to be listed here, or the terminal shows nothing
-                // even though extraction works. That covers four separate sources, and missing any of them
+                // even though extraction works. That covers three separate sources, and missing any of them
                 // makes items invisible in the terminal:
                 //   * wl  -- the whitelist, which is what the panel's "mark infinite" and a JEI drag add to
                 //   * ul  -- the infinite set written by promotion and by togglePanelInfinite
-                //   * ca  -- the committed-amount map; a rule promotion writes ca WITHOUT touching ul
-                //   * the rules themselves -- an Instant rule must show up before anything is ever stored
-                // (Bugs found by sensei 2026-10-02: first wl and ca were missing; then rule matches were,
-                // which made "Instant" indistinguishable from "Touch" from the player's side.)
+                //   * the rules themselves -- an Instant rule must show up before anything is ever stored,
+                //     and a Touch rule has to show the item it took in (touched)
+                // (Bugs found by sensei 2026-10-02: first wl was missing; then rule matches were, which made
+                // "Instant" indistinguishable from "Touch" from the player's side. 2026-10-03: ca is NOT a
+                // source -- it is only the absorbed-amount record, and listing it made a rule-released item
+                // show as infinite while extraction returned nothing.)
                 Set<IAEItemStack> infinite = infiniteKeys();
                 reportInfinite(out, infinite);
                 // Finite rows must not land on top of a key that is already infinite -- in this cell or in
@@ -1155,9 +1157,21 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return false;
     }
 
+    /**
+     * Why a rule match must NOT be listed as infinite.
+     *
+     * <p>The list has to mirror exactly what extraction does, which is {@link #ruleActive}: blacklist,
+     * quantity lock and "the key is currently in the finite store" veto a rule on both sides.
+     *
+     * <p>{@code ca} is deliberately absent. It records a rule hit's absorbed amount, so a Touch rule's own
+     * item carries a ca entry -- vetoing on ca made the rule hide the very item it had just taken in, and
+     * with ca no longer being listed as a source (2026-10-03 bug 2) that item disappeared from the terminal
+     * entirely. wl/ul stay in the list only as harmless deduplication: those keys are listed by
+     * {@link #infiniteKeys} anyway.
+     */
     private boolean ruleListingVetoed(IAEItemStack key) {
         return data.blacklist.contains(key) || data.qtyLocked.contains(key) || data.s2.containsKey(key)
-                || data.wl.contains(key) || data.ul.contains(key) || data.ca.containsKey(key);
+                || data.wl.contains(key) || data.ul.contains(key);
     }
 
     /**
