@@ -403,6 +403,7 @@ public class CommandCellSelfTest extends CommandBase {
         runPanelChannelGroup(sender);
         runChannelCompletenessGroup(sender);
         runSharedSettingsGroup(sender);
+        runDrivePathGroup(sender);
         runOptionalChannelGroups(sender);
 
         finish(sender);
@@ -1640,6 +1641,90 @@ public class CommandCellSelfTest extends CommandBase {
                         && freshView.getThreshold() == 4242L,
                 "2/3/4242", freshView == null ? "null" : freshView.getMode() + "/" + freshView.getWorkMode()
                         + "/" + freshView.getThreshold());
+    }
+    /**
+     * T group: the path the DRIVE actually uses.
+     *
+     * <p>Every earlier group built a cell inventory directly. A drive goes through the cell registry instead
+     * ({@code AEApi...registries().cell().getCellInventory(stack, provider, channel)} -> handler -> getCellInv()),
+     * which is where sensei's BUG1/BUG2 of 2026-10-03 showed up ("the terminal shows one storage type or nothing
+     * and nothing can be inserted"). This walks that exact path for every registered channel.
+     */
+    private void runDrivePathGroup(ICommandSender sender) {
+        ItemStack cell = cellWithUuid(testUuid("t1"));
+        UnlimitedCellInventory direct = new UnlimitedCellInventory(cell, null);
+        wipe(direct);
+        direct.setMode(1);
+
+        java.util.List<com.ae2addon.cell.CellChannel<?>> channels =
+                new java.util.ArrayList<>(com.ae2addon.cell.CellChannelRegistry.all());
+        StringBuilder detail = new StringBuilder();
+        int listed = 0;
+        for (com.ae2addon.cell.CellChannel<?> channel : channels) {
+            com.ae2addon.cell.ChannelCellCore<?> core = CellInventories.open(cell, null, channel.id());
+            String note;
+            try {
+                ICellInventoryHandler<?> handler = cellHandlerFor(cell, channel);
+                if (handler == null || handler.getCellInv() == null) {
+                    note = channel.id() + "=noHandler";
+                } else {
+                    // The handler's own inventory must answer with rows for its channel in mode 3.
+                    core.setMode(3);
+                    int rows = core.listedRowCount();
+                    int keys = channel.allKeys().size();
+                    if (rows == keys && rows > 0) {
+                        listed++;
+                    }
+                    note = channel.id() + "=" + rows + "/" + keys + (rows == keys ? " " : "! ");
+                }
+            } catch (RuntimeException | LinkageError failed) {
+                note = channel.id() + "=EX:" + failed.getClass().getSimpleName();
+            }
+            detail.append(note);
+            core.setMode(1);
+        }
+        check(sender, "T1", "★ 走驱动器那条路（元件注册表→handler→getCellInv）逐通道 mode3 列表，无异常且完整",
+                listed == channels.size() && !channels.isEmpty(), "所有通道都 full",
+                detail.toString().trim());
+
+        // T2: and the same path must accept an insert in mode 1 for every channel
+        StringBuilder inserted = new StringBuilder();
+        int accepted = 0;
+        for (com.ae2addon.cell.CellChannel<?> channel : channels) {
+            com.ae2addon.cell.ChannelCellCore<?> core = CellInventories.open(cell, null, channel.id());
+            core.setMode(1);
+            try {
+                ICellInventoryHandler<?> handler = cellHandlerFor(cell, channel);
+                if (handler != null && handler.getCellInv() != null) {
+                    // Inject a plain "one key" of that channel through the handler's inventory.
+                    appeng.api.storage.data.IAEStack<?> key = channel.allKeys().isEmpty() ? null : channel.allKeys().get(0);
+                    if (key != null) {
+                        appeng.api.storage.data.IAEStack<?> one = key.copy();
+                        one.setStackSize(100);
+                        appeng.api.storage.data.IAEStack left = injectUntyped(handler, one);
+                        long stored = core.storedAmountOf(key) == null ? -1L : core.storedAmountOf(key).longValue();
+                        if (left == null && stored == 100L) {
+                            accepted++;
+                        }
+                        inserted.append(channel.id()).append("=").append(stored).append(left == null ? " " : "! ");
+                    } else {
+                        inserted.append(channel.id()).append("=noKey ");
+                    }
+                } else {
+                    inserted.append(channel.id()).append("=noHandler ");
+                }
+            } catch (RuntimeException | LinkageError failed) {
+                inserted.append(channel.id()).append("=EX:").append(failed.getClass().getSimpleName()).append(" ");
+            }
+        }
+        check(sender, "T2", "★ 同一条路逐通道 mode1 存入 100 个键：都被接受且读数为 100",
+                accepted == channels.size(), "所有通道都接受", inserted.toString().trim());
+    }
+
+    /** Injects through a handler whose key type we deliberately do not name (raw on purpose). */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static appeng.api.storage.data.IAEStack injectUntyped(ICellInventoryHandler handler, appeng.api.storage.data.IAEStack key) {
+        return handler.getCellInv().injectItems(key, Actionable.MODULATE, NO_SOURCE);
     }
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
     private static String firstOreName(ItemStack definition) {

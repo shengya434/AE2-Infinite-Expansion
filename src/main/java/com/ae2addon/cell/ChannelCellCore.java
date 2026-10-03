@@ -186,6 +186,9 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         if (worldData == null) {
             // Client side, or no world yet. Never mutate in this state; reads simply come up empty
             // (the terminal gets its numbers from the server anyway).
+            // Still mirror the settings the cell item carries: a client-side view (the drive draws its LEDs on
+            // the client too) must show the same mode/threshold as the server instead of defaulting to mode 1.
+            data.seedSettingsIfAbsent(nbtMode, nbtWorkMode, nbtThreshold);
             if (v1Payload != null) {
                 migrateV1(v1Payload, data);
                 writeSmallFields();
@@ -243,6 +246,14 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     }
 
     private void writeSmallFields() {
+        if (CellWorldData.get() == null) {
+            // No authoritative data (client side, or no world yet): this instance holds a DETACHED, empty
+            // CellStorageData, so writing it would stamp "0 bytes / 0 types" onto the cell item and the tooltip
+            // would lie until the server happens to write again -- that was sensei's BUG2 of 2026-10-03 ("the
+            // cell in the drive shows 0 bytes/types; opening the config panel restores them"). The cell item's
+            // NBT copy belongs to the server, which always has the world data.
+            return;
+        }
         NBTTagCompound root = new NBTTagCompound();
         root.setInteger(NBT_VERSION, FORMAT_VERSION);
         root.setInteger(NBT_MODE, mode());
