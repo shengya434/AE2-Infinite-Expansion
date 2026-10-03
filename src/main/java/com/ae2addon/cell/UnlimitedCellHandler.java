@@ -60,6 +60,20 @@ public class UnlimitedCellHandler implements ICellHandler {
     @Override
     public <T extends IAEStack<T>> ICellInventoryHandler<T> getCellInventory(ItemStack stack, ISaveProvider saveProvider,
             IStorageChannel<T> channel) {
+        try {
+            return buildCellInventory(stack, saveProvider, channel);
+        } catch (RuntimeException | LinkageError failed) {
+            // AE2's drive iterates EVERY registered channel for each slot and gives up on that slot as soon as a
+            // handler throws, so one throwing channel hides all the ones after it -- exactly the "the terminal
+            // only shows one storage type" symptom (sensei BUG1, 2026-10-03). Never let that happen silently.
+            AE2Addon.LOG.error("[ae2addon] 构造通道视图时抛异常 channel=" + (channel == null ? "null"
+                    : channel.getClass().getName()) + " provider=" + (saveProvider != null), failed);
+            return null;
+        }
+    }
+
+    private <T extends IAEStack<T>> ICellInventoryHandler<T> buildCellInventory(ItemStack stack,
+            ISaveProvider saveProvider, IStorageChannel<T> channel) {
         if (!isCell(stack)) {
             return null;
         }
@@ -69,7 +83,7 @@ public class UnlimitedCellHandler implements ICellHandler {
         // Temporary probe for BUG1/BUG2 (2026-10-03): shows exactly which channels the drive/network asks us for,
         // and whether the stack it hands us still carries our NBT. Throttled, because a grid rebuild can call this
         // thousands of times per second.
-        probe("问通道=" + (adapter == null ? "未知" : adapter.id()) + " provider=" + (saveProvider != null)
+        probe("问通道=" + (adapter == null ? ("未知(" + (channel == null ? "null" : channel.getClass().getName()) + ")") : adapter.id()) + " provider=" + (saveProvider != null)
                 + " nbt=" + (stack.getTagCompound() == null ? "无" : stack.getTagCompound().getKeySet()));
         if (adapter == ItemCellChannel.INSTANCE) {
             return new BasicCellInventoryHandler<>(new UnlimitedCellInventory(stack, saveProvider), channel);
