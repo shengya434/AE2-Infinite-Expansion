@@ -19,12 +19,9 @@ import appeng.api.networking.security.IActionSource;
 import appeng.api.storage.ICellInventory;
 import appeng.api.storage.ISaveProvider;
 import appeng.api.storage.IStorageChannel;
-import appeng.api.storage.channels.IItemStorageChannel;
 import appeng.api.storage.data.IAEItemStack;
 import appeng.api.storage.data.IItemList;
 import appeng.util.Platform;
-import appeng.util.item.AEItemStack;
-import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -86,6 +83,16 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
     private final ISaveProvider container;
     private final IStorageChannel<IAEItemStack> channel;
 
+    /**
+     * The channel adapter: the ONLY place the judgement layer asks channel-specific questions (how to read a
+     * key from NBT, what the whole registry holds, namespace, extra data, ore names, display name).
+     *
+     * <p>P4 step 1 (2026-10-03): this class still speaks {@code IAEItemStack} everywhere, but every
+     * item-specific call now goes through the adapter, so making it generic over {@code IAEStack<T>} later is
+     * a mechanical change instead of a rewrite. The adapter interface is already generic.
+     */
+    private final CellChannel<IAEItemStack> cellChannel;
+
     private int mode = 1;
     private int workMode = 1;
     private long threshold = DEFAULT_THRESHOLD;
@@ -102,15 +109,21 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
     private final IItemHandler upgradesInventory = new ItemStackHandler(0);
 
     public UnlimitedCellInventory(ItemStack cellStack, ISaveProvider container) {
+        this(cellStack, container, ItemCellChannel.INSTANCE);
+    }
+
+    public UnlimitedCellInventory(ItemStack cellStack, ISaveProvider container,
+            CellChannel<IAEItemStack> cellChannel) {
         this.cellStack = cellStack;
         this.container = container;
-        this.channel = itemChannel();
+        this.cellChannel = cellChannel;
+        this.channel = cellChannel.storage();
         NBTTagCompound v1Payload = loadSmallFields();
         attachStorage(v1Payload);
     }
 
     public static IStorageChannel<IAEItemStack> itemChannel() {
-        return AEApi.instance().storage().getStorageChannel(IItemStorageChannel.class);
+        return ItemCellChannel.INSTANCE.storage();
     }
 
     // ------------------------------------------------------------------
@@ -182,7 +195,7 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
                 if (!entry.hasKey(NBT_KEY, 10)) {
                     continue;
                 }
-                IAEItemStack key = AEItemStack.fromNBT(entry.getCompoundTag(NBT_KEY));
+                IAEItemStack key = cellChannel.readNbt(entry.getCompoundTag(NBT_KEY));
                 if (key == null) {
                     continue;
                 }
@@ -584,6 +597,14 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return key;
     }
 
+    /**
+     * Identity normalisation for channel adapters (they deduplicate their registry scans with it). Same
+     * guarantee as the internal {@link #lookupKey}: copy, size forced to 1.
+     */
+    public static IAEItemStack lookupKeyOf(IAEItemStack input) {
+        return lookupKey(input);
+    }
+
     private static long clamp(BigInteger value) {
         if (value == null || value.signum() <= 0) {
             return 0L;
@@ -979,54 +1000,19 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         saveChanges();
     }
 
-    private static boolean hasTag(IAEItemStack key) {
-        ItemStack def = key.getDefinition();
-        return def != null && !def.isEmpty() && def.hasTagCompound();
-    }
-
-    private static String namespaceOf(IAEItemStack key) {
-        ItemStack def = key.getDefinition();
-        if (def == null || def.isEmpty()) {
-            return null;
-        }
-        net.minecraft.util.ResourceLocation id = def.getItem().getRegistryName();
-        return id == null ? null : id.getNamespace();
-    }
-
     /** NBT variants never participate in rules (1.20 L1023-1028 records why they must not). */
     private boolean matchesRule(IAEItemStack key) {
         if (data.oreRules.isEmpty() && data.modRules.isEmpty()) {
             return false;
         }
-        if (hasTag(key)) {
+        if (cellChannel.hasExtraData(key)) {
             return false;
         }
-        String namespace = namespaceOf(key);
+        String namespace = cellChannel.namespace(key);
         if (namespace != null && data.modRules.contains(namespace)) {
             return true;
         }
-        return matchesAnyOre(key);
-    }
-
-    private boolean matchesAnyOre(IAEItemStack key) {
-        if (data.oreRules.isEmpty()) {
-            return false;
-        }
-        ItemStack def = key.getDefinition();
-        if (def == null || def.isEmpty()) {
-            return false;
-        }
-        int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(def);
-        if (ids == null) {
-            return false;
-        }
-        for (int id : ids) {
-            String ore = net.minecraftforge.oredict.OreDictionary.getOreName(id);
-            if (ore != null && data.oreRules.contains(ore)) {
-                return true;
-            }
-        }
-        return false;
+        return !cellChannel.matchedOreRules(key, data.oreRules).isEmpty();
     }
 
     /** Instant rules allow infinity immediately; Touch rules need the key to have been stored. */
@@ -1035,12 +1021,12 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             return false;
         }
         IAEItemStack k = lookupKey(key);
-        if (hasTag(k)) {
+        if (cellChannel.hasExtraData(k)) {
             return false;
         }
         boolean matched = false;
 
-        String namespace = namespaceOf(k);
+        String namespace = cellChannel.namespace(k);
         if (namespace != null && data.modRules.contains(namespace)) {
             if (getRuleMode(ruleKey(false, namespace)) == 1) {
                 return true;
@@ -1048,20 +1034,13 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             matched = true;
         }
 
-        ItemStack def = k.getDefinition();
-        if (def != null && !def.isEmpty()) {
-            int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(def);
-            if (ids != null) {
-                for (int id : ids) {
-                    String ore = net.minecraftforge.oredict.OreDictionary.getOreName(id);
-                    if (ore != null && data.oreRules.contains(ore)) {
-                        if (getRuleMode(ruleKey(true, ore)) == 1) {
-                            return true;
-                        }
-                        matched = true;
-                    }
-                }
+        // Ore rules are item-only by decision (2026-10-03): every other channel's adapter answers with an
+        // empty set, so this loop also encodes "no ore names -> no ore rules".
+        for (String ore : cellChannel.matchedOreRules(k, data.oreRules)) {
+            if (getRuleMode(ruleKey(true, ore)) == 1) {
+                return true;
             }
+            matched = true;
         }
         return matched && data.touched.contains(k);
     }
@@ -1139,25 +1118,16 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
 
     /** Pure rule test: does any rule matching this key run in Instant mode? Blacklist is applied later. */
     private boolean matchesInstantRule(IAEItemStack key) {
-        if (data.oreRules.isEmpty() && data.modRules.isEmpty() || hasTag(key)) {
+        if (data.oreRules.isEmpty() && data.modRules.isEmpty() || cellChannel.hasExtraData(key)) {
             return false;
         }
-        String namespace = namespaceOf(key);
+        String namespace = cellChannel.namespace(key);
         if (namespace != null && data.modRules.contains(namespace)
                 && getRuleMode(ruleKey(false, namespace)) == 1) {
             return true;
         }
-        ItemStack def = key.getDefinition();
-        if (def == null || def.isEmpty()) {
-            return false;
-        }
-        int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(def);
-        if (ids == null) {
-            return false;
-        }
-        for (int id : ids) {
-            String ore = net.minecraftforge.oredict.OreDictionary.getOreName(id);
-            if (ore != null && data.oreRules.contains(ore) && getRuleMode(ruleKey(true, ore)) == 1) {
+        for (String ore : cellChannel.matchedOreRules(key, data.oreRules)) {
+            if (getRuleMode(ruleKey(true, ore)) == 1) {
                 return true;
             }
         }
@@ -1225,101 +1195,14 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return found;
     }
 
-    /**
-     * Canonical key for every registered item, <b>metadata variants included</b>, no NBT.
-     *
-     * <p>Meta 0 alone is not enough: a pack registers one Item with many metas and nothing else distinguishes
-     * them. Mekanism CE's {@code ItemIngot} implements {@code IMetaItem}, so refined obsidian and osmium share
-     * one item id and differ only by meta -- scanning just {@code new ItemStack(item)} made an Instant rule
-     * infinite for the first meta of such a sequence and left every other meta Touch-only. That is
-     * 2026-10-03 bug 3 (sensei: "立即无限只会无限某一序列号的第一位物品").
-     *
-     * <p>So every item is asked for its sub-items the way the creative inventory does it
-     * ({@code Item#getSubItems}). {@code CreativeTabs.displayAllRelevantItems} is deliberately not used: it
-     * is client-only, and this scan also runs on the server. Items that refuse to answer fall back to
-     * meta 0, and a mod whose getSubItems throws cannot kill the scan.
-     *
-     * <p>Tagged stacks are skipped on purpose: the canonical key is (item, meta, no NBT) -- the rule
-     * predicate cannot speak about NBT variants, and mode 3 reports the ones we have actually seen (m3)
-     * separately.
-     *
-     * <p>The whole scan is cached forever: the item registry is frozen once the game has loaded.
-     */
-    private transient List<IAEItemStack> registryKeyCache = null;
-
+    /** Every key this channel can ever hand out (mode 3 listing / Instant-rule scan). Read-only. */
     private List<IAEItemStack> allRegistryKeys() {
-        if (registryKeyCache != null) {
-            return registryKeyCache;
-        }
-        List<IAEItemStack> found = new ArrayList<>();
-        Set<IAEItemStack> seen = new LinkedHashSet<>();
-        for (net.minecraft.util.ResourceLocation id : net.minecraft.item.Item.REGISTRY.getKeys()) {
-            Item item = net.minecraft.item.Item.REGISTRY.getObject(id);
-            // minecraft:air is IN the item registry, and new ItemStack(air) is an EMPTY stack, for which
-            // AEItemStack.fromItemStack returns null -- that NPE'd the whole server tick loop on 2026-10-02
-            // (thrown from here, via getAvailableItems <- TileDrive.recalculateDisplay). Skip it, and skip
-            // anything else that cannot produce a key, instead of trusting every registry entry to be
-            // convertible.
-            if (item == null || item == net.minecraft.init.Items.AIR) {
-                continue;
-            }
-            for (ItemStack def : subItemStacks(item)) {
-                IAEItemStack key = AEItemStack.fromItemStack(def);
-                if (key == null) {
-                    continue;
-                }
-                if (seen.add(lookupKey(key))) {
-                    found.add(key);
-                }
-            }
-        }
-        registryKeyCache = found;
-        return found;
+        return cellChannel.allKeys();
     }
 
-    /** Every stack this item offers to the creative inventory, meta 0 when it will not answer. */
-    private static List<ItemStack> subItemStacks(Item item) {
-        List<ItemStack> out = new ArrayList<>();
-        collectSubItems(item, net.minecraft.creativetab.CreativeTabs.SEARCH, out);
-        // Mods that gate their variants on their own tab rather than going through isInCreativeTab only
-        // answer for that tab, so ask those too.
-        net.minecraft.creativetab.CreativeTabs[] tabs = item.getCreativeTabs();
-        if (tabs != null) {
-            for (net.minecraft.creativetab.CreativeTabs tab : tabs) {
-                collectSubItems(item, tab, out);
-            }
-        }
-        if (out.isEmpty()) {
-            out.add(new ItemStack(item));
-        }
-        return out;
-    }
-
-    private static void collectSubItems(Item item, net.minecraft.creativetab.CreativeTabs tab,
-            List<ItemStack> out) {
-        if (tab == null) {
-            return;
-        }
-        try {
-            net.minecraft.util.NonNullList<ItemStack> sub = net.minecraft.util.NonNullList.create();
-            item.getSubItems(tab, sub);
-            for (ItemStack stack : sub) {
-                if (stack == null || stack.isEmpty() || stack.getItem() == net.minecraft.init.Items.AIR
-                        || stack.hasTagCompound()) {
-                    continue;
-                }
-                out.add(stack);
-            }
-        } catch (Throwable t) {
-            // One bad mod must not cost us the whole scan: fall back to whatever else answered (meta 0 at
-            // the very least).
-            AE2Addon.LOG.warn("[ae2addon] {} 的 getSubItems 失败，跳过该来源：{}", item.getRegistryName(), t);
-        }
-    }
-
-    /** How many canonical keys the item registry yields (for the self-test's report). */
+    /** How many canonical keys this channel's registry yields (for the self-test's report). */
     public int registryKeyCount() {
-        return allRegistryKeys().size();
+        return cellChannel.allKeys().size();
     }
 
     // ------------------------------------------------------------------
