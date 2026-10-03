@@ -1396,6 +1396,18 @@ public class CommandCellSelfTest extends CommandBase {
             sender.sendMessage(new TextComponentString(
                     "[ae2addon] 跳过 N 组：没装源质通道（Thaumic Energistics）"));
         }
+        if (com.ae2addon.cell.mana.ManaChannelDoor.isLoaded()) {
+            com.ae2addon.cell.mana.ManaChannelSelfTest.run(sender, this);
+        } else {
+            sender.sendMessage(new TextComponentString(
+                    "[ae2addon] 跳过 O 组：没装法力通道（Botania Applie）"));
+        }
+        if (com.ae2addon.cell.flux.FluxChannelDoor.isLoaded()) {
+            com.ae2addon.cell.flux.FluxChannelSelfTest.run(sender, this);
+        } else {
+            sender.sendMessage(new TextComponentString(
+                    "[ae2addon] 跳过 P 组：没装能量通道（Flux Applied）"));
+        }
     }
 
     /** Reporting bridge for the optional-channel groups, which live in their own (lazily loaded) class. */

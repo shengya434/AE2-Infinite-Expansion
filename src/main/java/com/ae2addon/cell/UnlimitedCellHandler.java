@@ -32,6 +32,8 @@ public class UnlimitedCellHandler implements ICellHandler {
         // the mod list unless the bridge mod is actually there.
         com.ae2addon.cell.gas.GasChannelDoor.register();
         com.ae2addon.cell.essentia.EssentiaChannelDoor.register();
+        com.ae2addon.cell.mana.ManaChannelDoor.register();
+        com.ae2addon.cell.flux.FluxChannelDoor.register();
         AE2Addon.LOG.info("[ae2addon] 无限存储元件的 ICellHandler 已注册");
     }
 
@@ -67,6 +69,14 @@ public class UnlimitedCellHandler implements ICellHandler {
             return optional;
         }
         optional = com.ae2addon.cell.essentia.EssentiaChannelDoor.tryBuild(stack, saveProvider, channel);
+        if (optional != null) {
+            return optional;
+        }
+        optional = com.ae2addon.cell.mana.ManaChannelDoor.tryBuild(stack, saveProvider, channel);
+        if (optional != null) {
+            return optional;
+        }
+        optional = com.ae2addon.cell.flux.FluxChannelDoor.tryBuild(stack, saveProvider, channel);
         if (optional != null) {
             return optional;
         }
