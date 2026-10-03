@@ -8,7 +8,7 @@ import appeng.api.storage.ICellHandler;
 import appeng.api.storage.ICellInventoryHandler;
 import appeng.api.storage.ISaveProvider;
 import appeng.api.storage.IStorageChannel;
-import appeng.api.storage.data.IAEItemStack;
+import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEStack;
 import appeng.me.storage.BasicCellInventoryHandler;
 import net.minecraft.item.ItemStack;
@@ -42,13 +42,22 @@ public class UnlimitedCellHandler implements ICellHandler {
         if (!isCell(stack)) {
             return null;
         }
-        // One handler per channel: rv6 asks per channel, so a future fluid/gas cell registers its own.
-        if (channel != (IStorageChannel<?>) UnlimitedCellInventory.itemChannel()) {
-            return null;
+        // rv6 asks ONE CHANNEL AT A TIME, and the same universal cell answers for each channel it speaks:
+        // that is what makes "one cell, every storage type" possible without AE2 knowing about it.
+        CellChannel<?> adapter = CellChannelRegistry.byStorage(channel);
+        if (adapter == ItemCellChannel.INSTANCE) {
+            return new BasicCellInventoryHandler<>(new UnlimitedCellInventory(stack, saveProvider), channel);
         }
-        // BasicCellInventoryHandler is AE2's own wrapper (CreativeCellInventory uses it too). Handing it a
-        // real ICellInventory is what makes getCellInv() non-null -- which is what the Drive's status LED,
-        // the upgrade-card scan and the partition list all depend on.
-        return new BasicCellInventoryHandler<>(new UnlimitedCellInventory(stack, saveProvider), channel);
+        if (adapter == FluidCellChannel.INSTANCE) {
+            @SuppressWarnings("unchecked")
+            IStorageChannel<IAEFluidStack> fluidChannel = (IStorageChannel<IAEFluidStack>) channel;
+            @SuppressWarnings("unchecked")
+            ICellInventoryHandler<T> handler = (ICellInventoryHandler<T>) new BasicCellInventoryHandler<>(
+                    new FluidCellInventory(stack, saveProvider), fluidChannel);
+            return handler;
+        }
+        // A channel we know about but have no inventory for yet (or one another mod owns): answer nothing
+        // rather than guessing, so AE2 simply skips this cell for that channel.
+        return null;
     }
 }

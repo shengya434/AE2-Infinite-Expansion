@@ -8,6 +8,9 @@ import java.util.UUID;
 
 import com.ae2addon.AE2Addon;
 import com.ae2addon.cell.CellChannelRegistry;
+import com.ae2addon.cell.ChannelCellCore;
+import com.ae2addon.cell.FluidCellChannel;
+import com.ae2addon.cell.FluidCellInventory;
 import com.ae2addon.cell.CellStorageData;
 import com.ae2addon.cell.UnlimitedCellInventory;
 import com.ae2addon.data.CellWorldData;
@@ -21,7 +24,9 @@ import appeng.api.storage.ICellInventory;
 import appeng.api.storage.ICellInventoryHandler;
 import appeng.api.storage.IStorageChannel;
 import appeng.api.storage.channels.IItemStorageChannel;
+import appeng.api.storage.data.IAEFluidStack;
 import appeng.api.storage.data.IAEItemStack;
+import appeng.fluids.util.AEFluidStack;
 import appeng.api.storage.data.IItemList;
 import appeng.util.item.AEItemStack;
 import net.minecraft.command.CommandBase;
@@ -34,6 +39,9 @@ import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraftforge.fluids.Fluid;
+import net.minecraftforge.fluids.FluidRegistry;
+import net.minecraftforge.fluids.FluidStack;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.text.TextComponentString;
 
@@ -388,6 +396,7 @@ public class CommandCellSelfTest extends CommandBase {
         runListingIntegrityGroup(sender);
         runBigQuantityGroup(sender);
         runSaveFormatGroup(sender);
+        runFluidChannelGroup(sender);
 
         finish(sender);
     }
@@ -485,9 +494,12 @@ public class CommandCellSelfTest extends CommandBase {
     }
 
     private static void wipe(CellStorageData data) {
-        data.stocks(CellChannelRegistry.ITEM).s1.clear();
-        data.stocks(CellChannelRegistry.ITEM).s2.clear();
-        data.stocks(CellChannelRegistry.ITEM).ca.clear();
+        // Every channel's counts: "storage separate, settings shared" means a wipe has to walk them all.
+        for (java.util.Map.Entry<String, CellStorageData.Stocks> entry : data.allStocks().entrySet()) {
+            entry.getValue().s1.clear();
+            entry.getValue().s2.clear();
+            entry.getValue().ca.clear();
+        }
         data.itemThr.clear();
         data.wl.clear();
         data.ul.clear();
@@ -1249,6 +1261,121 @@ public class CommandCellSelfTest extends CommandBase {
         entry.setTag("k", keyTag);
         entry.setString("n", count);
         return entry;
+    }
+    /**
+     * L group: the FLUID channel -- the first channel added on top of the item channel (P4).
+     *
+     * <p>What has to hold for "one cell, every storage type": the fluid channel enumerates its own registry,
+     * mod rules reach it, ore rules do NOT (1.12.2 has no fluid ore dictionary), the two channels keep
+     * separate counts on the SAME cell while sharing the settings, and mode 3 stays affordable.
+     */
+    private void runFluidChannelGroup(ICommandSender sender) {
+        IStorageChannel<IAEFluidStack> fluidChannel = FluidCellChannel.INSTANCE.storage();
+        IAEFluidStack water = fluidKey(FluidRegistry.WATER);
+
+        // L1: mode 3 lists every registered fluid as infinite, and the reported type count agrees with it
+        FluidCellInventory l1 = newFluidInventory("l1");
+        l1.setMode(3);
+        IItemList<IAEFluidStack> l1list = fluidChannel.createList();
+        l1.getAvailableItems(l1list);
+        int registered = FluidRegistry.getRegisteredFluids().size();
+        boolean l1allInfinite = true;
+        for (IAEFluidStack listed : l1list) {
+            if (listed.getStackSize() != ChannelCellCore.INFINITE) {
+                l1allInfinite = false;
+                break;
+            }
+        }
+        check(sender, "L1", "流体通道 mode3：列出全部注册流体且都算无限，类型数与条数一致",
+                l1list.size() == registered && registered > 5 && l1allInfinite
+                        && l1.getStoredItemTypes() == l1list.size(),
+                "=" + registered + "/全无限/types=list",
+                "listed=" + l1list.size() + " types=" + l1.getStoredItemTypes() + " all=" + l1allInfinite);
+
+        // L2: a mod rule reaches fluids too. Water is named "water" with no namespace, so this only works
+        // because the adapter maps a missing colon to minecraft.
+        FluidCellInventory l2 = newFluidInventory("l2");
+        l2.setMode(2);
+        l2.setWorkMode(1);
+        l2.addModRule("minecraft");
+        boolean l2rule = l2.isInfiniteByRule(water);
+        long l2listed = fluidListedSize(l2, water);
+        check(sender, "L2", "★ 模组规则 minecraft 命中水（无命名空间的流体按 minecraft 算）",
+                l2rule && l2listed == ChannelCellCore.INFINITE, "true/infinite", l2rule + "/" + l2listed);
+
+        // L3: ore rules must not reach fluids
+        FluidCellInventory l3 = newFluidInventory("l3");
+        l3.setMode(2);
+        l3.setWorkMode(1);
+        l3.addOreRule("ingotIron");
+        long l3listed = fluidListedSize(l3, water);
+        check(sender, "L3", "★ 矿词规则对流体无效（没有流体矿物词典，规则只对物品生效）",
+                l3listed == -1L && !l3.isInfiniteByRule(water), "-1/false",
+                l3listed + "/" + l3.isInfiniteByRule(water));
+
+        // L4: the SAME cell holds both -- separate counts, shared settings
+        ItemStack shared = cellWithUuid(testUuid("l4"));
+        UnlimitedCellInventory l4items = new UnlimitedCellInventory(shared, null);
+        wipe(l4items);
+        FluidCellInventory l4fluids = new FluidCellInventory(shared, null);
+        l4items.setMode(1);
+        l4items.injectItems(stack(Items.STICK, 1000L), Actionable.MODULATE, NO_SOURCE);
+        l4fluids.injectItems(fluidStack(FluidRegistry.WATER, 500), Actionable.MODULATE, NO_SOURCE);
+        long l4itemCount = l4items.getStoredItemCount();
+        long l4fluidCount = l4fluids.getStoredItemCount();
+        boolean l4shared = l4items.getMode() == 1 && l4fluids.getMode() == 1;
+        check(sender, "L4", "★ 同一只元件：物品与流体的存量互不干扰，但设置（模式）是共享的",
+                l4itemCount == 1000L && l4fluidCount == 500L && l4shared,
+                "1000/500/true", l4itemCount + "/" + l4fluidCount + "/" + l4shared);
+
+        // L5: the threshold counts millibuckets, so 1000 mB (one bucket) can promote a fluid
+        FluidCellInventory l5 = newFluidInventory("l5");
+        l5.setMode(2);
+        l5.setWorkMode(1);
+        l5.setThreshold(1000L);
+        l5.injectItems(fluidStack(FluidRegistry.WATER, 999), Actionable.MODULATE, NO_SOURCE);
+        boolean l5before = l5.isInfinite(water);
+        l5.injectItems(fluidStack(FluidRegistry.WATER, 1), Actionable.MODULATE, NO_SOURCE);
+        boolean l5after = l5.isInfinite(water);
+        check(sender, "L5", "流体阈值按 mB 计：存 999 mB 不升级、再存 1 mB（共 1000）升级为无限",
+                !l5before && l5after, "false/true", l5before + "/" + l5after);
+
+        // L6: what mode 3 costs for fluids -- measured, like the item channel's H2
+        IItemList<IAEFluidStack> cold = fluidChannel.createList();
+        long coldStart = System.nanoTime();
+        l1.getAvailableItems(cold);
+        long coldNanos = System.nanoTime() - coldStart;
+        IItemList<IAEFluidStack> warm = fluidChannel.createList();
+        long warmStart = System.nanoTime();
+        l1.getAvailableItems(warm);
+        long warmNanos = System.nanoTime() - warmStart;
+        sender.sendMessage(new TextComponentString(String.format(
+                "[ae2addon] [L6] 流体 mode3 列出 %d 个键：冷 %.1f ms（含一次性注册表扫描）/ 热 %.2f ms",
+                warm.size(), coldNanos / 1e6, warmNanos / 1e6)));
+        check(sender, "L6", "流体 mode3 热重建 < 50 ms（超了就该退回按需列出）",
+                warmNanos < 50_000_000L, "<50ms", String.format("%.2f ms", warmNanos / 1e6));
+    }
+
+    private static FluidCellInventory newFluidInventory(String tag) {
+        FluidCellInventory inv = new FluidCellInventory(cellWithUuid(testUuid(tag)), null);
+        wipe(inv.rawData());
+        return inv;
+    }
+
+    private static IAEFluidStack fluidKey(Fluid fluid) {
+        return AEFluidStack.fromFluidStack(new FluidStack(fluid, 1));
+    }
+
+    private static IAEFluidStack fluidStack(Fluid fluid, int amount) {
+        return AEFluidStack.fromFluidStack(new FluidStack(fluid, amount));
+    }
+
+    /** Size the fluid terminal would see, or -1 when the cell does not list that fluid at all. */
+    private static long fluidListedSize(FluidCellInventory inv, IAEFluidStack key) {
+        IItemList<IAEFluidStack> list = FluidCellChannel.INSTANCE.storage().createList();
+        inv.getAvailableItems(list);
+        IAEFluidStack found = list.findPrecise(key);
+        return found == null ? -1L : found.getStackSize();
     }
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
     private static String firstOreName(ItemStack definition) {

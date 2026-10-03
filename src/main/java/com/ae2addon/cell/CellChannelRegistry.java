@@ -36,6 +36,8 @@ public final class CellChannelRegistry {
 
     static {
         register(ItemCellChannel.INSTANCE);
+        // Fluid is AE2-UEL's own second channel, so it is always available -- no bridge mod involved.
+        register(FluidCellChannel.INSTANCE);
     }
 
     private CellChannelRegistry() {
