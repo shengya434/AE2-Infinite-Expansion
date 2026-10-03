@@ -264,6 +264,12 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         // world save (cell data lives in CellWorldData, keyed by uuid, and is not available client-side).
         // Tag names match the 1.20 line ("_b2" byte array for BigInteger bytes, "_b" long compat, "_t" types).
         BigInteger summaryBytes = summaryBytes();
+        int summaryTypesProbe = (int) getStoredItemTypes();
+        if (summaryTypesProbe == 0 && summaryBytes.signum() == 0 && !stocks().isEmpty()) {
+            AE2Addon.LOG.warn("[ae2addon] DIAG 写入的摘要为 0，但本通道有数据：channel={} uuid={} mode={} s1={} s2={} ca={}",
+                    cellChannel.id(), uuid, mode(), stocks().s1.size(), stocks().s2.size(), stocks().ca.size());
+            new Throwable("谁在写 0 摘要").printStackTrace();
+        }
         root.setByteArray(NBT_SUMMARY_BYTES, summaryBytes.toByteArray());
         root.setLong(NBT_SUMMARY_BYTES_COMPAT, clamp(summaryBytes));
         root.setInteger(NBT_SUMMARY_TYPES, (int) getStoredItemTypes());

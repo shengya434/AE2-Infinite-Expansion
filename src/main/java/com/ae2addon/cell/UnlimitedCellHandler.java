@@ -51,6 +51,10 @@ public class UnlimitedCellHandler implements ICellHandler {
         // rv6 asks ONE CHANNEL AT A TIME, and the same universal cell answers for each channel it speaks:
         // that is what makes "one cell, every storage type" possible without AE2 knowing about it.
         CellChannel<?> adapter = CellChannelRegistry.byStorage(channel);
+        if (adapter != null && AE2Addon.LOG.isDebugEnabled()) {
+            AE2Addon.LOG.debug("[ae2addon] 被问通道 {}：provider={} nbt={}", adapter.id(), saveProvider != null,
+                    stack.getTagCompound());
+        }
         if (adapter == ItemCellChannel.INSTANCE) {
             return new BasicCellInventoryHandler<>(new UnlimitedCellInventory(stack, saveProvider), channel);
         }

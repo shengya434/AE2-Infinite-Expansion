@@ -221,10 +221,10 @@ public class CommandCell extends CommandBase {
             reply(sender, "  §c整个物品没有 NBT（= 从没被写过的元件）");
         } else {
             net.minecraft.nbt.NBTTagCompound itemTag = held.getTagCompound();
-            if (itemTag.hasKey("ae2addonCell", 10)) {
-                reply(sender, "  " + itemTag.getCompoundTag("ae2addonCell").toString());
+            if (itemTag.hasKey("ae2addon:cell", 10)) {
+                reply(sender, "  " + itemTag.getCompoundTag("ae2addon:cell").toString());
             } else {
-                reply(sender, "  §c没有 ae2addonCell 标签，实际标签: " + itemTag.getKeySet());
+                reply(sender, "  §c没有 ae2addon:cell 标签，实际标签: " + itemTag.getKeySet());
             }
         }
         UnlimitedCellInventory.Summary summary = UnlimitedCellInventory.summaryOf(held);
