@@ -275,20 +275,26 @@ public class CommandCellSelfTest extends CommandBase {
         check(sender, "B7", "mode3：从未存过的物品取 1000 → 成功", b7take == 1000L && b7before == 0L,
                 "1000/0", b7take + "/" + b7before);
 
-        // ---- B8: switching modes must not lose counts ----
+        // ---- B8: the three main modes are COMPLETELY ISOLATED stores (sensei's original spec, 2026-10-03) ----
+        // Before this date setMode() merged s1 into s2 (and back), so mode 1 showed mode 2's pile -- the modes
+        // behaved like one shared store. The merge is gone; this assertion pins both directions of isolation.
         UnlimitedCellInventory b8 = newInventory("b8");
         b8.setMode(1);
         b8.injectItems(stack(Items.STICK, 12345L), Actionable.MODULATE, NO_SOURCE);
-        long b8m1 = b8.storedAmount(stick).longValue();
+        long b8m1 = b8.getStoredItemCount();
         b8.setMode(2);
         b8.setThreshold(1000000L);
         b8.setWorkMode(1);
-        long b8m2 = b8.storedAmount(stick).longValue();
+        b8.injectItems(stack(Items.DIAMOND, 7L), Actionable.MODULATE, NO_SOURCE);
+        long b8m2 = b8.getStoredItemCount();
+        long b8m2stick = size(b8.extractItems(stack(Items.STICK, 1L), Actionable.MODULATE, NO_SOURCE));
         b8.setMode(1);
-        long b8back = b8.storedAmount(stick).longValue();
-        check(sender, "B8", "★ 模式切换不丢数：mode1→mode2→mode1 三次读数都是 12345",
-                b8m1 == 12345L && b8m2 == 12345L && b8back == 12345L, "12345/12345/12345",
-                b8m1 + "/" + b8m2 + "/" + b8back);
+        long b8back = b8.getStoredItemCount();
+        long b8backDiamond = size(b8.extractItems(stack(Items.DIAMOND, 1L), Actionable.MODULATE, NO_SOURCE));
+        check(sender, "B8", "★ 三种主模式存储完全隔离：mode1 的 12345 在 mode2 看不到也取不出，mode2 的 7 个钻石也不回流 mode1，各自切回原样",
+                b8m1 == 12345L && b8m2 == 7L && b8m2stick == -1L && b8back == 12345L && b8backDiamond == -1L,
+                "12345/7/null/12345/null",
+                b8m1 + "/" + b8m2 + "/" + b8m2stick + "/" + b8back + "/" + b8backDiamond);
 
         // ---- B9: cancel infinite gives the committed amount back ----
         UnlimitedCellInventory b9 = newInventory("b9");
@@ -354,6 +360,23 @@ public class CommandCellSelfTest extends CommandBase {
         int b11version = cell11.getTagCompound().getCompoundTag("ae2addon:cell").getInteger("v");
         check(sender, "B11", "★ v1(P1) 数据迁移：12345 进 mode1 存储，且版本升到 2",
                 b11stored == 12345L && b11version == 2, "12345/2", b11stored + "/" + b11version);
+
+        // ---- B12: mode 2's committed amount must never cross into mode 1's isolated room ----
+        // ca only exists because of mode 2 features (rules / promotion / 存入无限 / panel toggle), and the
+        // command works in every mode: deleting a rule while the cell stands in mode 1 used to write the
+        // refund into "the current mode's store", i.e. straight into mode 1's room. The refund belongs to s2.
+        UnlimitedCellInventory b12 = newInventory("b12");
+        b12.setMode(2);
+        b12.setWorkMode(1);
+        b12.addModRule("minecraft");
+        b12.injectItems(stack(Items.STICK, 7L), Actionable.MODULATE, NO_SOURCE); // rule hit -> ca = 7
+        b12.setMode(1);
+        b12.removeModRule("minecraft");                                          // deleted from mode 1
+        long b12m1 = b12.getStoredItemCount();
+        b12.setMode(2);
+        long b12m2 = b12.getStoredItemCount();
+        check(sender, "B12", "★ 站在 mode1 里删规则：mode2 的 7 个退回 mode2 自己的房间，不越界倒进 mode1",
+                b12m1 == 0L && b12m2 == 7L, "0/7", b12m1 + "/" + b12m2);
 
         runRejectGroup(sender);
         runRuleGroup(sender);

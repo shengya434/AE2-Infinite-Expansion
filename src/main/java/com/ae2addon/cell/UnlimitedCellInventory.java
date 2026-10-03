@@ -607,29 +607,23 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
     }
 
     /**
-     * Switching mode migrates stored counts instead of hiding them: 1.20 keeps s1 and s2 side by side,
-     * so a mode switch makes the other map's contents invisible (not lost, but alarming). P2 merges
-     * them so a player never sees numbers disappear.
+     * Switching the main mode switches to a COMPLETELY ISOLATED storage space -- sensei's original spec for
+     * this cell, restated on 2026-10-03: mode 1's pile, mode 2's pile and mode 3 ("nothing is stored,
+     * everything is handed out") are three different rooms. Nothing moves between them, so nothing is lost
+     * either: switching back finds the previous room exactly as it was left.
+     *
+     * <p>Before 2026-10-03 this method MERGED the two piles so that a mode switch could not make the other
+     * store invisible. That was my own invention and it contradicted the spec -- switching to mode 1 showed
+     * mode 2's contents, so the two modes behaved like one shared store, which is exactly what sensei
+     * noticed. Removed.
      */
     public void setMode(int newMode) {
         int target = clampToRange(newMode, 1, 3, 1);
         if (target == mode) {
             return;
         }
-        if (target == 1) {
-            mergeInto(data.s1, data.s2);
-        } else {
-            mergeInto(data.s2, data.s1);
-        }
         mode = target;
         saveChanges();
-    }
-
-    private static void mergeInto(Map<IAEItemStack, BigInteger> target, Map<IAEItemStack, BigInteger> source) {
-        for (Map.Entry<IAEItemStack, BigInteger> entry : source.entrySet()) {
-            target.merge(entry.getKey(), entry.getValue(), BigInteger::add);
-        }
-        source.clear();
     }
 
     public int getWorkMode() {
@@ -796,6 +790,12 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
      * Cancel a key's infinity: the committed amount goes back into the finite store so nothing is lost.
      * 1.20 shipped a bug here (it promoted without recording, so cancelling gave back nothing) -- hence
      * the explicit committed map.
+     *
+     * <p>{@code ca} only ever exists because of a MODE 2 feature (rule hit, threshold promotion, 存入无限, the
+     * panel toggle), so its refund belongs to mode 2's room -- {@code s2} -- whatever mode you happen to be
+     * standing in. Writing it to "the current mode's store" would drop mode 2's items into mode 1's isolated
+     * room when the cancel is issued from there (the command works in every mode), which is exactly the
+     * isolation the 2026-10-03 spec correction is about.
      */
     public boolean cancelInfinite(IAEItemStack key) {
         IAEItemStack k = lookupKey(key);
@@ -804,23 +804,29 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         }
         BigInteger committed = data.ca.remove(k);
         if (committed != null && committed.signum() > 0) {
-            Map<IAEItemStack, BigInteger> map = mode == 1 ? data.s1 : data.s2;
-            map.merge(k, committed, BigInteger::add);
+            data.s2.merge(k, committed, BigInteger::add);
         }
         saveChanges();
         return true;
     }
 
-    /** Stored amount for display/tests: finite store, committed amount, or flat zero. */
+    /**
+     * Stored amount for display/tests, read from the CURRENT mode's own store (they are isolated):
+     * mode 1 -> s1; mode 2 -> s2 plus the committed amount; mode 3 -> flat zero, because mode 3 stores nothing
+     * and hands every item out from nothing.
+     */
     public BigInteger storedAmount(IAEItemStack key) {
         IAEItemStack k = lookupKey(key);
-        BigInteger inS1 = data.s1.get(k);
+        BigInteger total = BigInteger.ZERO;
+        if (mode == 1) {
+            BigInteger inS1 = data.s1.get(k);
+            return inS1 == null ? total : inS1;
+        }
+        if (mode != 2) {
+            return total;
+        }
         BigInteger inS2 = data.s2.get(k);
         BigInteger committed = data.ca.get(k);
-        BigInteger total = BigInteger.ZERO;
-        if (inS1 != null) {
-            total = total.add(inS1);
-        }
         if (inS2 != null) {
             total = total.add(inS2);
         }
@@ -1093,7 +1099,6 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         if (data.ca.isEmpty()) {
             return false;
         }
-        Map<IAEItemStack, BigInteger> back = mode == 1 ? data.s1 : data.s2;
         List<IAEItemStack> keys = new ArrayList<>(data.ca.keySet());
         boolean changed = false;
         for (IAEItemStack k : keys) {
@@ -1102,7 +1107,9 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             }
             BigInteger amount = data.ca.remove(k);
             if (amount != null && amount.signum() > 0) {
-                back.merge(k, amount, BigInteger::add);
+                // Always mode 2's room: ca is a mode 2 concept (see cancelInfinite), so a rule deleted while
+                // the cell sits in mode 1 must not dump mode 2's amount into mode 1's isolated store.
+                data.s2.merge(k, amount, BigInteger::add);
             }
             changed = true;
         }
@@ -1344,7 +1351,13 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         return new LinkedHashSet<>(data.blacklist);
     }
 
-    /** Pins a key's stored amount; {@code lock} also marks it so inserts/extracts stay capped. */
+    /**
+     * Pins a key's stored amount; {@code lock} also marks it so inserts/extracts stay capped.
+     *
+     * <p>Always writes mode 2's store ({@code s2}): this is the mode 2 config screen's "元件内数量" field, and
+     * the whole quantity-lock / whitelist / committed family is a mode 2 concept, so it must not be able to
+     * write into mode 1's isolated room.
+     */
     public void setStoredQuantity(IAEItemStack key, BigInteger quantity, boolean lock) {
         if (key == null || quantity == null) {
             return;
@@ -1353,11 +1366,10 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
         data.ul.remove(k);
         data.wl.remove(k);
         data.ca.remove(k);
-        Map<IAEItemStack, BigInteger> map = mode == 1 ? data.s1 : data.s2;
         if (quantity.signum() <= 0) {
-            map.remove(k);
+            data.s2.remove(k);
         } else {
-            map.put(k, quantity);
+            data.s2.put(k, quantity);
         }
         if (lock) {
             data.qtyLocked.add(k);
@@ -1455,11 +1467,10 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
             // NOTE (deliberate deviation from 1.20 L1158-1165): 1.20 just drops the committed amount
             // here, so cancelling from the panel silently destroys the recorded quantity. We put it
             // back into the finite store instead, matching cancelInfinite() and the 1.20 line's own
-            // fix elsewhere ("取消无限要排真值").
+            // fix elsewhere ("取消无限要排真值"). Mode 2's room, always -- see cancelInfinite().
             BigInteger committed = data.ca.remove(k);
             if (committed != null && committed.signum() > 0) {
-                Map<IAEItemStack, BigInteger> map = mode == 1 ? data.s1 : data.s2;
-                map.merge(k, committed, BigInteger::add);
+                data.s2.merge(k, committed, BigInteger::add);
             }
             saveChanges();
             return false;
@@ -1598,12 +1609,20 @@ public class UnlimitedCellInventory implements ICellInventory<IAEItemStack> {
 
     @Override
     public long getStoredItemCount() {
+        // Mode-aware on purpose: the three main modes are ISOLATED stores, so folding another mode's pile in
+        // here would make the figure the cell reports disagree with what its terminal actually lists (the
+        // same "two sides drift apart" class that produced the 2026-10-03 listing bugs).
+        //   mode 1 -> s1; mode 2 -> s2 (committed amounts belong to infinite keys, which are not counted);
+        //   mode 3 -> nothing is ever stored.
         BigInteger total = BigInteger.ZERO;
-        for (BigInteger amount : data.s1.values()) {
-            total = total.add(amount);
-        }
-        for (BigInteger amount : data.s2.values()) {
-            total = total.add(amount);
+        if (mode == 1) {
+            for (BigInteger amount : data.s1.values()) {
+                total = total.add(amount);
+            }
+        } else if (mode == 2) {
+            for (BigInteger amount : data.s2.values()) {
+                total = total.add(amount);
+            }
         }
         return clamp(total);
     }
