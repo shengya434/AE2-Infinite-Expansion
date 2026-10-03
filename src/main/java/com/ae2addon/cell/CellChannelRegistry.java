@@ -30,6 +30,8 @@ public final class CellChannelRegistry {
 
     /** Id of the always-present item channel. */
     public static final String ITEM = "item";
+    /** Id of the fluid channel (AE2-UEL own second channel, always present). */
+    public static final String FLUID = "fluid";
 
     private static final Map<String, CellChannel<?>> BY_ID = new LinkedHashMap<>();
     private static final Map<IStorageChannel<?>, CellChannel<?>> BY_STORAGE = new LinkedHashMap<>();

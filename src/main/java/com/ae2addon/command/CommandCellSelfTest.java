@@ -8,6 +8,7 @@ import java.util.UUID;
 
 import com.ae2addon.AE2Addon;
 import com.ae2addon.cell.CellChannelRegistry;
+import com.ae2addon.cell.CellInventories;
 import com.ae2addon.cell.ChannelCellCore;
 import com.ae2addon.cell.FluidCellChannel;
 import com.ae2addon.cell.FluidCellInventory;
@@ -397,6 +398,7 @@ public class CommandCellSelfTest extends CommandBase {
         runBigQuantityGroup(sender);
         runSaveFormatGroup(sender);
         runFluidChannelGroup(sender);
+        runPanelChannelGroup(sender);
         runOptionalChannelGroups(sender);
 
         finish(sender);
@@ -1430,6 +1432,71 @@ public class CommandCellSelfTest extends CommandBase {
     /** The same key builder the item-group assertions use. */
     public static IAEItemStack itemStackOf(Item item, long count) {
         return stack(item, count);
+    }
+    /**
+     * Q group: the SERVER half of the channel switch in the config panel (sensei 2026-10-03).
+     *
+     * <p>The panel serves whichever channel the player selected, so it reaches the cell through
+     * {@link CellInventories} and talks in untyped keys ({@code IAEStack<?>}). The GUI itself cannot be
+     * self-tested, but this half can: that opening a channel really reads that channel's rows, that the untyped
+     * delegates act on the selected channel while touching the SHARED settings, and that a row carries a label
+     * for channels that have no item icon.
+     */
+    private void runPanelChannelGroup(ICommandSender sender) {
+        ItemStack cell = cellWithUuid(testUuid("q1"));
+        UnlimitedCellInventory items = new UnlimitedCellInventory(cell, null);
+        wipe(items);
+        FluidCellInventory fluids = new FluidCellInventory(cell, null);
+        IAEFluidStack water = fluidKey(FluidRegistry.WATER);
+        items.setMode(2);
+        items.setWorkMode(1);
+        items.injectItems(stack(Items.STICK, 5L), Actionable.MODULATE, NO_SOURCE);
+        fluids.injectItems(fluidStack(FluidRegistry.WATER, 3000), Actionable.MODULATE, NO_SOURCE);
+
+        // Q1: the same cell, opened per channel, lists THAT channel's rows only
+        ChannelCellCore<?> itemView = CellInventories.open(cell, null, CellChannelRegistry.ITEM);
+        ChannelCellCore<?> fluidView = CellInventories.open(cell, null, CellChannelRegistry.FLUID);
+        int itemRows = itemView == null ? -1 : itemView.getPanelItems().size();
+        int fluidRows = fluidView == null ? -1 : fluidView.getPanelItems().size();
+        boolean fluidRowIsWater = false;
+        if (fluidView != null) {
+            for (ChannelCellCore.PanelItem row : fluidView.getPanelItems()) {
+                if (row.key.getChannel() == FluidCellChannel.INSTANCE.storage()) fluidRowIsWater = true;
+            }
+        }
+        check(sender, "Q1", "★ 面板按通道取行：同一只元件，物品视图只列物品、流体视图只列流体",
+                itemRows == 1 && fluidRows == 1 && fluidRowIsWater, "1/1/true",
+                itemRows + "/" + fluidRows + "/" + fluidRowIsWater);
+
+        // Q2: untyped delegates hit the selected channel, and what they write is the SHARED collection
+        boolean toggled = fluidView != null && fluidView.toggleBlacklistOf(water);
+        boolean sharedBlacklist = items.isBlacklistedOf(water);
+        boolean stickUntouched = !items.isBlacklisted(key(Items.STICK));
+        check(sender, "Q2", "★ 无类型委托作用在所选通道的键上，而黑名单是共享集合（物品视图也能看到）",
+                toggled && sharedBlacklist && stickUntouched, "true/true/true",
+                toggled + "/" + sharedBlacklist + "/" + stickUntouched);
+
+        // Q3: pinning a fluid key's quantity writes the FLUID stock only
+        if (fluidView != null) {
+            fluidView.setStoredQuantityOf(water, BigInteger.valueOf(4096), true);
+        }
+        BigInteger fluidAmount = fluidView == null ? null : fluidView.storedAmountOf(water);
+        long itemCount = items.getStoredItemCount();
+        check(sender, "Q3", "★ 面板设「元件内数量」：只动所选通道的存量，另一通道读数不受影响",
+                BigInteger.valueOf(4096).equals(fluidAmount) && itemCount == 5L,
+                "4096/5", fluidAmount + "/" + itemCount);
+
+        // Q4: a row carries a label -- the only thing a channel without an item icon can show
+        String label = fluidView == null ? null : fluidView.displayNameOf(water);
+        String rowLabel = "";
+        if (fluidView != null) {
+            for (ChannelCellCore.PanelItem row : fluidView.getPanelItems()) {
+                rowLabel = fluidView.displayNameOf(row.key);
+            }
+        }
+        check(sender, "Q4", "面板行带显示名（非物品通道没有图标，只能显示标签）",
+                label != null && !label.isEmpty() && !rowLabel.isEmpty(), "非空/非空",
+                label + "/" + rowLabel);
     }
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
     private static String firstOreName(ItemStack definition) {

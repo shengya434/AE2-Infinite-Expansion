@@ -1434,6 +1434,70 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         saveChanges();
     }
 
+    // ------------------------------------------------------------------
+    // untyped delegates for the config panel
+    //
+    // The panel serves EVERY channel the cell speaks (sensei 2026-10-03), so it holds keys as IAEStack<?> and
+    // reaches them through the channel's own core. The casts are safe by construction: a key that came out of
+    // this channel's data is of this channel's type.
+    // ------------------------------------------------------------------
+
+    public boolean togglePanelInfiniteOf(IAEStack<?> key) {
+        return togglePanelInfinite(castKey(key));
+    }
+
+    public boolean toggleBlacklistOf(IAEStack<?> key) {
+        return toggleBlacklist(castKey(key));
+    }
+
+    /**
+     * Blacklist query for a key of ANY channel: the blacklist is a shared collection of {@code IAEStack<?>},
+     * so this needs no cast and works when the panel asks from another channel's view.
+     */
+    public boolean isBlacklistedOf(IAEStack<?> key) {
+        return key != null && data.blacklist.contains(key);
+    }
+
+    public boolean toggleRejectOf(IAEStack<?> key) {
+        return toggleReject(castKey(key));
+    }
+
+    public boolean clearRejectOf(IAEStack<?> key) {
+        return clearReject(castKey(key));
+    }
+
+    public boolean addWhitelistOf(IAEStack<?> key) {
+        return addWhitelist(castKey(key));
+    }
+
+    public boolean removeWhitelistOf(IAEStack<?> key) {
+        return removeWhitelist(castKey(key));
+    }
+
+    public void setItemThresholdOf(IAEStack<?> key, long value) {
+        setItemThreshold(castKey(key), value);
+    }
+
+    public void setStoredQuantityOf(IAEStack<?> key, BigInteger quantity, boolean lock) {
+        setStoredQuantity(castKey(key), quantity, lock);
+    }
+
+    public BigInteger storedAmountOf(IAEStack<?> key) {
+        return storedAmount(castKey(key));
+    }
+
+    public BigInteger getCommitedAmountOf(IAEStack<?> key) {
+        return getCommitedAmount(key);
+    }
+
+    public boolean hasCommitedAmountOf(IAEStack<?> key) {
+        return hasCommitedAmount(key);
+    }
+
+    /** Display name of a key of THIS channel, for the panel's label column. */
+    public String displayNameOf(IAEStack<?> key) {
+        return cellChannel.displayNameUntyped(key);
+    }
     public Set<IAEStack<?>> getWl() {
         return new LinkedHashSet<>(data.wl);
     }

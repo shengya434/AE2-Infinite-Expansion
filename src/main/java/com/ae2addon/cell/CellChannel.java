@@ -87,6 +87,15 @@ public interface CellChannel<T extends IAEStack<T>> {
     /** Human-readable name for the panel, tooltips and command output. Server-side callable. */
     String displayName(T key);
 
+    /**
+     * Untyped bridge for the config panel, which lists whatever channel the player selected and therefore only
+     * has an {@code IAEStack<?>} in hand. The cast is safe because the panel asks the adapter that owns the key.
+     */
+    @SuppressWarnings("unchecked")
+    default String displayNameUntyped(IAEStack<?> key) {
+        return key == null ? "" : displayName((T) key);
+    }
+
     /** Threshold applied to a key of this channel when neither the item override nor the global one is set. */
     long defaultThreshold();
 }

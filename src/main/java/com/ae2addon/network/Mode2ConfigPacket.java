@@ -3,9 +3,15 @@ package com.ae2addon.network;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.UUID;
 import java.util.List;
 import java.util.Set;
 
+import com.ae2addon.cell.CellChannel;
+import com.ae2addon.cell.CellChannelRegistry;
+import com.ae2addon.cell.CellInventories;
+import com.ae2addon.cell.ChannelCellCore;
 import com.ae2addon.cell.UnlimitedCellInventory;
 import com.ae2addon.gui.Mode2ConfigScreen;
 import com.ae2addon.gui.ModeSelectScreen;
@@ -41,6 +47,10 @@ public final class Mode2ConfigPacket implements IMessage {
     public List<PanelEntry> entries = new ArrayList<>();
     public NBTTagCompound state;
     public String text = "", quantityText = "";
+    /** Which storage channel this packet is about (panel rows and key-based actions). Empty = item channel. */
+    public String channelId = "";
+    /** A panel row's key, serialised by the owning channel -- the only way to name a fluid/gas/essentia key. */
+    public NBTTagCompound keyNbt;
     public boolean isOre, lock;
     public int ruleMode;
     public List<String> rules = new ArrayList<>();
@@ -62,13 +72,20 @@ public final class Mode2ConfigPacket implements IMessage {
         Mode2ConfigPacket p = new Mode2ConfigPacket(type);
         p.isOre = ore; p.text = name; p.ruleMode = mode; return p;
     }
+    /** Client asks to switch the config panel to another channel (type 24). */
+    public static Mode2ConfigPacket panelChannel(String channelId) {
+        Mode2ConfigPacket p = new Mode2ConfigPacket(24);
+        p.channelId = channelId == null ? "" : channelId;
+        return p;
+    }
+
     public static Mode2ConfigPacket quantity(ItemStack item, String amount, boolean locked) {
         Mode2ConfigPacket p = new Mode2ConfigPacket(17, item);
         p.quantityText = amount; p.lock = locked; return p;
     }
-    public static Mode2ConfigPacket panel(int index, int total, List<PanelEntry> entries) {
+    public static Mode2ConfigPacket panel(int index, int total, String channelId, List<PanelEntry> entries) {
         Mode2ConfigPacket p = new Mode2ConfigPacket(4);
-        p.chunkIndex = index; p.totalChunks = total; p.entries = entries;
+        p.chunkIndex = index; p.totalChunks = total; p.channelId = channelId; p.entries = entries;
         return p;
     }
     public static Mode2ConfigPacket rejectState(UnlimitedCellInventory inv) {
@@ -139,8 +156,11 @@ public final class Mode2ConfigPacket implements IMessage {
                 buf.writeVarInt(chunkIndex); buf.writeVarInt(totalChunks); writeKeys(buf, on); writeKeys(buf, off);
                 break;
             case 4:
-                buf.writeVarInt(chunkIndex); buf.writeVarInt(totalChunks); buf.writeVarInt(entries.size());
+                buf.writeVarInt(chunkIndex); buf.writeVarInt(totalChunks); buf.writeString(channelId);
+                buf.writeVarInt(entries.size());
                 for (PanelEntry entry : entries) {
+                    buf.writeCompoundTag(entry.keyNbt == null ? new NBTTagCompound() : entry.keyNbt);
+                    buf.writeString(entry.label == null ? "" : entry.label);
                     buf.writeItemStack(entry.item);
                     buf.writeByteArray(entry.amount.toByteArray());
                     buf.writeBoolean(entry.infinite);
@@ -150,6 +170,7 @@ public final class Mode2ConfigPacket implements IMessage {
                     buf.writeBoolean(entry.whitelisted);
                 }
                 break;
+            case 24: buf.writeString(channelId); break;
             case 3: case 23: break;
             default: throw new IllegalArgumentException("Unsupported mode2 packet type " + type);
         }
@@ -182,10 +203,13 @@ public final class Mode2ConfigPacket implements IMessage {
                     on = readKeys(buf); off = readKeys(buf); break;
                 case 4:
                     chunkIndex = buf.readVarInt(); totalChunks = buf.readVarInt();
+                    channelId = buf.readString(64);
                     int size = buf.readVarInt();
                     checkChunk(this);
                     if (size < 0 || size > MAX_ITEMS_PER_CHUNK) throw new IOException("Invalid panel chunk");
                     for (int i = 0; i < size; i++) {
+                        NBTTagCompound keyTag = buf.readCompoundTag();
+                        String label = buf.readString(256);
                         ItemStack stack = buf.readItemStack();
                         byte[] amount = buf.readByteArray(8192);
                         boolean infinite = buf.readBoolean();
@@ -193,10 +217,14 @@ public final class Mode2ConfigPacket implements IMessage {
                         long threshold = buf.readLong();
                         boolean locked = buf.readBoolean();
                         boolean whitelisted = buf.readBoolean();
-                        if (!stack.isEmpty() && amount.length > 0) entries.add(new PanelEntry(stack, new BigInteger(amount),
-                                infinite, bytes, threshold, locked, whitelisted));
+                        // A row is valid when it carries a key or at least an icon: non-item channels have no icon.
+                        if (amount.length > 0 && (!stack.isEmpty() || keyTag != null)) {
+                            entries.add(new PanelEntry(channelId, keyTag, label, stack,
+                                    new BigInteger(amount), infinite, bytes, threshold, locked, whitelisted));
+                        }
                     }
                     break;
+                case 24: channelId = buf.readString(64); break;
                 case 3: case 23: break;
                 default: throw new IOException("Unsupported mode2 packet type " + type);
             }
@@ -205,7 +233,17 @@ public final class Mode2ConfigPacket implements IMessage {
         }
     }
 
+    /**
+     * One panel row.
+     *
+     * <p>{@code item} is the icon (only the item channel has a real one; other channels render {@code label}),
+     * {@code keyNbt} is the key serialised BY ITS OWN CHANNEL so the client can send it back for an action, and
+     * {@code channelId} says which channel the row belongs to -- the panel serves every channel the cell speaks.
+     */
     public static final class PanelEntry {
+        public final String channelId;
+        public final NBTTagCompound keyNbt;
+        public final String label;
         public final ItemStack item;
         public final BigInteger amount;
         public final boolean infinite;
@@ -214,9 +252,11 @@ public final class Mode2ConfigPacket implements IMessage {
         public final boolean whitelisted;
         public final long threshold;
 
-        public PanelEntry(ItemStack item, BigInteger amount, boolean infinite, long bytes,
-                long threshold, boolean quantityLocked, boolean whitelisted) {
-            this.item = item; this.amount = amount; this.infinite = infinite;
+        public PanelEntry(String channelId, NBTTagCompound keyNbt, String label, ItemStack item,
+                BigInteger amount, boolean infinite, long bytes, long threshold, boolean quantityLocked,
+                boolean whitelisted) {
+            this.channelId = channelId; this.keyNbt = keyNbt; this.label = label; this.item = item;
+            this.amount = amount; this.infinite = infinite;
             this.bytes = bytes; this.threshold = threshold; this.quantityLocked = quantityLocked;
             this.whitelisted = whitelisted;
         }
@@ -234,9 +274,21 @@ public final class Mode2ConfigPacket implements IMessage {
         CellScreenTarget target = CellScreenTarget.resolve(player);
         if (target == null) return;
         UnlimitedCellInventory inv = new UnlimitedCellInventory(target.stack, null);
+        // Which channel the player is looking at. The panel serves every channel the cell speaks; the settings
+        // (mode / work mode / threshold / rules / reject) are shared, so only the storage rows change.
+        String channelId = msg.channelId == null || msg.channelId.isEmpty()
+                ? panelChannelOf(player) : msg.channelId;
+        if (CellChannelRegistry.byId(channelId) == null) channelId = CellChannelRegistry.ITEM;
+        if (msg.channelId != null && !msg.channelId.isEmpty()) {
+            PANEL_CHANNEL.put(player.getUniqueID(), channelId);
+        }
+        ChannelCellCore<?> core = CellInventories.open(target.stack, null, channelId);
+        if (core == null) core = inv;
+        IAEStack<?> actionKey = resolveKey(msg, channelId);
+
         if (msg.type == 0) inv.setThreshold(msg.value);
         else if (msg.type == 1 || msg.type == 13) {
-            IAEItemStack key = key(msg.item); if (key == null) return; inv.addWhitelist(key);
+            if (actionKey == null) return; core.addWhitelistOf(actionKey);
         } else if (msg.type == 2) {
             for (IAEStack<?> key : inv.getWl()) {
                 if (!(key instanceof IAEItemStack)) continue;
@@ -245,35 +297,34 @@ public final class Mode2ConfigPacket implements IMessage {
                         && stack.getItem().getRegistryName().toString().equals(msg.text)) inv.removeWhitelist((IAEItemStack) key);
             }
         } else if (msg.type == 5) {
-            IAEItemStack key = key(msg.item); if (key == null) return; inv.togglePanelInfinite(key);
+            if (actionKey == null) return; core.togglePanelInfiniteOf(actionKey);
         } else if (msg.type == 6) {
             if (msg.workMode < 1 || msg.workMode > 3) return;
             inv.setWorkMode(msg.workMode);
         } else if (msg.type == 7) {
-            IAEItemStack key = key(msg.item); if (key == null) return; inv.toggleReject(key);
+            if (actionKey == null) return; core.toggleRejectOf(actionKey);
         } else if (msg.type == 8) inv.setRejectDefault(msg.flag);
         else if (msg.type == 10) inv.setRuleInstant(msg.flag);
         else if (msg.type == 11) {
-            IAEItemStack key = key(msg.item);
-            if (key == null) {
+            if (actionKey == null) {
                 sendKeys(player, 12, stackList(inv.getBlacklist()), new ArrayList<>());
                 return;
             }
-            inv.toggleBlacklist(key);
+            core.toggleBlacklistOf(actionKey);
         } else if (msg.type == 14) inv.wipeAllData();
         else if (msg.type == 15) inv.setRuleMode(UnlimitedCellInventory.ruleKey(msg.isOre, msg.text), msg.ruleMode);
         else if (msg.type == 16) {
-            IAEItemStack key = key(msg.item); if (key == null) return;
-            inv.setItemThreshold(key, msg.value);
+            if (actionKey == null) return;
+            core.setItemThresholdOf(actionKey, msg.value);
         } else if (msg.type == 17) {
-            IAEItemStack key = key(msg.item); if (key == null) return;
+            if (actionKey == null) return;
             try {
                 // 2026-10-03: no clamp to Long.MAX here any more. The cell stores the quantity as a
                 // BigInteger, so "元件内数量 = 2^128" is a legitimate thing to ask for -- clamping it made the
                 // box silently mean 9.22e18 instead. Only the parser's digit bound applies, and a refusal is
                 // reported instead of substituted.
                 BigInteger amount = QuantityExpression.parse(msg.quantityText);
-                inv.setStoredQuantity(key, amount, msg.lock);
+                core.setStoredQuantityOf(actionKey, amount, msg.lock);
             }
             catch (NumberFormatException badQuantity) {
                 player.sendMessage(new TextComponentString(
@@ -285,9 +336,38 @@ public final class Mode2ConfigPacket implements IMessage {
         } else if (msg.type == 20) {
             if (msg.isOre) inv.removeOreRule(msg.text); else inv.removeModRule(msg.text);
         } else if (msg.type == 22) {
-            IAEItemStack key = key(msg.item); if (key == null) return; inv.clearReject(key);
+            if (actionKey == null) return; core.clearRejectOf(actionKey);
         } else if (msg.type != 3 && msg.type != 23) return;
         sendState(player, inv);
+    }
+
+    /**
+     * The key an action refers to.
+     *
+     * <p>The panel sends the key's own NBT plus its channel id, which is the only way to name a fluid / gas /
+     * essentia / mana / FE key; an older client (or the item channel) sends an item stack instead, and that path
+     * stays supported. Whatever comes back is normalised to size 1.
+     */
+    private static IAEStack<?> resolveKey(Mode2ConfigPacket msg, String channelId) {
+        if (msg.keyNbt != null) {
+            CellChannel<?> channel = CellChannelRegistry.byId(channelId);
+            if (channel != null) {
+                IAEStack<?> key = channel.readKeyUntyped(msg.keyNbt);
+                if (key != null) {
+                    key.setStackSize(1);
+                    return key;
+                }
+            }
+        }
+        return key(msg.item);
+    }
+
+    /** Which channel each player has selected in the config panel (one short string per online player). */
+    private static final Map<UUID, String> PANEL_CHANNEL = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static String panelChannelOf(EntityPlayerMP player) {
+        String id = PANEL_CHANNEL.get(player.getUniqueID());
+        return id == null || CellChannelRegistry.byId(id) == null ? CellChannelRegistry.ITEM : id;
     }
 
     private static IAEItemStack key(ItemStack stack) {
@@ -298,21 +378,33 @@ public final class Mode2ConfigPacket implements IMessage {
     }
 
     public static void sendState(EntityPlayerMP player, UnlimitedCellInventory inv) {
-        CellNetwork.sendTo(rejectState(inv), player);
+        String channelId = panelChannelOf(player);
+        Mode2ConfigPacket statePacket = rejectState(inv);
+        if (statePacket.state != null) {
+            statePacket.state.setString("ch", channelId);
+        }
+        CellNetwork.sendTo(statePacket, player);
         sendKeys(player, 21, stackList(inv.getRejectOnKeys()), stackList(inv.getRejectOffKeys()));
         sendKeys(player, 12, stackList(inv.getBlacklist()), new ArrayList<>());
         sendRules(player, inv, true);
         sendRules(player, inv, false);
+        // The rows come from the SELECTED channel's view of the cell; every row carries its key (as that
+        // channel's own NBT) and a display label, because only the item channel has an icon to show.
+        ChannelCellCore<?> core = CellInventories.open(inv.getItemStack(), null, channelId);
+        if (core == null) core = inv;
         List<PanelEntry> all = new ArrayList<>();
-        for (UnlimitedCellInventory.PanelItem row : inv.getPanelItems()) {
-            all.add(new PanelEntry(row.key.asItemStackRepresentation(), row.amount, row.isInfinite,
-                    row.bytes, row.itemThreshold, row.quantityLocked, inv.isWhitelisted(row.key)));
+        for (ChannelCellCore.PanelItem row : core.getPanelItems()) {
+            NBTTagCompound keyTag = new NBTTagCompound();
+            row.key.writeToNBT(keyTag);
+            all.add(new PanelEntry(channelId, keyTag, core.displayNameOf(row.key),
+                    row.key.asItemStackRepresentation(), row.amount, row.isInfinite,
+                    row.bytes, row.itemThreshold, row.quantityLocked, core.isWhitelisted(row.key)));
         }
         int total = Math.max(1, (all.size() + MAX_ITEMS_PER_CHUNK - 1) / MAX_ITEMS_PER_CHUNK);
         for (int index = 0; index < total; index++) {
             int from = index * MAX_ITEMS_PER_CHUNK;
             int to = Math.min(all.size(), from + MAX_ITEMS_PER_CHUNK);
-            CellNetwork.sendTo(panel(index, total, new ArrayList<>(all.subList(from, to))), player);
+            CellNetwork.sendTo(panel(index, total, channelId, new ArrayList<>(all.subList(from, to))), player);
         }
     }
 

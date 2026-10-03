@@ -87,6 +87,8 @@ public final class Mode2ConfigScreen extends GuiContainer {
     private boolean rejectDefault;
     private int rejectOnCount, rejectOffCount;
     private int scrollOffset;
+    /** Which storage channel the panel is showing. Shared settings do not change with it -- only the rows do. */
+    private String panelChannel = com.ae2addon.cell.CellChannelRegistry.ITEM;
     private GuiTextField thresholdInput, searchInput, itemThresholdInput, ruleInput, quantityInput;
     private ItemStack editing = ItemStack.EMPTY;
     private ItemStack quantityEditing = ItemStack.EMPTY;
@@ -242,6 +244,9 @@ public final class Mode2ConfigScreen extends GuiContainer {
         } catch (NumberFormatException ex) { thresholdInput.setText(Long.toString(currentThreshold)); }
     }
 
+    /** The key NBT of the row whose threshold is being edited (null = an item row from an older path). */
+    private net.minecraft.nbt.NBTTagCompound editingKeyNbt;
+
     private void showItemThreshold(ItemStack item, long threshold) {
         quantityEditing = ItemStack.EMPTY;
         editing = item;
@@ -262,13 +267,16 @@ public final class Mode2ConfigScreen extends GuiContainer {
             String raw = itemThresholdInput.getText().trim();
             long value = raw.isEmpty() ? 0 : ThresholdExpression.parse(raw);
             if (value < 0) throw new NumberFormatException();
-            CellNetwork.send(Mode2ConfigPacket.itemThreshold(editing.copy(), value));
+            Mode2ConfigPacket packet = Mode2ConfigPacket.itemThreshold(editing.copy(), value);
+        packet.channelId = panelChannel;
+        packet.keyNbt = editingKeyNbt;
+        CellNetwork.send(packet);
             hideItemThreshold();
         } catch (NumberFormatException ex) { itemThresholdInput.setText(""); }
     }
     private void saveQuantity() {
         if (quantityEditing.isEmpty()) return;
-        CellNetwork.send(Mode2ConfigPacket.quantity(quantityEditing.copy(), quantityInput.getText(), quantityLock));
+        CellNetwork.send(withChannel(Mode2ConfigPacket.quantity(quantityEditing.copy(), quantityInput.getText(), quantityLock)));
         quantityEditing = ItemStack.EMPTY;
         quantityInput.setFocused(false);
         updateEditingButtons();
@@ -276,6 +284,9 @@ public final class Mode2ConfigScreen extends GuiContainer {
 
     public void accept(Mode2ConfigPacket packet) {
         if (packet.type == 18 && packet.state != null) {
+            if (packet.state.hasKey("ch", 8) && !packet.state.getString("ch").isEmpty()) {
+                panelChannel = packet.state.getString("ch");
+            }
             rejectDefault = packet.state.getBoolean("default");
             ruleInstant = packet.state.getBoolean("ruleInstant");
             updateRuleInstantButton();
@@ -356,12 +367,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
         if (rejectTab) {
             source.clear();
             if (!rejectList.pending()) for (ItemStack item : rejectItems)
-                source.add(new Mode2ConfigPacket.PanelEntry(item, BigInteger.ZERO, false, 0L, 0L, false, false));
+                source.add(new Mode2ConfigPacket.PanelEntry(com.ae2addon.cell.CellChannelRegistry.ITEM, null, item.getDisplayName(), item, BigInteger.ZERO, false, 0L, 0L, false, false));
         } else if ("blacklist".equals(activeRule)) {
             for (ItemStack item : blacklist) {
                 boolean present = false;
                 for (Mode2ConfigPacket.PanelEntry entry : source) if (sameKey(entry.item, item)) { present = true; break; }
-                if (!present) source.add(new Mode2ConfigPacket.PanelEntry(item, BigInteger.ZERO, false, 0L, 0L, false, false));
+                if (!present) source.add(new Mode2ConfigPacket.PanelEntry(com.ae2addon.cell.CellChannelRegistry.ITEM, null, item.getDisplayName(), item, BigInteger.ZERO, false, 0L, 0L, false, false));
             }
         }
         for (Mode2ConfigPacket.PanelEntry entry : source) {
@@ -371,7 +382,10 @@ public final class Mode2ConfigScreen extends GuiContainer {
                     && !"item".equals(activeRule) && !matchesRule(stack, activeRule)) continue;
             String id = stack.getItem().getRegistryName() == null ? ""
                     : stack.getItem().getRegistryName().toString();
-            if (PinyinIndex.matches(query, stack.getDisplayName(), id)) filtered.add(entry);
+            // A non-item row has no item to search on: use the label the server sent instead of asking an
+            // empty stack for its name (which would answer "Air" and match silly queries).
+            String searchName = stack.isEmpty() ? (entry.label == null ? "" : entry.label) : stack.getDisplayName();
+            if (PinyinIndex.matches(query, searchName, id)) filtered.add(entry);
         }
         scrollOffset = Math.min(scrollOffset, Math.max(0, filtered.size() - 4));
     }
@@ -489,6 +503,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
             return;
         }
         fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.title"), guiLeft + 10, guiTop + 4, 0xFFFFFF);
+        drawChannelSelector();
         fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_items"), guiLeft + 144, guiTop + 36,
                 rejectTab ? 0x888888 : 0xFFFFFF);
         fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_reject"), guiLeft + 193, guiTop + 36,
@@ -538,7 +553,11 @@ public final class Mode2ConfigScreen extends GuiContainer {
         for (int i = 0; i < 4 && i + scrollOffset < filtered.size(); i++) {
             Mode2ConfigPacket.PanelEntry entry = filtered.get(i + scrollOffset);
             int y = guiTop + 89 + i * ROW_H;
-            String name = entry.item.getDisplayName();
+            // The item channel has a real icon and a display name; every other channel only has the label the
+            // server sent (a fluid / gas / essentia / mana / FE key is not an item).
+            String name = entry.item.isEmpty() || !com.ae2addon.cell.CellChannelRegistry.ITEM.equals(entry.channelId)
+                    ? (entry.label == null || entry.label.isEmpty() ? entry.channelId : entry.label)
+                    : entry.item.getDisplayName();
             if (fontRenderer.getStringWidth(name) > 102) name = fontRenderer.trimStringToWidth(name, 99) + "…";
             fontRenderer.drawString(name, guiLeft + 13, y, 0xDDDDDD);
             String status = rejectTab ? (containsStack(rejectList.on(), entry.item)
@@ -599,6 +618,72 @@ public final class Mode2ConfigScreen extends GuiContainer {
         }
     }
 
+    /**
+     * The channel selector in the title row: {@code ‹ 流体 ›}.
+     *
+     * <p>The panel serves every channel the cell speaks, while the settings (mode / threshold / rules) stay
+     * shared, so this only changes which storage rows are listed.
+     */
+    private void drawChannelSelector() {
+        java.util.List<com.ae2addon.cell.CellChannel<?>> channels =
+                new java.util.ArrayList<>(com.ae2addon.cell.CellChannelRegistry.all());
+        if (channels.size() < 2) {
+            return;
+        }
+        String name = channelDisplayName(panelChannel);
+        int width = fontRenderer.getStringWidth(name);
+        int nameX = guiLeft + 246 - 12 - width;
+        fontRenderer.drawString("§7‹", nameX - 8, guiTop + 4, 0xFFFFFF);
+        fontRenderer.drawString(name, nameX, guiTop + 4, 0xFFFFFF);
+        fontRenderer.drawString("§7›", guiLeft + 246 - 6, guiTop + 4, 0xFFFFFF);
+    }
+
+    /** Cycles the panel's channel by {@code step} through the registered channels. */
+    private void cyclePanelChannel(int step) {
+        java.util.List<com.ae2addon.cell.CellChannel<?>> channels =
+                new java.util.ArrayList<>(com.ae2addon.cell.CellChannelRegistry.all());
+        if (channels.isEmpty()) {
+            return;
+        }
+        int index = 0;
+        for (int i = 0; i < channels.size(); i++) {
+            if (channels.get(i).id().equals(panelChannel)) {
+                index = i;
+                break;
+            }
+        }
+        index = (index + step % channels.size() + channels.size()) % channels.size();
+        panelChannel = channels.get(index).id();
+        scrollOffset = 0;
+        applyFilters();
+        CellNetwork.send(Mode2ConfigPacket.panelChannel(panelChannel));
+    }
+
+    /** Display name for a channel id (the panel is Chinese-facing; the id is the fallback). */
+    private static String channelDisplayName(String channelId) {
+        switch (channelId) {
+            case "item": return "§b物品";
+            case "fluid": return "§b流体";
+            case "gas": return "§b气体";
+            case "essentia": return "§b源质";
+            case "mana": return "§b法力";
+            case "flux": return "§b能量";
+            default: return "§b" + channelId;
+        }
+    }
+
+    /** Tags a panel action with the key it is about, so it works for every channel, not just items. */
+    private Mode2ConfigPacket withChannel(Mode2ConfigPacket packet, Mode2ConfigPacket.PanelEntry entry) {
+        packet.channelId = entry == null ? panelChannel : entry.channelId;
+        packet.keyNbt = entry == null ? null : entry.keyNbt;
+        return packet;
+    }
+
+    private Mode2ConfigPacket withChannel(Mode2ConfigPacket packet) {
+        packet.channelId = panelChannel;
+        return packet;
+    }
+
     private static String shortAmount(BigInteger amount) {
         // Past Long.MAX a digit run stops being readable at a glance (2^128 is 39 digits), so only that range
         // switches to scientific notation. The exact value still lives in the tooltip and in the quantity box.
@@ -617,10 +702,15 @@ public final class Mode2ConfigScreen extends GuiContainer {
             if (mouseButton == 0 && isShiftKeyDown()) {
                 for (Slot slot : menu.inventorySlots) {
                     if (x >= slot.xPos && x < slot.xPos + 16 && y >= slot.yPos && y < slot.yPos + 16) {
-                        if (!slot.getStack().isEmpty()) CellNetwork.send(new Mode2ConfigPacket(1, slot.getStack().copy()));
+                        if (!slot.getStack().isEmpty()) CellNetwork.send(withChannel(new Mode2ConfigPacket(1, slot.getStack().copy())));
                         return;
                     }
                 }
+            }
+            // Channel selector: the two arrows sit at the right end of the title row.
+            if (uiState == 1 && mouseButton == 0 && y >= 0 && y < 14 && x >= 190 && x < 246) {
+                cyclePanelChannel(x >= 236 ? 1 : -1);
+                return;
             }
             if (mouseButton == 0 && y >= 36 && y < 47 && x >= 144 && x < 246) {
                 rejectTab = x >= 193; scrollOffset = 0; applyFilters(); return;
@@ -667,11 +757,11 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 if (row >= 0 && row < filtered.size()) {
                     Mode2ConfigPacket.PanelEntry entry = filtered.get(row);
                     if (rejectTab && mouseButton == 0 && !isShiftKeyDown() && !isCtrlKeyDown())
-                        CellNetwork.send(new Mode2ConfigPacket(7, entry.item.copy()));
+                        CellNetwork.send(withChannel(new Mode2ConfigPacket(7, entry.item.copy()), entry));
                     else if (rejectTab && mouseButton == 1)
-                        CellNetwork.send(new Mode2ConfigPacket(22, entry.item.copy()));
+                        CellNetwork.send(withChannel(new Mode2ConfigPacket(22, entry.item.copy()), entry));
                     else if (!rejectTab && mouseButton == 1 && isShiftKeyDown())
-                        CellNetwork.send(new Mode2ConfigPacket(11, entry.item.copy()));
+                        CellNetwork.send(withChannel(new Mode2ConfigPacket(11, entry.item.copy()), entry));
                     else if (!rejectTab && mouseButton == 1 && isCtrlKeyDown() && entry.whitelisted
                             && entry.item.getItem().getRegistryName() != null) {
                         Mode2ConfigPacket remove = new Mode2ConfigPacket(2);
@@ -688,9 +778,10 @@ public final class Mode2ConfigScreen extends GuiContainer {
                                     : "gui.ae2addon.p3.unlock");
                     }
                     else if (!rejectTab && mouseButton == 0 && isShiftKeyDown())
-                        CellNetwork.send(new Mode2ConfigPacket(5, entry.item.copy()));
+                        CellNetwork.send(withChannel(new Mode2ConfigPacket(5, entry.item.copy()), entry));
                     else if (!rejectTab && mouseButton == 1 && !isShiftKeyDown())
-                        showItemThreshold(entry.item.copy(), entry.threshold);
+                        editingKeyNbt = entry.keyNbt;
+                showItemThreshold(entry.item.copy(), entry.threshold);
                     return;
                 }
             }
