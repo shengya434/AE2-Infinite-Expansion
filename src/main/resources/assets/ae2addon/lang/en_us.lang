@@ -116,3 +116,6 @@ gui.ae2addon.cell.name=§5Infinite Cell [%s]
 gui.ae2addon.cell.short1=Unlimited
 gui.ae2addon.cell.short2=Custom
 gui.ae2addon.cell.short3=All-Types
+
+gui.ae2addon.mode2.filter_active=§eCategory: %s §7(click empty strip space to clear)
+gui.ae2addon.mode2.cat_scroll_tip=§7Wheel or click the arrows to scroll categories

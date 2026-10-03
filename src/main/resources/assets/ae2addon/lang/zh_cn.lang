@@ -116,3 +116,6 @@ gui.ae2addon.cell.name=§5无限存储元件 [%s]
 gui.ae2addon.cell.short1=无限制
 gui.ae2addon.cell.short2=自定义无限
 gui.ae2addon.cell.short3=全类型无限
+
+gui.ae2addon.mode2.filter_active=§e当前分类: %s §7（点分类条空白处清除）
+gui.ae2addon.mode2.cat_scroll_tip=§7滚轮或点箭头：左右滚动分类

@@ -31,6 +31,36 @@ import org.lwjgl.input.Mouse;
 public final class Mode2ConfigScreen extends GuiContainer {
     private static final ResourceLocation PANEL = new ResourceLocation("ae2addon", "textures/gui/cell_panel.png");
     private static final int PANEL_X = 10, PANEL_Y = 72, PANEL_W = 236, ROW_H = 14;
+    /** Category strip geometry: chips live between the two arrow gaps (see buildChips). */
+    private static final int CATEGORY_Y = 75;
+    private static final int CATEGORY_HIT_TOP = 73, CATEGORY_HIT_BOTTOM = 87;
+    private static final int CATEGORY_LEFT = 18, CATEGORY_RIGHT = 238;
+    private static final int CHIP_GAP = 8;
+    /** A single chip's label cap, so one long rule name cannot push the other categories off the strip. */
+    private static final int CHIP_MAX_LABEL_W = 92;
+    /** How far one click on an arrow (or one wheel notch) moves the strip. */
+    private static final int CATEGORY_STEP = 24;
+
+    /** One clickable category entry of the strip, positioned in screen space. */
+    private static final class Chip {
+        final String id;     // "item" | "blacklist" | "ore:<name>" | "mod:<name>"
+        final String label;
+        final int color;
+        final int x;
+        final int width;
+
+        Chip(String id, String label, int color, int x, int width) {
+            this.id = id;
+            this.label = label;
+            this.color = color;
+            this.x = x;
+            this.width = width;
+        }
+
+        boolean contains(int mouseX) {
+            return mouseX >= x && mouseX < x + width;
+        }
+    }
     private final Mode2ConfigMenu menu;
     private final List<Mode2ConfigPacket.PanelEntry> all = new ArrayList<>();
     private final List<Mode2ConfigPacket.PanelEntry> filtered = new ArrayList<>();
@@ -352,12 +382,74 @@ public final class Mode2ConfigScreen extends GuiContainer {
         }
         return false;
     }
+    /**
+     * The category strip: 物品 / one chip per ore rule / one chip per mod rule / 黑名单.
+     *
+     * <p>sensei's 2026-10-03 report ("only about 3 categories fit, fewer when the names are long, and that is
+     * not all of them") had three causes, all fixed here: the strip only started at x=70 because a duplicate
+     * filter label sat to its left, one long rule name could eat the whole row (labels are capped now), and
+     * chips that did not fit were simply not drawn with no hint that more existed (arrow zones + wheel now).
+     *
+     * <p>Built as ONE list that drawing, hit-testing and the scroll range all walk, because the day's other
+     * bugs all came from two sides of a judgement drifting apart.
+     */
+    private List<Chip> buildChips() {
+        return buildChips(categoryScroll);
+    }
+
+    private List<Chip> buildChips(int scroll) {
+        List<Chip> chips = new ArrayList<>();
+        int x = guiLeft + CATEGORY_LEFT - scroll;
+        x = addChip(chips, "item", I18n.format("gui.ae2addon.p3.cat_items"), 0xCCCCCC, x);
+        for (Map.Entry<String, Integer> rule : oreRules.entrySet()) {
+            x = addChip(chips, "ore:" + rule.getKey(), chipLabel("O:", rule.getKey(), rule.getValue()),
+                    0x66CCFF, x);
+        }
+        for (Map.Entry<String, Integer> rule : modRules.entrySet()) {
+            x = addChip(chips, "mod:" + rule.getKey(), chipLabel("M:", rule.getKey(), rule.getValue()),
+                    0xDD99FF, x);
+        }
+        addChip(chips, "blacklist", I18n.format("gui.ae2addon.p3.cat_blacklist"), 0xFF7777, x);
+        return chips;
+    }
+
+    private int addChip(List<Chip> chips, String id, String label, int color, int x) {
+        int width = fontRenderer.getStringWidth(label) + CHIP_GAP;
+        chips.add(new Chip(id, label, color, x, width));
+        return x + width;
+    }
+
+    /** Caps one chip's label so a single long rule name cannot push every other category off the strip. */
+    private String chipLabel(String prefix, String name, int mode) {
+        String suffix = mode == 1 ? " [I]" : " [T]";
+        String label = prefix + name + suffix;
+        if (fontRenderer.getStringWidth(label) <= CHIP_MAX_LABEL_W) {
+            return label;
+        }
+        int room = CHIP_MAX_LABEL_W - fontRenderer.getStringWidth(prefix + "…" + suffix);
+        return prefix + fontRenderer.trimStringToWidth(name, Math.max(12, room)) + "…" + suffix;
+    }
+
     private int maxCategoryScroll() {
-        int width = fontRenderer.getStringWidth(I18n.format("gui.ae2addon.p3.cat_items")) + 8;
-        for (String name : oreRules.keySet()) width += fontRenderer.getStringWidth("O:" + name + " [I]") + 8;
-        for (String name : modRules.keySet()) width += fontRenderer.getStringWidth("M:" + name + " [I]") + 8;
-        width += fontRenderer.getStringWidth(I18n.format("gui.ae2addon.p3.cat_blacklist")) + 8;
-        return Math.max(0, width - 176);
+        List<Chip> chips = buildChips(0);
+        int total = 0;
+        for (Chip chip : chips) {
+            total += chip.width;
+        }
+        return Math.max(0, total - (CATEGORY_RIGHT - CATEGORY_LEFT));
+    }
+
+    private boolean canScrollCategoryLeft() {
+        return categoryScroll > 0;
+    }
+
+    private boolean canScrollCategoryRight() {
+        return categoryScroll < maxCategoryScroll();
+    }
+
+    /** Chips that are fully inside the strip; the rest are reached with the arrow zones or the wheel. */
+    private boolean chipVisible(Chip chip) {
+        return chip.x >= guiLeft + CATEGORY_LEFT && chip.x + chip.width <= guiLeft + CATEGORY_RIGHT;
     }
 
     @Override public void updateScreen() {
@@ -395,33 +487,26 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 rejectTab ? 0xFFFFFF : 0x888888);
         String hint = rejectTab ? I18n.format("gui.ae2addon.mode2.hint_reject")
                 : I18n.format("gui.ae2addon.mode2.hint_bar");
+        // A rule filter names itself here instead of stealing width from the category strip: its chip can be
+        // scrolled out of view, and the strip needs every pixel to show as many categories as possible.
+        if (!rejectTab && activeRule != null && !"item".equals(activeRule)) {
+            hint = I18n.format("gui.ae2addon.mode2.filter_active", activeRule);
+        }
         fontRenderer.drawString(fontRenderer.trimStringToWidth(hint, 235), guiLeft + 10, guiTop + 61, 0xBBBBBB);
-        fontRenderer.drawString(fontRenderer.trimStringToWidth(activeRule == null
-                ? I18n.format("gui.ae2addon.mode2.tab_all") : "[" + activeRule + "]", 54),
-                guiLeft + 12, guiTop + 75, 0xFFFF99);
-        int chipX = guiLeft + 70 - categoryScroll;
-        String itemChip = I18n.format("gui.ae2addon.p3.cat_items");
-        int itemChipWidth = fontRenderer.getStringWidth(itemChip) + 8;
-        if (chipX >= guiLeft + 70 && chipX + itemChipWidth <= guiLeft + 246)
-            fontRenderer.drawString(itemChip, chipX, guiTop + 75, 0xCCCCCC);
-        chipX += itemChipWidth;
-        for (Map.Entry<String, Integer> rule : oreRules.entrySet()) {
-            String label = "O:" + rule.getKey() + (rule.getValue() == 1 ? " [I]" : " [T]");
-            int width = fontRenderer.getStringWidth(label) + 8;
-            if (chipX >= guiLeft + 70 && chipX + width <= guiLeft + 246)
-                fontRenderer.drawString(label, chipX, guiTop + 75, 0x66CCFF);
-            chipX += width;
+        for (Chip chip : buildChips()) {
+            if (!chipVisible(chip)) {
+                continue; // clipped chips are reached with the arrows or the wheel
+            }
+            boolean active = chip.id.equals(activeRule == null ? "item" : activeRule);
+            fontRenderer.drawString(chip.label, chip.x, guiTop + CATEGORY_Y, active ? 0xFFFFFF : chip.color);
         }
-        for (Map.Entry<String, Integer> rule : modRules.entrySet()) {
-            String label = "M:" + rule.getKey() + (rule.getValue() == 1 ? " [I]" : " [T]");
-            int width = fontRenderer.getStringWidth(label) + 8;
-            if (chipX >= guiLeft + 70 && chipX + width <= guiLeft + 246)
-                fontRenderer.drawString(label, chipX, guiTop + 75, 0xDD99FF);
-            chipX += width;
+        // Arrow zones at both ends of the strip: the only sign that there are more categories than fit.
+        if (canScrollCategoryLeft()) {
+            fontRenderer.drawString("←", guiLeft + 10, guiTop + CATEGORY_Y, 0xFFFF77);
         }
-        String blackChip = I18n.format("gui.ae2addon.p3.cat_blacklist");
-        if (chipX >= guiLeft + 70 && chipX + fontRenderer.getStringWidth(blackChip) <= guiLeft + 246)
-            fontRenderer.drawString(blackChip, chipX, guiTop + 75, 0xFF7777);
+        if (canScrollCategoryRight()) {
+            fontRenderer.drawString("→", guiLeft + CATEGORY_RIGHT + 1, guiTop + CATEGORY_Y, 0xFFFF77);
+        }
         if (panelRetry.exhausted(expectedChunks > 0 && !panelComplete)) fontRenderer.drawString(
                 I18n.format("gui.ae2addon.p3.retry_stopped", I18n.format("gui.ae2addon.p3.list_panel")),
                 guiLeft + 12, guiTop + 98, 0xFF5555);
@@ -484,6 +569,18 @@ public final class Mode2ConfigScreen extends GuiContainer {
         if (mouseX >= guiLeft + 205 && mouseX < guiLeft + 246
                 && mouseY >= guiTop + 170 && mouseY < guiTop + 186)
             drawHoveringText(I18n.format("gui.ae2addon.p3.rule_all_tip"), mouseX, mouseY);
+        // The arrow zones need to explain themselves: there is no other sign that more categories exist.
+        int categoryRelY = mouseY - guiTop;
+        if (categoryRelY >= CATEGORY_HIT_TOP && categoryRelY < CATEGORY_HIT_BOTTOM) {
+            int categoryRelX = mouseX - guiLeft;
+            boolean onLeftArrow = categoryRelX >= 10 && categoryRelX < CATEGORY_LEFT && canScrollCategoryLeft();
+            boolean onRightArrow = categoryRelX >= CATEGORY_RIGHT && categoryRelX < 246
+                    && canScrollCategoryRight();
+            if (onLeftArrow || onRightArrow) {
+                drawHoveringText(java.util.Collections.singletonList(
+                        I18n.format("gui.ae2addon.mode2.cat_scroll_tip")), mouseX, mouseY);
+            }
+        }
     }
 
     private static String shortAmount(BigInteger amount) {
@@ -512,44 +609,42 @@ public final class Mode2ConfigScreen extends GuiContainer {
             if (mouseButton == 0 && y >= 36 && y < 47 && x >= 144 && x < 246) {
                 rejectTab = x >= 193; scrollOffset = 0; applyFilters(); return;
             }
-            if (y >= 74 && y < 86 && x >= 70 && x < 246) {
-                int chipX = 70 - categoryScroll;
-                int itemChipWidth = fontRenderer.getStringWidth(I18n.format("gui.ae2addon.p3.cat_items")) + 8;
-                if (x >= chipX && x < chipX + itemChipWidth) {
-                    activeRule = "item"; applyFilters(); return;
+            if (y >= CATEGORY_HIT_TOP && y < CATEGORY_HIT_BOTTOM) {
+                // Arrow gaps first: they are drawn exactly when something is scrolled out of the strip.
+                if (x >= 10 && x < CATEGORY_LEFT && canScrollCategoryLeft()) {
+                    categoryScroll = Math.max(0, categoryScroll - CATEGORY_STEP * 3);
+                    return;
                 }
-                chipX += itemChipWidth;
-                for (Map.Entry<String, Integer> rule : oreRules.entrySet()) {
-                    int width = fontRenderer.getStringWidth("O:" + rule.getKey() + " [I]") + 8;
-                    if (x >= chipX && x < chipX + width) {
-                        if (isShiftKeyDown() && mouseButton == 0)
-                            CellNetwork.send(Mode2ConfigPacket.rule(20, true, rule.getKey(), 1));
-                        else if (mouseButton == 1)
-                            CellNetwork.send(Mode2ConfigPacket.rule(15, true, rule.getKey(), rule.getValue() == 1 ? 2 : 1));
-                        else { activeRule = "ore:" + rule.getKey(); applyFilters(); }
-                        return;
+                if (x >= CATEGORY_RIGHT && x < 246 && canScrollCategoryRight()) {
+                    categoryScroll = Math.min(maxCategoryScroll(), categoryScroll + CATEGORY_STEP * 3);
+                    return;
+                }
+                for (Chip chip : buildChips()) {
+                    if (!chipVisible(chip) || !chip.contains(mouseX)) {
+                        continue;
                     }
-                    chipX += width;
-                }
-                for (Map.Entry<String, Integer> rule : modRules.entrySet()) {
-                    int width = fontRenderer.getStringWidth("M:" + rule.getKey() + " [I]") + 8;
-                    if (x >= chipX && x < chipX + width) {
-                        if (isShiftKeyDown() && mouseButton == 0)
-                            CellNetwork.send(Mode2ConfigPacket.rule(20, false, rule.getKey(), 1));
-                        else if (mouseButton == 1)
-                            CellNetwork.send(Mode2ConfigPacket.rule(15, false, rule.getKey(), rule.getValue() == 1 ? 2 : 1));
-                        else { activeRule = "mod:" + rule.getKey(); applyFilters(); }
-                        return;
+                    if (chip.id.startsWith("ore:") || chip.id.startsWith("mod:")) {
+                        boolean ore = chip.id.startsWith("ore:");
+                        String name = chip.id.substring(4);
+                        int mode = (ore ? oreRules : modRules).getOrDefault(name, 1);
+                        if (mouseButton == 0 && isShiftKeyDown()) {
+                            CellNetwork.send(Mode2ConfigPacket.rule(20, ore, name, 1));       // shift+左键删规则
+                        } else if (mouseButton == 1) {
+                            CellNetwork.send(Mode2ConfigPacket.rule(15, ore, name, mode == 1 ? 2 : 1));
+                        } else {
+                            activeRule = chip.id;
+                            applyFilters();
+                        }
+                    } else {
+                        activeRule = chip.id;   // 物品 / 黑名单
+                        applyFilters();
                     }
-                    chipX += width;
+                    return;
                 }
-                int blackWidth = fontRenderer.getStringWidth(I18n.format("gui.ae2addon.p3.cat_blacklist")) + 8;
-                if (x >= chipX && x < chipX + blackWidth) {
-                    activeRule = "blacklist"; applyFilters(); return;
-                }
-            }
-            if (y >= 74 && y < 86 && x >= 10 && x < 70 && mouseButton == 0) {
-                activeRule = null; applyFilters(); return;
+                // Empty strip space clears the filter -- the affordance the old left-hand label used to give.
+                activeRule = null;
+                applyFilters();
+                return;
             }
             if (x >= 10 && x < 246 && y >= 88 && y < 150 && !(rejectTab && rejectList.pending())) {
                 int row = (y - 88) / ROW_H + scrollOffset;
@@ -616,10 +711,18 @@ public final class Mode2ConfigScreen extends GuiContainer {
         super.handleMouseInput();
         if (uiState != 1) return;
         int wheel = Mouse.getDWheel();
-        if (wheel != 0) {
-            if (isShiftKeyDown()) categoryScroll = Math.max(0,
-                    Math.min(maxCategoryScroll(), categoryScroll + (wheel < 0 ? 24 : -24)));
-            else scrollOffset = Math.max(0, Math.min(Math.max(0, filtered.size() - 4),
+        if (wheel == 0) return;
+        // Same cursor maths vanilla uses, so "over the category strip" means what the player sees. Chips now
+        // scroll with a plain wheel (Shift+wheel still works too) and the strip draws arrows whenever there is
+        // more to the left or right -- sensei could not tell that more categories existed.
+        int mouseX = Mouse.getX() * this.width / this.mc.displayWidth;
+        int mouseY = this.height - Mouse.getY() * this.height / this.mc.displayHeight - 1;
+        boolean overStrip = mouseY >= guiTop + CATEGORY_HIT_TOP && mouseY < guiTop + CATEGORY_HIT_BOTTOM;
+        if (overStrip || isShiftKeyDown()) {
+            categoryScroll = Math.max(0, Math.min(maxCategoryScroll(),
+                    categoryScroll + (wheel < 0 ? CATEGORY_STEP : -CATEGORY_STEP)));
+        } else {
+            scrollOffset = Math.max(0, Math.min(Math.max(0, filtered.size() - 4),
                     scrollOffset + (wheel < 0 ? 1 : -1)));
         }
     }
