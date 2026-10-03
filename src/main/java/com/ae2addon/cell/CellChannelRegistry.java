@@ -47,7 +47,12 @@ public final class CellChannelRegistry {
 
     public static synchronized void register(CellChannel<?> channel) {
         BY_ID.put(channel.id(), channel);
-        BY_STORAGE.put(channel.storage(), channel);
+        IStorageChannel<?> storage = channel.storage();
+        BY_STORAGE.put(storage, channel);
+        // Registration-time diagnostic (BUG1/BUG2, 2026-10-03): if AE2 cannot name this channel yet, the map key
+        // is null and an identity-only lookup would answer "I do not serve that channel" for the rest of the run.
+        com.ae2addon.AE2Addon.LOG.info("[ae2addon] 注册通道 {}：storage={}", channel.id(),
+                storage == null ? "null（AE2 此刻还认不出：查表会失效，靠 class 兜底）" : storage.getClass().getName());
     }
 
     /** @return the adapter for a saved id, or {@code null} when that channel is not available here. */
