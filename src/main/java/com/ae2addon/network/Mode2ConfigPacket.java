@@ -11,6 +11,7 @@ import com.ae2addon.gui.Mode2ConfigScreen;
 import com.ae2addon.gui.ModeSelectScreen;
 
 import appeng.api.storage.data.IAEItemStack;
+import appeng.api.storage.data.IAEStack;
 import appeng.util.item.AEItemStack;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.client.Minecraft;
@@ -76,17 +77,17 @@ public final class Mode2ConfigPacket implements IMessage {
         p.state.setBoolean("default", inv.rejectDefault());
         p.state.setBoolean("ruleInstant", inv.isRuleInstant());
         NBTTagList rejectOn = new NBTTagList(), rejectOff = new NBTTagList();
-        for (IAEItemStack key : inv.getRejectOnKeys())
-            rejectOn.appendTag(key.createItemStack().writeToNBT(new NBTTagCompound()));
-        for (IAEItemStack key : inv.getRejectOffKeys())
-            rejectOff.appendTag(key.createItemStack().writeToNBT(new NBTTagCompound()));
+        for (IAEStack<?> key : inv.getRejectOnKeys())
+            rejectOn.appendTag(key.asItemStackRepresentation().writeToNBT(new NBTTagCompound()));
+        for (IAEStack<?> key : inv.getRejectOffKeys())
+            rejectOff.appendTag(key.asItemStackRepresentation().writeToNBT(new NBTTagCompound()));
         p.state.setTag("on", rejectOn);
         p.state.setTag("off", rejectOff);
         NBTTagList committed = new NBTTagList();
         for (UnlimitedCellInventory.PanelItem row : inv.getPanelItems()) {
             if (!row.isInfinite) continue;
             NBTTagCompound entry = new NBTTagCompound();
-            entry.setTag("key", row.key.createItemStack().writeToNBT(new NBTTagCompound()));
+            entry.setTag("key", row.key.asItemStackRepresentation().writeToNBT(new NBTTagCompound()));
             entry.setString("amount", inv.getCommitedAmount(row.key).toString());
             entry.setBoolean("has", inv.hasCommitedAmount(row.key));
             committed.appendTag(entry);
@@ -237,10 +238,11 @@ public final class Mode2ConfigPacket implements IMessage {
         else if (msg.type == 1 || msg.type == 13) {
             IAEItemStack key = key(msg.item); if (key == null) return; inv.addWhitelist(key);
         } else if (msg.type == 2) {
-            for (IAEItemStack key : inv.getWl()) {
-                ItemStack stack = key.createItemStack();
+            for (IAEStack<?> key : inv.getWl()) {
+                if (!(key instanceof IAEItemStack)) continue;
+                ItemStack stack = key.asItemStackRepresentation();
                 if (stack.getItem().getRegistryName() != null
-                        && stack.getItem().getRegistryName().toString().equals(msg.text)) inv.removeWhitelist(key);
+                        && stack.getItem().getRegistryName().toString().equals(msg.text)) inv.removeWhitelist((IAEItemStack) key);
             }
         } else if (msg.type == 5) {
             IAEItemStack key = key(msg.item); if (key == null) return; inv.togglePanelInfinite(key);
@@ -303,7 +305,7 @@ public final class Mode2ConfigPacket implements IMessage {
         sendRules(player, inv, false);
         List<PanelEntry> all = new ArrayList<>();
         for (UnlimitedCellInventory.PanelItem row : inv.getPanelItems()) {
-            all.add(new PanelEntry(row.key.createItemStack(), row.amount, row.isInfinite,
+            all.add(new PanelEntry(row.key.asItemStackRepresentation(), row.amount, row.isInfinite,
                     row.bytes, row.itemThreshold, row.quantityLocked, inv.isWhitelisted(row.key)));
         }
         int total = Math.max(1, (all.size() + MAX_ITEMS_PER_CHUNK - 1) / MAX_ITEMS_PER_CHUNK);
@@ -314,9 +316,9 @@ public final class Mode2ConfigPacket implements IMessage {
         }
     }
 
-    private static List<ItemStack> stackList(Set<IAEItemStack> source) {
+    private static List<ItemStack> stackList(Set<IAEStack<?>> source) {
         List<ItemStack> result = new ArrayList<>();
-        for (IAEItemStack key : source) result.add(key.createItemStack());
+        for (IAEStack<?> key : source) result.add(key.asItemStackRepresentation());
         return result;
     }
 

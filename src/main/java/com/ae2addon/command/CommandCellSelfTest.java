@@ -7,6 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import com.ae2addon.AE2Addon;
+import com.ae2addon.cell.CellChannelRegistry;
 import com.ae2addon.cell.CellStorageData;
 import com.ae2addon.cell.UnlimitedCellInventory;
 import com.ae2addon.data.CellWorldData;
@@ -226,7 +227,7 @@ public class CommandCellSelfTest extends CommandBase {
         b2.injectItems(stack(Items.STICK, 1L), Actionable.MODULATE, NO_SOURCE);
         boolean b3inf = b2.isInfinite(stick);
         long b3committed = b2.storedAmount(stick).longValue();
-        boolean b3s2clear = b2.rawData().s2.isEmpty();
+        boolean b3s2clear = b2.rawData().stocks(CellChannelRegistry.ITEM).s2.isEmpty();
         long b3take = size(b2.extractItems(stack(Items.STICK, Long.MAX_VALUE), Actionable.MODULATE, NO_SOURCE));
         check(sender, "B3", "累计到 1000 → 升级：ul 命中、s2 清空、承诺额度 1000，此后取 Long.MAX 返回 Long.MAX",
                 b3inf && b3s2clear && b3committed == 1000L && b3take == Long.MAX_VALUE,
@@ -386,6 +387,7 @@ public class CommandCellSelfTest extends CommandBase {
         runAllTypesCostGroup(sender);
         runListingIntegrityGroup(sender);
         runBigQuantityGroup(sender);
+        runSaveFormatGroup(sender);
 
         finish(sender);
     }
@@ -483,9 +485,9 @@ public class CommandCellSelfTest extends CommandBase {
     }
 
     private static void wipe(CellStorageData data) {
-        data.s1.clear();
-        data.s2.clear();
-        data.ca.clear();
+        data.stocks(CellChannelRegistry.ITEM).s1.clear();
+        data.stocks(CellChannelRegistry.ITEM).s2.clear();
+        data.stocks(CellChannelRegistry.ITEM).ca.clear();
         data.itemThr.clear();
         data.wl.clear();
         data.ul.clear();
@@ -579,7 +581,7 @@ public class CommandCellSelfTest extends CommandBase {
         d6.injectItems(stack(Items.DIAMOND, 300L), Actionable.MODULATE, NO_SOURCE);
         boolean d6on = d6.togglePanelInfinite(diamond);
         long d6ca = d6.getCommitedAmount(diamond).longValue();
-        boolean d6s2clear = d6.rawData().s2.isEmpty();
+        boolean d6s2clear = d6.rawData().stocks(CellChannelRegistry.ITEM).s2.isEmpty();
         boolean d6off = d6.togglePanelInfinite(diamond);
         long d6back = d6.storedAmount(diamond).longValue();
         check(sender, "D6", "面板切换无限：300 搬进承诺额度；再切换 300 回到普通存储（不丢数）",
@@ -599,13 +601,13 @@ public class CommandCellSelfTest extends CommandBase {
         boolean d7diamond = false;
         List<UnlimitedCellInventory.PanelItem> rows = d7.getPanelItems();
         for (UnlimitedCellInventory.PanelItem row : rows) {
-            if (row.key.isSameType(stick) && row.amount.signum() == 0 && row.itemThreshold == 123L) {
+            if (((IAEItemStack) row.key).isSameType(stick) && row.amount.signum() == 0 && row.itemThreshold == 123L) {
                 d7zero = true;
             }
-            if (row.key.isSameType(key(Items.PAPER)) && row.isInfinite) {
+            if (((IAEItemStack) row.key).isSameType(key(Items.PAPER)) && row.isInfinite) {
                 d7paper = true;
             }
-            if (row.key.isSameType(diamond) && row.amount.longValue() == 5L && !row.isInfinite) {
+            if (((IAEItemStack) row.key).isSameType(diamond) && row.amount.longValue() == 5L && !row.isInfinite) {
                 d7diamond = true;
             }
         }
@@ -851,7 +853,7 @@ public class CommandCellSelfTest extends CommandBase {
         g3.addModRule("minecraft");
         boolean g3panel = false;
         for (UnlimitedCellInventory.PanelItem row : g3.getPanelItems()) {
-            if (row.key.isSameType(key(Items.PAPER)) && row.isInfinite) {
+            if (((IAEItemStack) row.key).isSameType(key(Items.PAPER)) && row.isInfinite) {
                 g3panel = true;
             }
         }
@@ -1165,6 +1167,89 @@ public class CommandCellSelfTest extends CommandBase {
                 longMax + "/" + j5expect, j5take + "/" + j5left);
     }
 
+    /**
+     * K group: the save format across the P4 split.
+     *
+     * <p>sensei's layout (2026-10-03) is "storage separate, settings shared": the three count maps are per
+     * channel, everything else is one shared set of settings. Saves made before that split have those maps at
+     * the TOP LEVEL and keys with no channel marker, and reading them must land in the item channel -- if it
+     * did not, every existing world would look empty. No in-game round trip can produce that layout any more,
+     * so the self-test builds it by hand.
+     */
+    private void runSaveFormatGroup(ICommandSender sender) {
+        IAEItemStack stickKey = key(Items.STICK);
+
+        NBTTagCompound legacy = new NBTTagCompound();
+        NBTTagList s1 = new NBTTagList();
+        s1.appendTag(legacyCountEntry(new ItemStack(Items.STICK), "12345"));
+        legacy.setTag("s1", s1);
+        NBTTagList s2 = new NBTTagList();
+        s2.appendTag(legacyCountEntry(new ItemStack(Items.DIAMOND), "7"));
+        legacy.setTag("s2", s2);
+        NBTTagList ca = new NBTTagList();
+        ca.appendTag(legacyCountEntry(new ItemStack(Items.COAL), "9"));
+        legacy.setTag("ca", ca);
+        NBTTagList legacyWl = new NBTTagList();
+        NBTTagCompound bareKey = new NBTTagCompound();
+        AEItemStack.fromItemStack(new ItemStack(Items.PAPER)).writeToNBT(bareKey);
+        legacyWl.appendTag(bareKey); // legacy sets stored the key tag itself, with no "k" wrapper
+        legacy.setTag("w", legacyWl);
+        NBTTagList legacyUl = new NBTTagList();
+        legacyUl.appendTag(bareKey);
+        legacy.setTag("u", legacyUl);
+        for (String emptyKey : new String[] { "it", "m3", "ro", "rf", "rt", "bl", "ql", "or", "md", "rm" }) {
+            legacy.setTag(emptyKey, new NBTTagList());
+        }
+
+        CellStorageData legacyData = new CellStorageData();
+        legacyData.readFromNbt(legacy);
+        BigInteger k1s1 = legacyData.stocks(CellChannelRegistry.ITEM).s1.get(stickKey);
+        BigInteger k1s2 = legacyData.stocks(CellChannelRegistry.ITEM).s2.get(key(Items.DIAMOND));
+        BigInteger k1ca = legacyData.stocks(CellChannelRegistry.ITEM).ca.get(key(Items.COAL));
+        boolean k1wl = legacyData.wl.contains(key(Items.PAPER)) && legacyData.ul.contains(key(Items.PAPER));
+        check(sender, "K1", "★ 旧存档（顶层 s1/s2/ca + 无通道标签的键）按物品通道读入，一条不丢",
+                BigInteger.valueOf(12345).equals(k1s1) && BigInteger.valueOf(7).equals(k1s2)
+                        && BigInteger.valueOf(9).equals(k1ca) && k1wl,
+                "12345/7/9/true", k1s1 + "/" + k1s2 + "/" + k1ca + "/" + k1wl);
+
+        // K2: new layout round trip -- including a per-key threshold and the blacklist (shared collections)
+        legacyData.itemThr.put(stickKey, 4242L);
+        legacyData.blacklist.add(stickKey);
+        NBTTagCompound written = new NBTTagCompound();
+        legacyData.writeToNbt(written);
+        CellStorageData reloaded = new CellStorageData();
+        reloaded.readFromNbt(written);
+        BigInteger k2s1 = reloaded.stocks(CellChannelRegistry.ITEM).s1.get(stickKey);
+        Long k2thr = reloaded.itemThr.get(stickKey);
+        boolean k2ok = BigInteger.valueOf(12345).equals(k2s1) && k2thr != null && k2thr == 4242L
+                && reloaded.blacklist.contains(stickKey) && reloaded.wl.contains(key(Items.PAPER))
+                && reloaded.ul.contains(key(Items.PAPER))
+                && BigInteger.valueOf(9).equals(reloaded.stocks(CellChannelRegistry.ITEM).ca.get(key(Items.COAL)));
+        check(sender, "K2", "★ 新格式往返：按通道的存量 + 共享的单物品阈值/黑名单/白名单全部无损",
+                k2ok, "12345/4242/true/true/true/9",
+                k2s1 + "/" + k2thr + "/" + reloaded.blacklist.contains(stickKey) + "/"
+                        + reloaded.wl.contains(key(Items.PAPER)) + "/" + reloaded.ul.contains(key(Items.PAPER))
+                        + "/" + reloaded.stocks(CellChannelRegistry.ITEM).ca.get(key(Items.COAL)));
+
+        // K3: another channel's bucket must not leak into the item channel's view
+        UnlimitedCellInventory k3 = newInventory("k3");
+        k3.setMode(1);
+        k3.injectItems(stack(Items.STICK, 5L), Actionable.MODULATE, NO_SOURCE);
+        k3.rawData().stocks("selftest-foreign").s1.put(stickKey, BigInteger.valueOf(999));
+        long k3count = k3.getStoredItemCount();
+        check(sender, "K3", "★ 别的通道的存量不会漏进物品通道的读数（每通道各自一间）",
+                k3count == 5L, "5", String.valueOf(k3count));
+    }
+
+    /** One count entry in the PRE-P4 layout: {@code k} = key tag, {@code n} = decimal count. */
+    private static NBTTagCompound legacyCountEntry(ItemStack definition, String count) {
+        NBTTagCompound entry = new NBTTagCompound();
+        NBTTagCompound keyTag = new NBTTagCompound();
+        AEItemStack.fromItemStack(definition).writeToNBT(keyTag);
+        entry.setTag("k", keyTag);
+        entry.setString("n", count);
+        return entry;
+    }
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
     private static String firstOreName(ItemStack definition) {
         int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(definition);

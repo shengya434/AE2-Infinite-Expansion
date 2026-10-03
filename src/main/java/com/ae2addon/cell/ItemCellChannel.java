@@ -50,6 +50,13 @@ public final class ItemCellChannel implements CellChannel<IAEItemStack> {
     }
 
     @Override
+    public IAEItemStack normalize(IAEItemStack key) {
+        IAEItemStack copy = key.copy();
+        copy.setStackSize(1);
+        return copy;
+    }
+
+    @Override
     public String namespace(IAEItemStack key) {
         ItemStack def = key.getDefinition();
         if (def == null || def.isEmpty()) {
@@ -148,7 +155,7 @@ public final class ItemCellChannel implements CellChannel<IAEItemStack> {
                 if (key == null) {
                     continue;
                 }
-                if (seen.add(UnlimitedCellInventory.lookupKeyOf(key))) {
+                if (seen.add(normalize(key))) {
                     found.add(key);
                 }
             }

@@ -32,10 +32,26 @@ public interface CellChannel<T extends IAEStack<T>> {
     IStorageChannel<T> storage();
 
     /**
-     * Rebuilds one key from NBT. Needed by the v1 save format and by the pre-per-channel data layout, so it
-     * has to come from the channel: only the channel knows how its stacks deserialize.
+     * Identity normalisation: a copy with the stack size forced to 1.
+     *
+     * <p>AE2's stack identity ignores the size, and every map/set in the cell is keyed by identity. Doing it
+     * per channel keeps the core free of channel types (it cannot call {@code new AEItemStack(...)}).
+     */
+    T normalize(T key);
+
+    /**
+     * Rebuilds one key from NBT. Needed by the v1 save format and by saved data, so it has to come from the
+     * channel: only the channel knows how its stacks deserialize.
      */
     T readNbt(NBTTagCompound tag);
+
+    /**
+     * Untyped bridge for the data layer, which reads keys for whatever channel a saved entry names (it only
+     * has a {@code CellChannel<?>} in hand). Implementations just return {@link #readNbt}.
+     */
+    default IAEStack<?> readKeyUntyped(NBTTagCompound tag) {
+        return readNbt(tag);
+    }
 
     /**
      * Every key this channel can ever hand out, for mode 3 ("everything is infinite") and for the Instant-rule

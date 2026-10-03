@@ -1,72 +1,120 @@
 package com.ae2addon.cell;
 
 import java.math.BigInteger;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
-import appeng.api.storage.data.IAEItemStack;
-import appeng.util.item.AEItemStack;
+import com.ae2addon.AE2Addon;
+
+import appeng.api.storage.data.IAEStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.nbt.NBTTagString;
 
 /**
- * P2: everything that belongs to ONE cell, keyed in {@link com.ae2addon.data.CellWorldData} by the
+ * P2/P4: everything that belongs to ONE cell, keyed in {@link com.ae2addon.data.CellWorldData} by the
  * cell's UUID.
  *
- * <p>Lives in world saved data rather than in the cell's ItemStack because these maps can hold
- * hundreds of thousands of keys; the item NBT only carries the small routing fields
- * (mode / workMode / threshold / uuid).
+ * <p><b>Layout (sensei's 2026-10-03 decision: "storage separate, settings shared")</b>:
+ * <ul>
+ * <li><b>per channel</b> ({@link Stocks}): the counts -- mode 1 store, mode 2 store and the committed
+ *     amounts. These are the only things that differ from one storage channel to the next.</li>
+ * <li><b>shared</b>: the modes/threshold/rules and all the per-key collections (whitelist, infinite set,
+ *     seen variants, per-key thresholds, blacklist, quantity locks, reject list, Touch-rule evidence). Keys
+ *     carry their own channel identity, so one map can hold item and fluid keys without collisions; every
+ *     reader that walks them has to filter to its own channel.</li>
+ * </ul>
  *
- * <p>All counts are {@link BigInteger}: the 1.20 line learned this the hard way -- it originally kept
- * the "committed" amount in a {@code long} and clamped on write, so the very first write truncated a
- * real stored quantity down to 9.22e18.
+ * <p>Lives in world saved data rather than in the cell's ItemStack because these maps can hold hundreds of
+ * thousands of keys; the item NBT only carries the small routing fields (mode / workMode / threshold / uuid).
+ *
+ * <p><b>Save compatibility</b>: keys used to be stored without a channel marker, and the three count maps used
+ * to sit at the top level. Both are read as the item channel, so an existing save needs no migration.
+ *
+ * <p>All counts are {@link BigInteger}: the 1.20 line learned this the hard way -- it originally kept the
+ * "committed" amount in a {@code long} and clamped on write, so the very first write truncated a real stored
+ * quantity down to 9.22e18.
  */
 public class CellStorageData {
 
-    /** mode 1 real storage. */
-    public final Map<IAEItemStack, BigInteger> s1 = new LinkedHashMap<>();
-    /** mode 2 real storage (not yet upgraded to infinite). */
-    public final Map<IAEItemStack, BigInteger> s2 = new LinkedHashMap<>();
-    /** Committed amounts: what an unlimited item must give back when its infinity is cancelled. */
-    public final Map<IAEItemStack, BigInteger> ca = new LinkedHashMap<>();
-    /** Per-item thresholds; a missing entry means "use the global threshold". */
-    public final Map<IAEItemStack, Long> itemThr = new LinkedHashMap<>();
+    /** The three count maps of ONE storage channel. */
+    public static final class Stocks {
+        /** mode 1 real storage. */
+        public final Map<IAEStack<?>, BigInteger> s1 = new LinkedHashMap<>();
+        /** mode 2 real storage (not yet upgraded to infinite). */
+        public final Map<IAEStack<?>, BigInteger> s2 = new LinkedHashMap<>();
+        /** Committed amounts: what an unlimited key must give back when its infinity is cancelled. */
+        public final Map<IAEStack<?>, BigInteger> ca = new LinkedHashMap<>();
+
+        public boolean isEmpty() {
+            return s1.isEmpty() && s2.isEmpty() && ca.isEmpty();
+        }
+    }
+
+    private final Map<String, Stocks> stocks = new LinkedHashMap<>();
+
+    /** @return this channel's count maps, created on demand. */
+    public Stocks stocks(String channelId) {
+        Stocks found = stocks.get(channelId);
+        if (found == null) {
+            found = new Stocks();
+            stocks.put(channelId, found);
+        }
+        return found;
+    }
+
+    /** @return this channel's count maps, or {@code null} when this cell never touched that channel. */
+    public Stocks stocksOrNull(String channelId) {
+        return stocks.get(channelId);
+    }
+
+    public Map<String, Stocks> allStocks() {
+        return Collections.unmodifiableMap(stocks);
+    }
+
+    // ------------------------------------------------------------------
+    // shared settings + per-key collections (keys know their channel)
+    // ------------------------------------------------------------------
+
+    /** Per-key thresholds; a missing entry means "use the global threshold". */
+    public final Map<IAEStack<?>, Long> itemThr = new LinkedHashMap<>();
     /** Whitelist. */
-    public final Set<IAEItemStack> wl = new LinkedHashSet<>();
-    /** Items that have been upgraded to infinite. */
-    public final Set<IAEItemStack> ul = new LinkedHashSet<>();
-    /** mode 3: items we have seen (so they can be listed). */
-    public final Set<IAEItemStack> m3 = new LinkedHashSet<>();
+    public final Set<IAEStack<?>> wl = new LinkedHashSet<>();
+    /** Keys that have been upgraded to infinite. */
+    public final Set<IAEStack<?>> ul = new LinkedHashSet<>();
+    /** mode 3: keys we have seen (so they can be listed). */
+    public final Set<IAEStack<?>> m3 = new LinkedHashSet<>();
 
     /**
      * Reject list, ported from the 1.20 line: a three-state model per key.
      * {@code rejectOn} = explicitly rejected, {@code rejectOff} = explicitly NOT rejected (overrides
      * the default), anything else follows {@link #rejectDefault}.
      */
-    public final Set<IAEItemStack> rejectOn = new LinkedHashSet<>();
-    public final Set<IAEItemStack> rejectOff = new LinkedHashSet<>();
+    public final Set<IAEStack<?>> rejectOn = new LinkedHashSet<>();
+    public final Set<IAEStack<?>> rejectOff = new LinkedHashSet<>();
     public boolean rejectDefault;
 
     /**
      * Batch "infinite" rules. 1.20 matches item *tags* here, but 1.12.2 predates vanilla item tags
      * (they arrived in 1.13), so the equivalent is an OreDictionary name -- "ingotIron", "logWood", ...
-     * See md/p3-judgement-api-spec.md section 2.1.
+     * and, by sensei's 2026-10-03 decision, ore rules are item-only while mod rules apply to every channel.
      */
     public final Set<String> oreRules = new LinkedHashSet<>();
     public final Set<String> modRules = new LinkedHashSet<>();
     /** ruleKey ("ore:x" / "mod:x") -&gt; mode: 1 = Instant, 2 = Touch. Absent means 1. */
     public final Map<String, Integer> ruleModes = new LinkedHashMap<>();
     /** Keys actually stored while a Touch rule matched them. */
-    public final Set<IAEItemStack> touched = new LinkedHashSet<>();
+    public final Set<IAEStack<?>> touched = new LinkedHashSet<>();
     /** Blacklisted keys can still be stored, but never become infinite. */
-    public final Set<IAEItemStack> blacklist = new LinkedHashSet<>();
+    public final Set<IAEStack<?>> blacklist = new LinkedHashSet<>();
     /** Keys whose stored amount is pinned: inserts are swallowed, extracts are capped. */
-    public final Set<IAEItemStack> qtyLocked = new LinkedHashSet<>();
+    public final Set<IAEStack<?>> qtyLocked = new LinkedHashSet<>();
     public boolean ruleInstant = true;
 
+    private static final String K_STOCKS = "st";
     private static final String K_S1 = "s1";
     private static final String K_S2 = "s2";
     private static final String K_CA = "ca";
@@ -88,9 +136,19 @@ public class CellStorageData {
     private static final String K_NUM = "n";
     private static final String K_NAME = "s";
     private static final String K_MODE = "m";
+    /** Channel marker on a shared per-key entry; absent means item (pre-P4 saves). */
+    private static final String K_CHANNEL = "c";
+
+    /** Unknown channel ids are reported once, not once per key. */
+    private static final Set<String> WARNED_CHANNELS = new java.util.HashSet<>();
 
     public boolean isEmpty() {
-        return s1.isEmpty() && s2.isEmpty() && ca.isEmpty() && wl.isEmpty() && ul.isEmpty() && m3.isEmpty()
+        for (Stocks one : stocks.values()) {
+            if (!one.isEmpty()) {
+                return false;
+            }
+        }
+        return itemThr.isEmpty() && wl.isEmpty() && ul.isEmpty() && m3.isEmpty()
                 && rejectOn.isEmpty() && rejectOff.isEmpty()
                 && oreRules.isEmpty() && modRules.isEmpty() && blacklist.isEmpty() && qtyLocked.isEmpty();
     }
@@ -100,29 +158,36 @@ public class CellStorageData {
     // ------------------------------------------------------------------
 
     public void writeToNbt(NBTTagCompound root) {
-        root.setTag(K_S1, writeCountMap(s1));
-        root.setTag(K_S2, writeCountMap(s2));
-        root.setTag(K_CA, writeCountMap(ca));
-        root.setTag(K_IT, writeLongMap(itemThr));
-        root.setTag(K_WL, writeKeySet(wl));
-        root.setTag(K_UL, writeKeySet(ul));
-        root.setTag(K_M3, writeKeySet(m3));
-        root.setTag(K_REJECT_ON, writeKeySet(rejectOn));
-        root.setTag(K_REJECT_OFF, writeKeySet(rejectOff));
+        NBTTagCompound stockRoot = new NBTTagCompound();
+        for (Map.Entry<String, Stocks> entry : stocks.entrySet()) {
+            if (entry.getValue().isEmpty()) {
+                continue;
+            }
+            NBTTagCompound one = new NBTTagCompound();
+            one.setTag(K_S1, writeCountMap(entry.getValue().s1));
+            one.setTag(K_S2, writeCountMap(entry.getValue().s2));
+            one.setTag(K_CA, writeCountMap(entry.getValue().ca));
+            stockRoot.setTag(entry.getKey(), one);
+        }
+        root.setTag(K_STOCKS, stockRoot);
+        root.setTag(K_IT, writeChannelLongMap(itemThr));
+        root.setTag(K_WL, writeChannelKeySet(wl));
+        root.setTag(K_UL, writeChannelKeySet(ul));
+        root.setTag(K_M3, writeChannelKeySet(m3));
+        root.setTag(K_REJECT_ON, writeChannelKeySet(rejectOn));
+        root.setTag(K_REJECT_OFF, writeChannelKeySet(rejectOff));
         root.setBoolean(K_REJECT_DEFAULT, rejectDefault);
         root.setTag(K_ORE_RULES, writeStringSet(oreRules));
         root.setTag(K_MOD_RULES, writeStringSet(modRules));
         root.setTag(K_RULE_MODES, writeStringIntMap(ruleModes));
-        root.setTag(K_TOUCHED, writeKeySet(touched));
-        root.setTag(K_BLACKLIST, writeKeySet(blacklist));
-        root.setTag(K_QTY_LOCKED, writeKeySet(qtyLocked));
+        root.setTag(K_TOUCHED, writeChannelKeySet(touched));
+        root.setTag(K_BLACKLIST, writeChannelKeySet(blacklist));
+        root.setTag(K_QTY_LOCKED, writeChannelKeySet(qtyLocked));
         root.setBoolean(K_RULE_INSTANT, ruleInstant);
     }
 
     public void readFromNbt(NBTTagCompound root) {
-        s1.clear();
-        s2.clear();
-        ca.clear();
+        stocks.clear();
         itemThr.clear();
         wl.clear();
         ul.clear();
@@ -135,22 +200,36 @@ public class CellStorageData {
         touched.clear();
         blacklist.clear();
         qtyLocked.clear();
-        readCountMap(root.getTagList(K_S1, 10), s1);
-        readCountMap(root.getTagList(K_S2, 10), s2);
-        readCountMap(root.getTagList(K_CA, 10), ca);
-        readLongMap(root.getTagList(K_IT, 10), itemThr);
-        readKeySet(root.getTagList(K_WL, 10), wl);
-        readKeySet(root.getTagList(K_UL, 10), ul);
-        readKeySet(root.getTagList(K_M3, 10), m3);
-        readKeySet(root.getTagList(K_REJECT_ON, 10), rejectOn);
-        readKeySet(root.getTagList(K_REJECT_OFF, 10), rejectOff);
+
+        if (root.hasKey(K_STOCKS, 10)) {
+            NBTTagCompound stockRoot = root.getCompoundTag(K_STOCKS);
+            for (String channelId : stockRoot.getKeySet()) {
+                NBTTagCompound one = stockRoot.getCompoundTag(channelId);
+                Stocks target = stocks(channelId);
+                readCountMap(one.getTagList(K_S1, 10), target.s1);
+                readCountMap(one.getTagList(K_S2, 10), target.s2);
+                readCountMap(one.getTagList(K_CA, 10), target.ca);
+            }
+        } else {
+            // Pre-P4 layout: the three maps sat at the top level and only ever held item keys.
+            Stocks legacy = stocks(CellChannelRegistry.ITEM);
+            readCountMap(root.getTagList(K_S1, 10), legacy.s1);
+            readCountMap(root.getTagList(K_S2, 10), legacy.s2);
+            readCountMap(root.getTagList(K_CA, 10), legacy.ca);
+        }
+        readChannelLongMap(root.getTagList(K_IT, 10), itemThr);
+        readChannelKeySet(root.getTagList(K_WL, 10), wl);
+        readChannelKeySet(root.getTagList(K_UL, 10), ul);
+        readChannelKeySet(root.getTagList(K_M3, 10), m3);
+        readChannelKeySet(root.getTagList(K_REJECT_ON, 10), rejectOn);
+        readChannelKeySet(root.getTagList(K_REJECT_OFF, 10), rejectOff);
         rejectDefault = root.getBoolean(K_REJECT_DEFAULT);
         readStringSet(root.getTagList(K_ORE_RULES, 8), oreRules);
         readStringSet(root.getTagList(K_MOD_RULES, 8), modRules);
         readStringIntMap(root.getTagList(K_RULE_MODES, 10), ruleModes);
-        readKeySet(root.getTagList(K_TOUCHED, 10), touched);
-        readKeySet(root.getTagList(K_BLACKLIST, 10), blacklist);
-        readKeySet(root.getTagList(K_QTY_LOCKED, 10), qtyLocked);
+        readChannelKeySet(root.getTagList(K_TOUCHED, 10), touched);
+        readChannelKeySet(root.getTagList(K_BLACKLIST, 10), blacklist);
+        readChannelKeySet(root.getTagList(K_QTY_LOCKED, 10), qtyLocked);
         // Default true, matching 1.20: a fresh rule is Instant unless the player switches it.
         ruleInstant = !root.hasKey(K_RULE_INSTANT) || root.getBoolean(K_RULE_INSTANT);
     }
@@ -198,26 +277,25 @@ public class CellStorageData {
         }
     }
 
-    private static NBTTagList writeCountMap(Map<IAEItemStack, BigInteger> map) {
+    // ------------------------------------------------------------------
+    // per-channel count maps (inside a channel's own compound: no marker needed)
+    // ------------------------------------------------------------------
+
+    private static NBTTagList writeCountMap(Map<IAEStack<?>, BigInteger> map) {
         NBTTagList list = new NBTTagList();
-        for (Map.Entry<IAEItemStack, BigInteger> e : map.entrySet()) {
+        for (Map.Entry<IAEStack<?>, BigInteger> e : map.entrySet()) {
             if (e.getValue() == null || e.getValue().signum() <= 0) {
                 continue;
             }
-            NBTTagCompound entry = new NBTTagCompound();
-            NBTTagCompound key = new NBTTagCompound();
-            e.getKey().writeToNBT(key);
-            entry.setTag(K_KEY, key);
-            entry.setString(K_NUM, e.getValue().toString());
-            list.appendTag(entry);
+            list.appendTag(countEntry(e.getKey(), e.getValue().toString()));
         }
         return list;
     }
 
-    private static void readCountMap(NBTTagList list, Map<IAEItemStack, BigInteger> out) {
+    private static void readCountMap(NBTTagList list, Map<IAEStack<?>, BigInteger> out) {
         for (int i = 0; i < list.tagCount(); i++) {
             NBTTagCompound entry = list.getCompoundTagAt(i);
-            IAEItemStack key = readKey(entry);
+            IAEStack<?> key = readKeyEntry(entry, false);
             if (key == null) {
                 continue;
             }
@@ -232,26 +310,62 @@ public class CellStorageData {
         }
     }
 
-    private static NBTTagList writeLongMap(Map<IAEItemStack, Long> map) {
+    private static NBTTagCompound countEntry(IAEStack<?> key, String number) {
+        NBTTagCompound entry = new NBTTagCompound();
+        NBTTagCompound keyTag = new NBTTagCompound();
+        key.writeToNBT(keyTag);
+        entry.setTag(K_KEY, keyTag);
+        entry.setString(K_NUM, number);
+        return entry;
+    }
+
+    // ------------------------------------------------------------------
+    // shared per-key collections (each entry names its channel)
+    // ------------------------------------------------------------------
+
+    private static NBTTagList writeChannelKeySet(Set<IAEStack<?>> set) {
         NBTTagList list = new NBTTagList();
-        for (Map.Entry<IAEItemStack, Long> e : map.entrySet()) {
+        for (IAEStack<?> key : set) {
+            NBTTagCompound entry = new NBTTagCompound();
+            entry.setString(K_CHANNEL, channelIdOf(key));
+            NBTTagCompound keyTag = new NBTTagCompound();
+            key.writeToNBT(keyTag);
+            entry.setTag(K_KEY, keyTag);
+            list.appendTag(entry);
+        }
+        return list;
+    }
+
+    private static void readChannelKeySet(NBTTagList list, Set<IAEStack<?>> out) {
+        for (int i = 0; i < list.tagCount(); i++) {
+            IAEStack<?> key = readKeyEntry(list.getCompoundTagAt(i), true);
+            if (key != null) {
+                out.add(key);
+            }
+        }
+    }
+
+    private static NBTTagList writeChannelLongMap(Map<IAEStack<?>, Long> map) {
+        NBTTagList list = new NBTTagList();
+        for (Map.Entry<IAEStack<?>, Long> e : map.entrySet()) {
             if (e.getValue() == null || e.getValue() <= 0) {
                 continue;
             }
             NBTTagCompound entry = new NBTTagCompound();
-            NBTTagCompound key = new NBTTagCompound();
-            e.getKey().writeToNBT(key);
-            entry.setTag(K_KEY, key);
+            entry.setString(K_CHANNEL, channelIdOf(e.getKey()));
+            NBTTagCompound keyTag = new NBTTagCompound();
+            e.getKey().writeToNBT(keyTag);
+            entry.setTag(K_KEY, keyTag);
             entry.setLong(K_NUM, e.getValue());
             list.appendTag(entry);
         }
         return list;
     }
 
-    private static void readLongMap(NBTTagList list, Map<IAEItemStack, Long> out) {
+    private static void readChannelLongMap(NBTTagList list, Map<IAEStack<?>, Long> out) {
         for (int i = 0; i < list.tagCount(); i++) {
             NBTTagCompound entry = list.getCompoundTagAt(i);
-            IAEItemStack key = readKey(entry);
+            IAEStack<?> key = readKeyEntry(entry, true);
             if (key == null) {
                 continue;
             }
@@ -262,39 +376,46 @@ public class CellStorageData {
         }
     }
 
-    private static NBTTagList writeKeySet(Set<IAEItemStack> set) {
-        NBTTagList list = new NBTTagList();
-        for (IAEItemStack key : set) {
-            NBTTagCompound tag = new NBTTagCompound();
-            key.writeToNBT(tag);
-            list.appendTag(tag);
-        }
-        return list;
+    /** The channel a stored key belongs to, by its own identity -- no side table needed. */
+    private static String channelIdOf(IAEStack<?> key) {
+        CellChannel<?> channel = CellChannelRegistry.byStorage(key.getChannel());
+        return channel == null ? CellChannelRegistry.ITEM : channel.id();
     }
 
-    private static void readKeySet(NBTTagList list, Set<IAEItemStack> out) {
-        for (int i = 0; i < list.tagCount(); i++) {
-            NBTTagCompound tag = list.getCompoundTagAt(i);
-            if (tag.hasKey(K_KEY, 10)) {
-                tag = tag.getCompoundTag(K_KEY);
-            }
-            IAEItemStack key = AEItemStack.fromNBT(tag);
-            if (key != null) {
-                key.setStackSize(1);
-                out.add(key);
-            }
+    /**
+     * Reads one stored key.
+     *
+     * @param withChannelMarker when true the entry may carry {@code c}; when false the entry belongs to a
+     *                          channel compound that already named the channel. A missing marker always means
+     *                          item, which is what makes pre-P4 saves readable.
+     */
+    private static IAEStack<?> readKeyEntry(NBTTagCompound entry, boolean withChannelMarker) {
+        NBTTagCompound keyTag = entry;
+        String channelId = CellChannelRegistry.ITEM;
+        if (entry.hasKey(K_KEY, 10)) {
+            keyTag = entry.getCompoundTag(K_KEY);
         }
-    }
-
-    private static IAEItemStack readKey(NBTTagCompound entry) {
-        if (!entry.hasKey(K_KEY, 10)) {
+        if (withChannelMarker && entry.hasKey(K_CHANNEL, 8)) {
+            channelId = entry.getString(K_CHANNEL);
+        }
+        CellChannel<?> channel = CellChannelRegistry.byId(channelId);
+        if (channel == null) {
+            warnMissingChannel(channelId);
             return null;
         }
-        IAEItemStack key = AEItemStack.fromNBT(entry.getCompoundTag(K_KEY));
+        IAEStack<?> key = channel.readKeyUntyped(keyTag);
         if (key != null) {
             // identity ignores stack size; normalise so stored keys are uniform
             key.setStackSize(1);
         }
         return key;
+    }
+
+    /** An unknown channel id means a bridge mod is gone: report it once, skip the keys, keep the cell. */
+    private static void warnMissingChannel(String channelId) {
+        if (WARNED_CHANNELS.add(channelId) && AE2Addon.LOG != null) {
+            AE2Addon.LOG.warn("[ae2addon] 存档里有通道 {} 的数据，但该通道当前不可用（对应的桥接模组没装？），"
+                    + "已跳过这些条目", channelId);
+        }
     }
 }
