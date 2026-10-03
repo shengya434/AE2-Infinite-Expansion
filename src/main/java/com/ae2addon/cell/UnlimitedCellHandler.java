@@ -31,6 +31,7 @@ public class UnlimitedCellHandler implements ICellHandler {
         // Optional channels register here too: this runs in FMLInitializationEvent, and the door only reads
         // the mod list unless the bridge mod is actually there.
         com.ae2addon.cell.gas.GasChannelDoor.register();
+        com.ae2addon.cell.essentia.EssentiaChannelDoor.register();
         AE2Addon.LOG.info("[ae2addon] 无限存储元件的 ICellHandler 已注册");
     }
 
@@ -62,6 +63,10 @@ public class UnlimitedCellHandler implements ICellHandler {
         // Optional bridge channels (gas today, essentia next): asked through the door, which loads the
         // bridge-specific classes only when that mod is present.
         ICellInventoryHandler<T> optional = com.ae2addon.cell.gas.GasChannelDoor.tryBuild(stack, saveProvider, channel);
+        if (optional != null) {
+            return optional;
+        }
+        optional = com.ae2addon.cell.essentia.EssentiaChannelDoor.tryBuild(stack, saveProvider, channel);
         if (optional != null) {
             return optional;
         }

@@ -1390,6 +1390,12 @@ public class CommandCellSelfTest extends CommandBase {
             sender.sendMessage(new TextComponentString(
                     "[ae2addon] 跳过 M 组：没装气体通道（Mekanism Energistics）"));
         }
+        if (com.ae2addon.cell.essentia.EssentiaChannelDoor.isLoaded()) {
+            com.ae2addon.cell.essentia.EssentiaChannelSelfTest.run(sender, this);
+        } else {
+            sender.sendMessage(new TextComponentString(
+                    "[ae2addon] 跳过 N 组：没装源质通道（Thaumic Energistics）"));
+        }
     }
 
     /** Reporting bridge for the optional-channel groups, which live in their own (lazily loaded) class. */

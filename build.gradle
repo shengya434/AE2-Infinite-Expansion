@@ -151,6 +151,11 @@ dependencies {
     compileOnly files('libs/MekanismEnergistics-0.1.5.jar')
     compileOnly files('libs/Mekanism-CE-Unofficial-All-10.0.5.021.jar')
 
+    // 源质通道（可选依赖）：Thaumic Energistics 的 IEssentiaStorageChannel/IAEEssentiaStack/EssentiaStack，
+    // 枚举要素要用 Thaumcraft 的 thaumcraft.api.aspects.Aspect ⇒ 两个 jar 都 compileOnly，运行期同样三段式。
+    compileOnly files('libs/thaumic-energistics-extended-life-1.12.2-2.5.2.jar')
+    compileOnly files('libs/Thaumcraft-1.12.2-6.1.BETA26.jar')
+
     // 拼音搜索：不引第三方库。只把 pinyin4j 的**数据表**（BSD，见 resources/ae2addon/pinyin/NOTICE.txt）
     // 打进 jar，解析在 com.ae2addon.util.PinyinIndex 里自己做。
     // 为什么不 shade pinyin4j 本体：Shadow 插件在 Gradle 4.9 上已取不到（插件门户只留 8.1.x，需 Gradle 8，
