@@ -79,6 +79,8 @@ public final class Mode2ConfigScreen extends GuiContainer {
     private final List<ItemStack> rejectItems = new ArrayList<>();
     private int expectedChunks;
     private boolean panelComplete;
+    /** Which channel the chunks currently buffered in {@link #pending} belong to (see the type-4 handler). */
+    private String pendingChannel = "";
     private boolean ruleInstant;
     private int uiState; // 0: choose work mode, 1: editor
     private int workMode = 1;
@@ -302,8 +304,15 @@ public final class Mode2ConfigScreen extends GuiContainer {
             }
             updateDefaultButton();
         } else if (packet.type == 4) {
-            if (expectedChunks == 0 || expectedChunks != packet.totalChunks) {
-                pending.clear(); expectedChunks = packet.totalChunks;
+            // A chunk set belongs to ONE channel. After a channel switch the incoming rows are a fresh list,
+            // not a continuation -- and the old and new lists often have the same chunk count, so without this
+            // reset the previous channel's chunks stayed in `pending` and were spliced back in, which is why the
+            // panel kept showing item rows whatever the player selected (sensei, 2026-10-04).
+            if (!packet.channelId.equals(pendingChannel) || expectedChunks == 0
+                    || expectedChunks != packet.totalChunks) {
+                pending.clear();
+                pendingChannel = packet.channelId;
+                expectedChunks = packet.totalChunks;
                 panelComplete = false;
                 panelRetry.start();
             }
@@ -655,6 +664,13 @@ public final class Mode2ConfigScreen extends GuiContainer {
         index = (index + step % channels.size() + channels.size()) % channels.size();
         panelChannel = channels.get(index).id();
         scrollOffset = 0;
+        // Drop the previous channel's rows immediately: the new set arrives as fresh chunks, and leaving the
+        // old rows on screen under the new label looks exactly like "the switch did nothing".
+        all.clear();
+        pending.clear();
+        pendingChannel = "";
+        expectedChunks = 0;
+        panelComplete = false;
         applyFilters();
         CellNetwork.send(Mode2ConfigPacket.panelChannel(panelChannel));
     }

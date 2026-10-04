@@ -337,6 +337,11 @@ public final class Mode2ConfigPacket implements IMessage {
             if (msg.isOre) inv.removeOreRule(msg.text); else inv.removeModRule(msg.text);
         } else if (msg.type == 22) {
             if (actionKey == null) return; core.clearRejectOf(actionKey);
+        } else if (msg.type == 24) {
+            // Channel switch. Nothing on the cell changes (the selection is per player), but the client needs
+            // the NEW channel's rows -- which sendState below does. Leaving this type out of the chain made the
+            // panel keep showing item rows no matter what the player switched to (sensei, 2026-10-04): the
+            // fall-through at the bottom returned without answering at all.
         } else if (msg.type != 3 && msg.type != 23) return;
         sendState(player, inv);
     }
