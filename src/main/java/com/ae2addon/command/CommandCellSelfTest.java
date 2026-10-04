@@ -404,6 +404,7 @@ public class CommandCellSelfTest extends CommandBase {
         runChannelCompletenessGroup(sender);
         runSharedSettingsGroup(sender);
         runDrivePathGroup(sender);
+        runDriveBindingGroup(sender);
         runOptionalChannelGroups(sender);
 
         finish(sender);
@@ -1726,6 +1727,136 @@ public class CommandCellSelfTest extends CommandBase {
     private static appeng.api.storage.data.IAEStack injectUntyped(ICellInventoryHandler handler, appeng.api.storage.data.IAEStack key) {
         return handler.getCellInv().injectItems(key, Actionable.MODULATE, NO_SOURCE);
     }
+
+    /**
+     * U group: the drive patch -- AE2's drive binds ONE channel per slot, so we register the rest.
+     *
+     * <p>javap on {@code TileDrive.updateState()} (and on CrazyAE's improved drive) shows the drive walking
+     * {@code storageChannels()} and jumping to the next slot as soon as one channel answers non-null. Since our
+     * cell answers for six channels, the drive picked one at random per launch and the ME network never saw the
+     * others -- sensei's BUG1/BUG2. {@link com.ae2addon.cell.DriveChannelBinder} appends the skipped channels;
+     * the mixin calls it, and this group drives the same code with a fake slot source, so the patch logic is
+     * pinned in-game without needing a world.
+     *
+     * <p>The three properties that matter: what AE2 already bound is not added twice, every channel we serve
+     * ends up registered, and somebody else's cell is left exactly as AE2 left it.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void runDriveBindingGroup(ICommandSender sender) {
+        ItemStack cell = cellWithUuid(testUuid("u1"));
+        UnlimitedCellInventory direct = new UnlimitedCellInventory(cell, null);
+        wipe(direct);
+        direct.setMode(1);
+
+        java.util.List<IStorageChannel> order =
+                new java.util.ArrayList<IStorageChannel>(AEApi.instance().storage().storageChannels());
+        java.util.List<IStorageChannel> served = new java.util.ArrayList<IStorageChannel>();
+        for (IStorageChannel channel : order) {
+            if (AEApi.instance().registries().cell().getCellInventory(cell, null, channel) != null) {
+                served.add(channel);
+            }
+        }
+
+        // The map AE2 builds: one (initially empty) list per registered channel, then its OWN single binding --
+        // the first channel in this order that answered, exactly as the drive's break leaves it.
+        java.util.Map<IStorageChannel, java.util.List<appeng.api.storage.IMEInventoryHandler>> map =
+                new java.util.LinkedHashMap<IStorageChannel, java.util.List<appeng.api.storage.IMEInventoryHandler>>();
+        for (IStorageChannel channel : order) {
+            map.put(channel, new java.util.ArrayList<appeng.api.storage.IMEInventoryHandler>());
+        }
+        IStorageChannel boundByAe2 = served.get(0);
+        map.get(boundByAe2).add(AEApi.instance().registries().cell().getCellInventory(cell, null, boundByAe2));
+
+        int added = com.ae2addon.cell.DriveChannelBinder.bindMissing(map, fakeSlots(cell), DIRECT_WATCHERS);
+
+        StringBuilder detail = new StringBuilder();
+        int onServed = 0;
+        int onUnserved = 0;
+        for (IStorageChannel channel : order) {
+            int rows = map.get(channel).size();
+            boolean isServed = served.contains(channel);
+            if (isServed) {
+                onServed += rows;
+            } else {
+                onUnserved += rows;
+            }
+            detail.append(channel.getClass().getSimpleName()).append('=').append(rows).append(isServed ? " " : "! ");
+        }
+
+        // U1: AE2 bound one channel; the binder must add exactly the other ones it serves
+        check(sender, "U1", "★ 驱动器漏掉的通道被补上（补绑数 = 我们服务的通道数 - 1）",
+                served.size() >= 2 && added == served.size() - 1, (served.size() - 1) + " 条",
+                added + " 条（共服务 " + served.size() + " 个通道）");
+
+        // U2: every served channel ends up with exactly one registration, and we claim nothing else
+        check(sender, "U2", "★ 每条我们服务的通道恰好一条、别人的通道一条都不占（不重复绑、不乱认）",
+                onServed == served.size() && onUnserved == 0, "每条 1 条 / 其余 0 条", detail.toString().trim());
+
+        // U3: a foreign cell (AE2's own 1k cell) must be left alone -- that is what keeps this patch safe
+        ItemStack ae2Cell = AEApi.instance().definitions().items().cell1k().maybeStack(1).orElse(ItemStack.EMPTY);
+        int foreignAdded = ae2Cell.isEmpty() ? -1 : com.ae2addon.cell.DriveChannelBinder.bindMissing(
+                emptyChannelMap(order), fakeSlots(ae2Cell), DIRECT_WATCHERS);
+        check(sender, "U3", "★ 别人的元件一条都不动（AE2 自带元件沿用「一格一通道」原语义）",
+                !ae2Cell.isEmpty() && foreignAdded == 0, "0 条", foreignAdded + " 条");
+
+        // U4: empty slots and unrelated items are skipped as well
+        int emptyAdded = com.ae2addon.cell.DriveChannelBinder.bindMissing(
+                emptyChannelMap(order), fakeSlots(ItemStack.EMPTY), DIRECT_WATCHERS);
+        int stickAdded = com.ae2addon.cell.DriveChannelBinder.bindMissing(
+                emptyChannelMap(order), fakeSlots(new ItemStack(Items.STICK)), DIRECT_WATCHERS);
+        check(sender, "U4", "空槽与无关物品不进补绑流程（绑定数为 0）",
+                emptyAdded == 0 && stickAdded == 0, "0/0", emptyAdded + "/" + stickAdded);
+    }
+
+    /** A channel map with one empty list per registered channel, the way AE2 lays it out. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static java.util.Map<IStorageChannel, java.util.List<appeng.api.storage.IMEInventoryHandler>> emptyChannelMap(
+            java.util.List<IStorageChannel> order) {
+        java.util.Map<IStorageChannel, java.util.List<appeng.api.storage.IMEInventoryHandler>> map =
+                new java.util.LinkedHashMap<IStorageChannel, java.util.List<appeng.api.storage.IMEInventoryHandler>>();
+        for (IStorageChannel channel : order) {
+            map.put(channel, new java.util.ArrayList<appeng.api.storage.IMEInventoryHandler>());
+        }
+        return map;
+    }
+
+    /** One slot holding {@code stack}, with no save provider -- what a drive would hand the binder. */
+    private static com.ae2addon.cell.DriveChannelBinder.Slots fakeSlots(final ItemStack stack) {
+        return new com.ae2addon.cell.DriveChannelBinder.Slots() {
+
+            @Override
+            public int count() {
+                return 1;
+            }
+
+            @Override
+            public ItemStack stackAt(int slot) {
+                return slot == 0 ? stack : ItemStack.EMPTY;
+            }
+
+            @Override
+            public appeng.api.storage.ISaveProvider provider() {
+                return null;
+            }
+
+            @Override
+            public int priority() {
+                return 7;
+            }
+        };
+    }
+
+    /** Plain registration, without the DriveWatcher wrapper a real drive builds. */
+    private static final com.ae2addon.cell.DriveChannelBinder.Watchers DIRECT_WATCHERS =
+            new com.ae2addon.cell.DriveChannelBinder.Watchers() {
+
+                @Override
+                public appeng.api.storage.IMEInventoryHandler<?> create(ICellInventoryHandler<?> handler,
+                        ItemStack stack, appeng.api.storage.ICellHandler cellHandler,
+                        appeng.api.storage.ISaveProvider provider, int priority) {
+                    return handler;
+                }
+            };
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
     private static String firstOreName(ItemStack definition) {
         int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(definition);

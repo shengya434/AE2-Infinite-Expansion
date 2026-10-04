@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "com.ae2addon.mixin",
+  "target": "@env(DEFAULT)",
+  "minVersion": "0.8",
+  "compatibilityLevel": "JAVA_8",
+  "mixins": [
+    "MixinTileDrive"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
