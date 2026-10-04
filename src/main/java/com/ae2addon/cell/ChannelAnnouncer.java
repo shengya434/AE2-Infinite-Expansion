@@ -244,11 +244,13 @@ public final class ChannelAnnouncer {
             try {
                 IGridNode node = host.getActionableNode();
                 if (node == null || node.getGrid() == null) {
+                    retry(provider, entry.getValue());
                     continue;
                 }
                 // rv6 has no IGrid#getStorage(): the storage grid is a grid cache.
                 IStorageGrid storage = node.getGrid().getCache(IStorageGrid.class);
                 if (storage == null) {
+                    retry(provider, entry.getValue());
                     continue;
                 }
                 IActionSource source = new MachineSource(host);
@@ -276,6 +278,41 @@ public final class ChannelAnnouncer {
             }
         }
     }
+
+    /**
+     * Puts a pair back on the queue for the next tick, because there was no grid to talk to yet.
+     *
+     * <p>This is the difference between "eventually" and "immediately": sensei's MeatballCraft pack showed the
+     * announcement landing 90 seconds after the store (log: 22:50:31 -> 22:52:03), because the single attempt had
+     * failed on a grid that was not ready and nothing retried it until the NEXT change. The queue is keyed by a
+     * weak provider, so a dropped drive takes its own retries with it; a cap stops a pathological loop.
+     */
+    private static void retry(ISaveProvider provider, List<IStorageChannel<?>> channels) {
+        Map<IStorageChannel<?>, Integer> perProvider = RETRIES.get(provider);
+        if (perProvider == null) {
+            if (RETRIES.size() >= MAX_PROVIDERS) {
+                return;
+            }
+            perProvider = new LinkedHashMap<>();
+            RETRIES.put(provider, perProvider);
+        }
+        for (IStorageChannel<?> channel : channels) {
+            int attempts = perProvider.getOrDefault(channel, 0) + 1;
+            perProvider.put(channel, attempts);
+            if (attempts <= MAX_RETRIES) {
+                markForFlush(provider, channel);
+            } else if (AE2Addon.LOG != null && attempts == MAX_RETRIES + 1) {
+                AE2Addon.LOG.warn("[ae2addon] 通道 {} 的通知一直找不到网格，已放弃（{} 次）",
+                        channel.getClass().getSimpleName(), MAX_RETRIES);
+            }
+        }
+    }
+
+    /** Ticks a single announcement may wait for its grid before giving up (30 s at 20 tps). */
+    private static final int MAX_RETRIES = 600;
+
+    /** provider -> channel -> attempts so far, for {@link #retry}. Weak keys, like every other map here. */
+    private static final Map<ISaveProvider, Map<IStorageChannel<?>, Integer>> RETRIES = new WeakHashMap<>();
 
     /**
      * What the bound cells report for a channel RIGHT NOW. Asking the cell (through AE2's cell registry, the
