@@ -1822,7 +1822,9 @@ public class CommandCellSelfTest extends CommandBase {
         ItemStack cell = cellWithUuid(testUuid("w1"));
         UnlimitedCellInventory items = new UnlimitedCellInventory(cell, null);
         wipe(items);
-        items.setMode(1);
+        // mode 2 on purpose: the panel lists the mode-2 structures (s2 / whitelist / rules), so a mode-1 cell
+        // has NO rows to show and the expected count would be 0 -- which is exactly how this group first went red.
+        items.setMode(2);
         items.setWorkMode(1);
         FluidCellInventory fluids = new FluidCellInventory(cell, null);
         items.injectItems(stack(Items.STICK, 5L), Actionable.MODULATE, NO_SOURCE);
