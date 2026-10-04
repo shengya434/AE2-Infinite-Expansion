@@ -247,16 +247,21 @@ public class CellStorageData {
             for (String channelId : stockRoot.getKeySet()) {
                 NBTTagCompound one = stockRoot.getCompoundTag(channelId);
                 Stocks target = stocks(channelId);
-                readCountMap(one.getTagList(K_S1, 10), target.s1);
-                readCountMap(one.getTagList(K_S2, 10), target.s2);
-                readCountMap(one.getTagList(K_CA, 10), target.ca);
+                // The sub-compound's NAME is the channel: keys in there carry no marker, so the reader has to
+                // be told which adapter parses them. Reading them as items (the old behaviour) silently dropped
+                // every non-item key on load -- "after re-entering the save, everything except items is gone,
+                // while the cell tooltip still shows the numbers" (sensei, 2026-10-04). The tooltip survived
+                // because it reads the cell item's own NBT copy.
+                readCountMap(one.getTagList(K_S1, 10), target.s1, channelId);
+                readCountMap(one.getTagList(K_S2, 10), target.s2, channelId);
+                readCountMap(one.getTagList(K_CA, 10), target.ca, channelId);
             }
         } else {
             // Pre-P4 layout: the three maps sat at the top level and only ever held item keys.
             Stocks legacy = stocks(CellChannelRegistry.ITEM);
-            readCountMap(root.getTagList(K_S1, 10), legacy.s1);
-            readCountMap(root.getTagList(K_S2, 10), legacy.s2);
-            readCountMap(root.getTagList(K_CA, 10), legacy.ca);
+            readCountMap(root.getTagList(K_S1, 10), legacy.s1, CellChannelRegistry.ITEM);
+            readCountMap(root.getTagList(K_S2, 10), legacy.s2, CellChannelRegistry.ITEM);
+            readCountMap(root.getTagList(K_CA, 10), legacy.ca, CellChannelRegistry.ITEM);
         }
         readChannelLongMap(root.getTagList(K_IT, 10), itemThr);
         readChannelKeySet(root.getTagList(K_WL, 10), wl);
@@ -339,10 +344,12 @@ public class CellStorageData {
         return list;
     }
 
-    private static void readCountMap(NBTTagList list, Map<IAEStack<?>, BigInteger> out) {
+    private static void readCountMap(NBTTagList list, Map<IAEStack<?>, BigInteger> out, String channelId) {
         for (int i = 0; i < list.tagCount(); i++) {
             NBTTagCompound entry = list.getCompoundTagAt(i);
-            IAEStack<?> key = readKeyEntry(entry, false);
+            // Explicit channel: entries in a channel compound carry no marker, and defaulting to item dropped
+            // every non-item key (see the caller for the symptom this caused).
+            IAEStack<?> key = readKeyEntry(entry, channelId);
             if (key == null) {
                 continue;
             }
@@ -430,32 +437,37 @@ public class CellStorageData {
     }
 
     /**
-     * Reads one stored key.
-     *
-     * @param withChannelMarker when true the entry may carry {@code c}; when false the entry belongs to a
-     *                          channel compound that already named the channel. A missing marker always means
-     *                          item, which is what makes pre-P4 saves readable.
+     * Reads one stored key with an EXPLICIT channel -- for entries inside a channel's own compound, which carry
+     * no marker because the compound already named the channel.
      */
-    private static IAEStack<?> readKeyEntry(NBTTagCompound entry, boolean withChannelMarker) {
-        NBTTagCompound keyTag = entry;
-        String channelId = CellChannelRegistry.ITEM;
-        if (entry.hasKey(K_KEY, 10)) {
-            keyTag = entry.getCompoundTag(K_KEY);
-        }
-        if (withChannelMarker && entry.hasKey(K_CHANNEL, 8)) {
-            channelId = entry.getString(K_CHANNEL);
-        }
+    private static IAEStack<?> readKeyEntry(NBTTagCompound entry, String channelId) {
         CellChannel<?> channel = CellChannelRegistry.byId(channelId);
         if (channel == null) {
             warnMissingChannel(channelId);
             return null;
         }
+        NBTTagCompound keyTag = entry.hasKey(K_KEY, 10) ? entry.getCompoundTag(K_KEY) : entry;
         IAEStack<?> key = channel.readKeyUntyped(keyTag);
         if (key != null) {
             // identity ignores stack size; normalise so stored keys are uniform
             key.setStackSize(1);
         }
         return key;
+    }
+
+    /**
+     * Reads one stored key whose channel may be marked in the entry itself.
+     *
+     * @param withChannelMarker when true the entry may carry {@code c}; a missing marker means item, which is
+     *                          what makes pre-P4 saves readable. Shared collections use this; a channel's own
+     *                          stock maps use {@link #readKeyEntry(NBTTagCompound, String)} instead.
+     */
+    private static IAEStack<?> readKeyEntry(NBTTagCompound entry, boolean withChannelMarker) {
+        String channelId = CellChannelRegistry.ITEM;
+        if (withChannelMarker && entry.hasKey(K_CHANNEL, 8)) {
+            channelId = entry.getString(K_CHANNEL);
+        }
+        return readKeyEntry(entry, channelId);
     }
 
     /** An unknown channel id means a bridge mod is gone: report it once, skip the keys, keep the cell. */

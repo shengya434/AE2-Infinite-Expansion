@@ -1256,6 +1256,23 @@ public class CommandCellSelfTest extends CommandBase {
                         + reloaded.wl.contains(key(Items.PAPER)) + "/" + reloaded.ul.contains(key(Items.PAPER))
                         + "/" + reloaded.stocks(CellChannelRegistry.ITEM).ca.get(key(Items.COAL)));
 
+        // K2b: the same round trip for a NON-ITEM channel. This is the gap that let the load path parse a
+        // channel's own stock entries as items and drop them: "after re-entering the save, everything except
+        // items is gone, while the cell tooltip still shows the numbers" (sensei, 2026-10-04). The tooltip
+        // survived because it reads the cell item's own NBT copy, which never went through this reader.
+        CellStorageData withFluid = new CellStorageData();
+        withFluid.stocks(CellChannelRegistry.FLUID).s1.put(fluidKey(FluidRegistry.WATER), BigInteger.valueOf(3000));
+        withFluid.stocks(CellChannelRegistry.FLUID).ca.put(fluidKey(FluidRegistry.LAVA), BigInteger.valueOf(7));
+        NBTTagCompound writtenFluid = new NBTTagCompound();
+        withFluid.writeToNbt(writtenFluid);
+        CellStorageData reloadedFluid = new CellStorageData();
+        reloadedFluid.readFromNbt(writtenFluid);
+        BigInteger k2bWater = reloadedFluid.stocks(CellChannelRegistry.FLUID).s1.get(fluidKey(FluidRegistry.WATER));
+        BigInteger k2bLava = reloadedFluid.stocks(CellChannelRegistry.FLUID).ca.get(fluidKey(FluidRegistry.LAVA));
+        check(sender, "K2b", "★ 非物品通道的库存也能存档往返（流体 s1=3000、ca=7 一条不丢）",
+                BigInteger.valueOf(3000).equals(k2bWater) && BigInteger.valueOf(7).equals(k2bLava),
+                "3000/7", k2bWater + "/" + k2bLava);
+
         // K3: another channel's bucket must not leak into the item channel's view
         UnlimitedCellInventory k3 = newInventory("k3");
         k3.setMode(1);
