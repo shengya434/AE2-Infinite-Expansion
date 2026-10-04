@@ -408,6 +408,7 @@ public class CommandCellSelfTest extends CommandBase {
         runDriveBindingGroup(sender);
         runChannelSummaryGroup(sender);
         runPanelAllChannelsGroup(sender);
+        runReportedInfiniteGroup(sender);
         runOptionalChannelGroups(sender);
 
         finish(sender);
@@ -1870,6 +1871,59 @@ public class CommandCellSelfTest extends CommandBase {
                 fluidRows.size() + " 行 / " + (fluidRows.isEmpty() ? "?" : fluidRows.get(0).channelId) + " / "
                         + (fluidRows.isEmpty() ? "?" : String.valueOf(fluidRows.get(0).item.isEmpty())) + " / "
                         + (fluidRows.isEmpty() ? "?" : fluidRows.get(0).label));
+    }
+
+    /**
+     * X group: the value published for an "infinite" row must survive the NETWORK's aggregation.
+     *
+     * <p>AE2's {@code NetworkMonitor} SUMS what cells report into one list. Publishing {@code Long.MAX_VALUE}
+     * there meant the second aggregation of the same key wrapped negative -- and since mode 3 covers every key
+     * of a channel (all 37 aspects, for instance), the whole channel went negative and the terminal lost even a
+     * normal cell's contents standing in the same network. That was sensei's three-way experiment of
+     * 2026-10-04 ("universal cell: nothing / universal + a real essentia cell: nothing / real cell alone: fine").
+     * These assertions pin the arithmetic instead of the symptom.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private void runReportedInfiniteGroup(ICommandSender sender) {
+        ItemStack cell = cellWithUuid(testUuid("x1"));
+        UnlimitedCellInventory items = new UnlimitedCellInventory(cell, null);
+        wipe(items);
+        items.setMode(3);
+
+        // X1: aggregating the same infinite row many times must stay positive (Long.MAX + Long.MAX is negative)
+        IItemList<IAEItemStack> list = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        IAEItemStack probe = stack(Items.STICK, 1L);
+        for (int i = 0; i < 20; i++) {
+            IAEItemStack row = probe.copy();
+            row.setStackSize(UnlimitedCellInventory.REPORTED_INFINITE);
+            list.add(row);
+        }
+        IAEItemStack aggregated = list.findPrecise(probe);
+        long reported = aggregated == null ? -1L : aggregated.getStackSize();
+        check(sender, "X1", "★ 无限行的上报值按网络的方式累加 20 次仍为正（Long.MAX 会翻负 ⇒ 整条通道消失）",
+                reported > 0L, "> 0", String.valueOf(reported));
+
+        // X2: and it is AE2's own convention for infinite storage, not an arbitrary number
+        check(sender, "X2", "上报的无限值 = AE2 自家无限元件的约定 Integer.MAX_VALUE",
+                UnlimitedCellInventory.REPORTED_INFINITE == Integer.MAX_VALUE, String.valueOf(Integer.MAX_VALUE),
+                String.valueOf(UnlimitedCellInventory.REPORTED_INFINITE));
+
+        // X3: the listing path itself uses that value (the bug was in reporting, not in the constant)
+        ICellInventoryHandler<?> handler = cellHandlerFor(cell, CellChannelRegistry.byId(CellChannelRegistry.ITEM));
+        appeng.api.storage.ICellInventory cellInv = handler == null ? null : handler.getCellInv();
+        IItemList<IAEItemStack> cellList = AEApi.instance().storage()
+                .getStorageChannel(IItemStorageChannel.class).createList();
+        boolean listingUsesIt = false;
+        if (cellInv != null) {
+            cellInv.getAvailableItems(cellList);
+            IAEItemStack stickRow = cellList.findPrecise(stack(Items.STICK, 1L));
+            listingUsesIt = stickRow != null
+                    && stickRow.getStackSize() == UnlimitedCellInventory.REPORTED_INFINITE;
+        }
+        check(sender, "X3", "★ mode3 列出的行用的就是这个值（修的是列表路径本身）",
+                listingUsesIt, String.valueOf(UnlimitedCellInventory.REPORTED_INFINITE),
+                listingUsesIt ? String.valueOf(UnlimitedCellInventory.REPORTED_INFINITE) : "没用上");
     }
 
     /** A channel map with one empty list per registered channel, the way AE2 lays it out. */
