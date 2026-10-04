@@ -73,6 +73,11 @@ public class ItemUnlimitedCell extends Item {
         // cell writes into its own NBT (see UnlimitedCellInventory#writeSmallFields). The totals come from
         // those counters -- cell contents live in the world save keyed by uuid and are not readable on the
         // client, and walking every stored key here would be thousands of NBT reads per frame.
+        //
+        // One line per storage channel (sensei 2026-10-04: "can the drive slot show every channel?"). This is
+        // the only place where that is possible: the cell really does hold several channels at once, its NBT
+        // keeps one counter set per channel, and a multi-line tooltip is the one surface AE2 gives us here
+        // (the drive slot itself has a single status light, and AE2's own per-slot line names one channel).
         UnlimitedCellInventory.Summary summary = UnlimitedCellInventory.summaryOf(stack);
         int mode = summary.mode;
         String[] keys = {"", "gui.ae2addon.cell.mode1", "gui.ae2addon.cell.mode2", "gui.ae2addon.cell.mode3"};
@@ -89,16 +94,17 @@ public class ItemUnlimitedCell extends Item {
             }
         }
 
-        if (mode == 3) {
-            tooltip.add(I18n.format("gui.ae2addon.cell.bytes", "∞"));
-            tooltip.add(I18n.format("gui.ae2addon.cell.types", "∞"));
-            tooltip.add(I18n.format("gui.ae2addon.cell.limit"));
-            tooltip.add(I18n.format("gui.ae2addon.cell.switch_hint"));
-            return;
+        for (com.ae2addon.cell.CellChannel<?> channel : com.ae2addon.cell.CellChannelRegistry.all()) {
+            UnlimitedCellInventory.Summary channelSummary =
+                    UnlimitedCellInventory.summaryOf(stack, channel.id());
+            String types = mode == 3 ? "∞" : String.valueOf(channelSummary.types);
+            String bytes = mode == 3 ? "∞" : SizeFormat.bytes(channelSummary.bytes);
+            tooltip.add(I18n.format("gui.ae2addon.cell.channel_line", channel.channelName(), types, bytes));
         }
 
-        tooltip.add(I18n.format("gui.ae2addon.cell.bytes", SizeFormat.bytes(summary.bytes)));
-        tooltip.add(I18n.format("gui.ae2addon.cell.types", summary.types));
+        if (mode == 3) {
+            tooltip.add(I18n.format("gui.ae2addon.cell.limit"));
+        }
         tooltip.add(I18n.format("gui.ae2addon.cell.switch_hint"));
     }
 }

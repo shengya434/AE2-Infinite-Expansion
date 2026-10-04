@@ -57,7 +57,10 @@ import net.minecraftforge.items.ItemStackHandler;
 public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T> {
 
     /** Item NBT schema version. v1 = P1 (everything in the item), v2 = P2 (data in world saved data). */
-    public static final int FORMAT_VERSION = 2;
+    // 3: the tooltip summary is stored per channel (_ch table) instead of one shared pair of tags (2026-10-04).
+    // 2: settings moved into the shared world record; cell item NBT keeps a copy for the tooltip only.
+    // 1: P1 layout, payload in the cell item (migrated on load).
+    public static final int FORMAT_VERSION = 3;
     public static final long DEFAULT_THRESHOLD = 65536L;
 
     /** Amount reported for an "infinite" item (1.20 exposes this as config infiniteItemAmount). */
@@ -78,6 +81,12 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     private static final String NBT_SUMMARY_BYTES = "_b2";        // byte[]: BigInteger, exceeds long
     private static final String NBT_SUMMARY_BYTES_COMPAT = "_b";  // long, clamped (older readers)
     private static final String NBT_SUMMARY_TYPES = "_t";
+    /**
+     * Per-channel summary table: {@code _ch/<channelId> -> {_b2,_b,_t}}. The cell answers for several channels,
+     * so its counters have to be per channel -- see {@link #writeSmallFields()} for why a shared pair of tags
+     * was a bug (2026-10-04).
+     */
+    private static final String NBT_CHANNELS = "_ch";
 
     private final ItemStack cellStack;
     private final ISaveProvider container;
@@ -178,7 +187,10 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
                 uuid = null;
             }
         }
-        return version < FORMAT_VERSION && root.hasKey(NBT_ITEMS, 9) ? root : null;
+        // "Version 1" means the P1 layout, where the payload lived in the cell item itself. Pinned to the
+        // literal 1 rather than FORMAT_VERSION: that constant moves forward (it is 3 now that the summary table
+        // is per channel), while this test is about a layout that will never come back.
+        return version < 2 && root.hasKey(NBT_ITEMS, 9) ? root : null;
     }
 
     private void attachStorage(NBTTagCompound v1Payload) {
@@ -254,27 +266,40 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             // NBT copy belongs to the server, which always has the world data.
             return;
         }
-        NBTTagCompound root = new NBTTagCompound();
+        // Mutate the EXISTING root instead of replacing it. The cell serves several channels at once, and each
+        // of those channel views persists independently (the drive keeps one inventory per channel): replacing
+        // the whole compound meant the last writer wiped the others' entries, so the tooltip's numbers belonged
+        // to whichever channel happened to write last -- sensei saw that as "the drive slot shows one random
+        // storage type / 0 bytes, and opening the panel restores it" (2026-10-03/04).
+        NBTTagCompound stackTag = Platform.openNbtData(cellStack);
+        NBTTagCompound root = stackTag.hasKey(NBT_ROOT, 10) ? stackTag.getCompoundTag(NBT_ROOT)
+                : new NBTTagCompound();
         root.setInteger(NBT_VERSION, FORMAT_VERSION);
         root.setInteger(NBT_MODE, mode());
         root.setInteger(NBT_WORKMODE, workMode());
         root.setLong(NBT_THR, threshold());
         root.setString(NBT_UUID, uuid == null ? "" : uuid.toString());
-        // Small summary counters, so the item tooltip can show bytes/types without the client needing the
-        // world save (cell data lives in CellWorldData, keyed by uuid, and is not available client-side).
-        // Tag names match the 1.20 line ("_b2" byte array for BigInteger bytes, "_b" long compat, "_t" types).
         BigInteger summaryBytes = summaryBytes();
-        int summaryTypesProbe = (int) getStoredItemTypes();
-        if (summaryTypesProbe == 0 && summaryBytes.signum() == 0 && !stocks().isEmpty()) {
-            AE2Addon.LOG.warn("[ae2addon] DIAG 写入的摘要为 0，但本通道有数据：channel={} uuid={} mode={} s1={} s2={} ca={}",
-                    cellChannel.id(), uuid, mode(), stocks().s1.size(), stocks().s2.size(), stocks().ca.size());
-            new Throwable("谁在写 0 摘要").printStackTrace();
+        int summaryTypes = (int) getStoredItemTypes();
+        // This channel's counters go into their own slot in the per-channel table, so every channel keeps its
+        // own numbers and the tooltip can show them side by side.
+        NBTTagCompound perChannel = root.hasKey(NBT_CHANNELS, 10) ? root.getCompoundTag(NBT_CHANNELS)
+                : new NBTTagCompound();
+        NBTTagCompound mine = new NBTTagCompound();
+        mine.setByteArray(NBT_SUMMARY_BYTES, summaryBytes.toByteArray());
+        mine.setLong(NBT_SUMMARY_BYTES_COMPAT, clamp(summaryBytes));
+        mine.setInteger(NBT_SUMMARY_TYPES, summaryTypes);
+        perChannel.setTag(cellChannel.id(), mine);
+        root.setTag(NBT_CHANNELS, perChannel);
+        // The flat tags are the pre-multi-channel layout and are still read as "the item channel" by older
+        // readers (and by our own diag command). Only the item channel view writes them, so a fluid persist
+        // cannot stamp fluid numbers onto a field that readers take for item numbers.
+        if (CellChannelRegistry.ITEM.equals(cellChannel.id())) {
+            root.setByteArray(NBT_SUMMARY_BYTES, summaryBytes.toByteArray());
+            root.setLong(NBT_SUMMARY_BYTES_COMPAT, clamp(summaryBytes));
+            root.setInteger(NBT_SUMMARY_TYPES, summaryTypes);
         }
-        root.setByteArray(NBT_SUMMARY_BYTES, summaryBytes.toByteArray());
-        root.setLong(NBT_SUMMARY_BYTES_COMPAT, clamp(summaryBytes));
-        root.setInteger(NBT_SUMMARY_TYPES, (int) getStoredItemTypes());
-        // openNbtData creates and attaches the compound when the stack has none.
-        Platform.openNbtData(cellStack).setTag(NBT_ROOT, root);
+        stackTag.setTag(NBT_ROOT, root);
     }
 
     /**
@@ -368,6 +393,19 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
 
     /** Reads the summary counters straight off the stack, so a client tooltip needs no world data. */
     public static Summary summaryOf(ItemStack stack) {
+        return summaryOf(stack, CellChannelRegistry.ITEM);
+    }
+
+    /**
+     * The summary of ONE channel of the cell, read from the cell item's NBT.
+     *
+     * <p>Why per channel: the cell serves several channels at once, so "how full is it" has one answer per
+     * channel, and the tooltip lists all of them (sensei 2026-10-04: "can the drive slot show every channel?").
+     * Channels are stored under {@code _ch/<channelId>}; cells written before that layout have only the flat
+     * tags, which were always the item channel's numbers -- so those are read as the item channel and every
+     * other channel reads zero until its view persists once (self-healing, no migration pass).
+     */
+    public static Summary summaryOf(ItemStack stack, String channelId) {
         NBTTagCompound stackTag = stack == null ? null : stack.getTagCompound();
         if (stackTag == null || !stackTag.hasKey(NBT_ROOT, 10)) {
             return new Summary(1, 1, DEFAULT_THRESHOLD, 0, BigInteger.ZERO);
@@ -379,10 +417,23 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         }
         int workMode = root.getInteger(NBT_WORKMODE);
         long threshold = root.getLong(NBT_THR);
-        int types = root.getInteger(NBT_SUMMARY_TYPES);
-        BigInteger bytes = root.hasKey(NBT_SUMMARY_BYTES, 7)
-                ? new BigInteger(root.getByteArray(NBT_SUMMARY_BYTES))
-                : BigInteger.valueOf(root.getLong(NBT_SUMMARY_BYTES_COMPAT));
+        NBTTagCompound counters = null;
+        if (root.hasKey(NBT_CHANNELS, 10)) {
+            NBTTagCompound perChannel = root.getCompoundTag(NBT_CHANNELS);
+            if (perChannel.hasKey(channelId, 10)) {
+                counters = perChannel.getCompoundTag(channelId);
+            }
+        }
+        if (counters == null && CellChannelRegistry.ITEM.equals(channelId)) {
+            counters = root;   // legacy layout: the flat tags are the item channel's
+        }
+        int types = counters == null ? 0 : counters.getInteger(NBT_SUMMARY_TYPES);
+        BigInteger bytes = BigInteger.ZERO;
+        if (counters != null) {
+            bytes = counters.hasKey(NBT_SUMMARY_BYTES, 7)
+                    ? new BigInteger(counters.getByteArray(NBT_SUMMARY_BYTES))
+                    : BigInteger.valueOf(counters.getLong(NBT_SUMMARY_BYTES_COMPAT));
+        }
         return new Summary(mode, workMode, threshold, types, bytes);
     }
 

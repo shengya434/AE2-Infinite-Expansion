@@ -119,3 +119,12 @@ gui.ae2addon.cell.short3=All-Types
 
 gui.ae2addon.mode2.filter_active=§eCategory: %s §7(click empty strip space to clear)
 gui.ae2addon.mode2.cat_scroll_tip=§7Wheel or click the arrows to scroll categories
+# Per-channel tooltip lines (2026-10-04): the cell serves several channels at once and its NBT keeps one
+# counter set per channel, so the tooltip lists them one per line (drive slot / inventory hover alike)
+gui.ae2addon.cell.channel_line=§7%s: §b%s §7types / §b%s §7bytes
+gui.ae2addon.channel.item=Items
+gui.ae2addon.channel.fluid=Fluids
+gui.ae2addon.channel.gas=Gases
+gui.ae2addon.channel.essentia=Essentia
+gui.ae2addon.channel.mana=Mana
+gui.ae2addon.channel.flux=Energy/FE

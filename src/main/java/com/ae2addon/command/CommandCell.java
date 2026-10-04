@@ -230,6 +230,16 @@ public class CommandCell extends CommandBase {
         UnlimitedCellInventory.Summary summary = UnlimitedCellInventory.summaryOf(held);
         reply(sender, String.format("§7NBT 摘要: mode=%d wm=%d thr=%d 类型=%d 字节=%s",
                 summary.mode, summary.workMode, summary.threshold, summary.types, summary.bytes));
+        // Per-channel counters are what the tooltip now lists one line per channel (2026-10-04). A channel
+        // missing here has not persisted since the layout changed -- its line reads 0 until it does.
+        StringBuilder perChannel = new StringBuilder();
+        for (com.ae2addon.cell.CellChannel<?> channel : com.ae2addon.cell.CellChannelRegistry.all()) {
+            UnlimitedCellInventory.Summary channelSummary =
+                    UnlimitedCellInventory.summaryOf(held, channel.id());
+            perChannel.append(channel.id()).append('=').append(channelSummary.types).append('/')
+                    .append(channelSummary.bytes).append(' ');
+        }
+        reply(sender, "§7逐通道摘要（类型/字节）: " + perChannel.toString().trim());
         reply(sender, "§7共享存档记录（服务端权威）: " + heldCell(player).describeSettings());
         reply(sender, "§7逐通道（handler / 存量 / 类型 / mode3 应列条数 / 该通道键数）:");
         for (com.ae2addon.cell.CellChannel<?> channel : com.ae2addon.cell.CellChannelRegistry.all()) {

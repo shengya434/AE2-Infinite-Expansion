@@ -98,4 +98,17 @@ public interface CellChannel<T extends IAEStack<T>> {
 
     /** Threshold applied to a key of this channel when neither the item override nor the global one is set. */
     long defaultThreshold();
+
+    /**
+     * Name of the CHANNEL itself ("物品", "流体", ...), for the tooltip's per-channel lines and the command
+     * output. Translation-side I18n on purpose: this is called from a client tooltip as well as from
+     * server-side command output. Falls back to the raw id when the key is missing, so a channel added by a
+     * bridge mod without lang entries still shows something readable.
+     */
+    default String channelName() {
+        String key = "gui.ae2addon.channel." + id();
+        // Original note (1.12.2): the translation-side I18n returns the key unchanged when it is missing.
+        String translated = net.minecraft.util.text.translation.I18n.translateToLocal(key);
+        return translated == null || translated.isEmpty() || translated.equals(key) ? id() : translated;
+    }
 }

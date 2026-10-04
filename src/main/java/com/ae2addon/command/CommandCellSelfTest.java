@@ -405,6 +405,7 @@ public class CommandCellSelfTest extends CommandBase {
         runSharedSettingsGroup(sender);
         runDrivePathGroup(sender);
         runDriveBindingGroup(sender);
+        runChannelSummaryGroup(sender);
         runOptionalChannelGroups(sender);
 
         finish(sender);
@@ -1857,6 +1858,80 @@ public class CommandCellSelfTest extends CommandBase {
                     return handler;
                 }
             };
+
+    /**
+     * V group: the per-channel tooltip summary (sensei 2026-10-04: "can the drive slot show every channel?").
+     *
+     * <p>A universal cell holds several channels at once, so "how full is it" has one answer per channel. The
+     * summary used to be a single pair of NBT tags that every channel view wrote into the same place, and the
+     * whole root compound was replaced on each write -- so the tooltip showed whichever channel persisted last
+     * (random, and zero when that channel was empty). The layout is now {@code _ch/<channelId>} with one entry
+     * per channel, and the flat tags stay the item channel's for older readers. These assertions pin both.
+     */
+    private void runChannelSummaryGroup(ICommandSender sender) {
+        ItemStack cell = cellWithUuid(testUuid("v1"));
+        UnlimitedCellInventory items = new UnlimitedCellInventory(cell, null);
+        wipe(items);
+        FluidCellInventory fluids = new FluidCellInventory(cell, null);
+        items.setMode(1);
+        items.setWorkMode(1);
+        items.injectItems(stack(Items.STICK, 5L), Actionable.MODULATE, NO_SOURCE);
+        fluids.injectItems(fluidStack(FluidRegistry.WATER, 3000), Actionable.MODULATE, NO_SOURCE);
+        items.persist();
+        fluids.persist();
+
+        UnlimitedCellInventory.Summary itemSummary =
+                UnlimitedCellInventory.summaryOf(cell, CellChannelRegistry.ITEM);
+        UnlimitedCellInventory.Summary fluidSummary =
+                UnlimitedCellInventory.summaryOf(cell, CellChannelRegistry.FLUID);
+
+        // V1: both channels have their own entry, with their own真实 numbers (1 type / 5 bytes vs 1 / 3000)
+        check(sender, "V1", "★ 每个通道各存一份摘要，互不覆盖（物品 1 类型/5 字节、流体 1/3000）",
+                itemSummary.types == 1 && itemSummary.bytes.equals(BigInteger.valueOf(5L))
+                        && fluidSummary.types == 1 && fluidSummary.bytes.equals(BigInteger.valueOf(3000L)),
+                "1/5 与 1/3000", itemSummary.types + "/" + itemSummary.bytes + " 与 "
+                        + fluidSummary.types + "/" + fluidSummary.bytes);
+
+        // V2: writing a channel again (the drive persists on every grid rebuild) must not touch the others
+        fluids.persist();
+        fluids.persist();
+        UnlimitedCellInventory.Summary itemAgain =
+                UnlimitedCellInventory.summaryOf(cell, CellChannelRegistry.ITEM);
+        check(sender, "V2", "★ 反复写盘不串台：流体视图再写两次，物品条目仍是 1 类型 / 5 字节",
+                itemAgain.types == 1 && itemAgain.bytes.equals(BigInteger.valueOf(5L)), "1/5",
+                itemAgain.types + "/" + itemAgain.bytes);
+
+        // V3: a cell written before this layout has only the flat tags -- read them as the item channel
+        ItemStack legacy = cellWithUuid(testUuid("v2"));
+        NBTTagCompound legacyRoot = new NBTTagCompound();
+        legacyRoot.setInteger("v", 2);
+        legacyRoot.setInteger("mode", 2);
+        legacyRoot.setInteger("wm", 1);
+        legacyRoot.setLong("thr", 4096L);
+        legacyRoot.setInteger("_t", 7);
+        legacyRoot.setByteArray("_b2", BigInteger.valueOf(1234L).toByteArray());
+        legacyRoot.setLong("_b", 1234L);
+        NBTTagCompound legacyStackTag = new NBTTagCompound();
+        legacyStackTag.setTag("ae2addon:cell", legacyRoot);
+        legacy.setTagCompound(legacyStackTag);
+        UnlimitedCellInventory.Summary legacyItem =
+                UnlimitedCellInventory.summaryOf(legacy, CellChannelRegistry.ITEM);
+        UnlimitedCellInventory.Summary legacyFluid =
+                UnlimitedCellInventory.summaryOf(legacy, CellChannelRegistry.FLUID);
+        check(sender, "V3", "★ 旧格式（只有扁平摘要）按物品通道读入，其它通道读 0（不用迁移）",
+                legacyItem.types == 7 && legacyItem.bytes.equals(BigInteger.valueOf(1234L))
+                        && legacyFluid.types == 0 && legacyFluid.bytes.signum() == 0,
+                "物品 7/1234、流体 0/0", "物品 " + legacyItem.types + "/" + legacyItem.bytes + "、流体 "
+                        + legacyFluid.types + "/" + legacyFluid.bytes);
+
+        // V4: the flat tags stay the item channel's, even after another channel persisted -- that is what keeps
+        // the pre-multi-channel readers (our diag command, older tooltips) showing item numbers
+        NBTTagCompound flatRoot = cell.getTagCompound().getCompoundTag("ae2addon:cell");
+        int flatTypes = flatRoot.getInteger("_t");
+        long flatBytes = flatRoot.getLong("_b");
+        check(sender, "V4", "★ 流体写盘后扁平字段仍是物品通道的数（旧读取端不串味）",
+                flatTypes == 1 && flatBytes == 5L, "1/5", flatTypes + "/" + flatBytes);
+    }
     /** The first ore-dictionary name this stack really carries, or null when it carries none. */
     private static String firstOreName(ItemStack definition) {
         int[] ids = net.minecraftforge.oredict.OreDictionary.getOreIDs(definition);
