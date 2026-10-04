@@ -1890,40 +1890,54 @@ public class CommandCellSelfTest extends CommandBase {
         wipe(items);
         items.setMode(3);
 
-        // X1: aggregating the same infinite row many times must stay positive (Long.MAX + Long.MAX is negative)
+        // X1: the ESSENTIA published value must survive repeated aggregation (Long.MAX + Long.MAX is negative)
+        long essentiaReported = CellChannelRegistry.byId("essentia").reportedInfinite();
         IItemList<IAEItemStack> list = AEApi.instance().storage()
                 .getStorageChannel(IItemStorageChannel.class).createList();
         IAEItemStack probe = stack(Items.STICK, 1L);
         for (int i = 0; i < 20; i++) {
             IAEItemStack row = probe.copy();
-            row.setStackSize(UnlimitedCellInventory.REPORTED_INFINITE);
+            row.setStackSize(essentiaReported);
             list.add(row);
         }
         IAEItemStack aggregated = list.findPrecise(probe);
-        long reported = aggregated == null ? -1L : aggregated.getStackSize();
-        check(sender, "X1", "★ 无限行的上报值按网络的方式累加 20 次仍为正（Long.MAX 会翻负 ⇒ 整条通道消失）",
-                reported > 0L, "> 0", String.valueOf(reported));
+        long summed = aggregated == null ? -1L : aggregated.getStackSize();
+        check(sender, "X1", "★ 源质的上报值按网络方式累加 20 次仍为正（Long.MAX 会翻负 ⇒ 整条通道消失）",
+                summed > 0L, "> 0", String.valueOf(summed));
 
-        // X2: and it is AE2's own convention for infinite storage, not an arbitrary number
-        check(sender, "X2", "上报的无限值 = AE2 自家无限元件的约定 Integer.MAX_VALUE",
-                UnlimitedCellInventory.REPORTED_INFINITE == Integer.MAX_VALUE, String.valueOf(Integer.MAX_VALUE),
-                String.valueOf(UnlimitedCellInventory.REPORTED_INFINITE));
+        // X2: only essentia opts in -- every other channel keeps the historical Long.MAX (sensei's decision)
+        long itemReported = CellChannelRegistry.byId(CellChannelRegistry.ITEM).reportedInfinite();
+        check(sender, "X2", "★ 只有源质改用安全值 Integer.MAX_VALUE，其它通道仍是原来的 Long.MAX",
+                essentiaReported == Integer.MAX_VALUE && itemReported == Long.MAX_VALUE,
+                Integer.MAX_VALUE + "/" + Long.MAX_VALUE, essentiaReported + "/" + itemReported);
 
-        // X3: the listing path itself uses that value (the bug was in reporting, not in the constant)
-        ICellInventoryHandler<?> handler = cellHandlerFor(cell, CellChannelRegistry.byId(CellChannelRegistry.ITEM));
+        // X3: and the listing really uses each channel's own value
+        long essentiaRow = firstListedRowSize(cell, "essentia");
+        long itemRow = firstListedRowSize(cell, CellChannelRegistry.ITEM);
+        check(sender, "X3", "★ mode3 列出的行确实用了各自通道的上报值（源质=安全值、物品=Long.MAX）",
+                essentiaRow == ChannelCellCore.SAFE_INFINITE && itemRow == Long.MAX_VALUE,
+                ChannelCellCore.SAFE_INFINITE + "/" + Long.MAX_VALUE, essentiaRow + "/" + itemRow);
+    }
+
+    /**
+     * The size a channel's mode-3 listing gives its first row, read the way the network reads it (through the
+     * cell inventory, not through the access-gated handler wrapper).
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static long firstListedRowSize(ItemStack cell, String channelId) {
+        ICellInventoryHandler<?> handler = cellHandlerFor(cell, CellChannelRegistry.byId(channelId));
         appeng.api.storage.ICellInventory cellInv = handler == null ? null : handler.getCellInv();
-        IItemList<IAEItemStack> cellList = AEApi.instance().storage()
-                .getStorageChannel(IItemStorageChannel.class).createList();
-        boolean listingUsesIt = false;
-        if (cellInv != null) {
-            cellInv.getAvailableItems(cellList);
-            IAEItemStack stickRow = cellList.findPrecise(stack(Items.STICK, 1L));
-            listingUsesIt = stickRow != null
-                    && stickRow.getStackSize() == UnlimitedCellInventory.REPORTED_INFINITE;
+        if (cellInv == null) {
+            return -1L;
         }
-        check(sender, "X3", "★ mode3 列出的行用的就是这个值（修的是列表路径本身）",
-                listingUsesIt, String.valueOf(UnlimitedCellInventory.REPORTED_INFINITE),
-                listingUsesIt ? String.valueOf(UnlimitedCellInventory.REPORTED_INFINITE) : "没用上");
+        IItemList list = CellChannelRegistry.byId(channelId).storage().createList();
+        cellInv.getAvailableItems(list);
+        for (Object element : list) {
+            if (element instanceof appeng.api.storage.data.IAEStack) {
+                return ((appeng.api.storage.data.IAEStack) element).getStackSize();
+            }
+        }
+        return -1L;
     }
 
     /** A channel map with one empty list per registered channel, the way AE2 lays it out. */

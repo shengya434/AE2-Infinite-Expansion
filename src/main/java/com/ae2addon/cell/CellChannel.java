@@ -96,6 +96,23 @@ public interface CellChannel<T extends IAEStack<T>> {
         return key == null ? "" : displayName((T) key);
     }
 
+    /**
+     * The size this channel PUBLISHES for an "infinite" row.
+     *
+     * <p>Default is the historical {@link ChannelCellCore#INFINITE} ({@code Long.MAX_VALUE}). A channel can
+     * lower it: AE2's {@code NetworkMonitor} SUMS what cells report into one aggregate list, so a value that is
+     * half of {@code Long.MAX} or more wraps to a negative number the second time the same key is aggregated --
+     * and a negative row does not exist as far as a terminal is concerned. Channel-wide listings (mode 3) make
+     * that fatal for a whole channel: every key goes negative at once, taking normal cells in the same network
+     * down with it.
+     *
+     * <p>Essentia lowers it today (sensei's decision, 2026-10-04: fix the broken channel only), because the
+     * Thaumic Energistics terminal was where the overflow actually bit.
+     */
+    default long reportedInfinite() {
+        return ChannelCellCore.INFINITE;
+    }
+
     /** Threshold applied to a key of this channel when neither the item override nor the global one is set. */
     long defaultThreshold();
 

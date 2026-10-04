@@ -67,21 +67,20 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     public static volatile long INFINITE = Long.MAX_VALUE;
 
     /**
-     * The size we PUBLISH to the network for an infinite row -- deliberately not {@link #INFINITE}.
+     * A sum-safe "infinite" size, for channels whose published rows go through an aggregation that SUMS.
      *
-     * <p>What a cell hands to {@code getAvailableItems} ends up in AE2's aggregate list
-     * ({@code NetworkMonitor.cachedList}), which SUMS. Reporting {@code Long.MAX_VALUE} there meant that the
-     * second time the same key was aggregated the entry wrapped to a negative number -- and a negative entry
-     * does not exist as far as any terminal is concerned. Because our mode-3 rows cover EVERY key of a channel
-     * (all 37 Thaumcraft aspects, for instance), that poisoned the whole channel: sensei lost even the contents
-     * of a normal Thaumic Energistics essentia cell standing in the same network (2026-10-04), and that is the
-     * experiment that proved the overflow.
+     * <p>AE2's {@code NetworkMonitor} sums whatever cells report into one list. Publishing
+     * {@code Long.MAX_VALUE} there meant the second aggregation of the same key wrapped to a negative number --
+     * and a negative entry does not exist as far as any terminal is concerned. Because a mode-3 row set covers
+     * EVERY key of a channel (all 37 Thaumcraft aspects, for instance), that poisoned the whole channel:
+     * sensei lost even the contents of a normal Thaumic Energistics essentia cell standing in the same network
+     * (2026-10-04). {@code Integer.MAX_VALUE} is AE2's own convention for infinite storage, and summing it a few
+     * thousand times still stays positive.
      *
-     * <p>{@code Integer.MAX_VALUE} is AE2's own convention for "infinite" storage cells, and summing it a few
-     * thousand times still stays positive. Extraction is unaffected: it goes through {@link #INFINITE} and the
-     * cell's own books.
+     * <p>Channels opt in through {@link CellChannel#reportedInfinite()}; the default stays {@link #INFINITE}, so
+     * only the channels that need it change behaviour (sensei: "fix the essentia one only").
      */
-    public static final long REPORTED_INFINITE = Integer.MAX_VALUE;
+    public static final long SAFE_INFINITE = Integer.MAX_VALUE;
 
     /** Byte figure shown for infinite items in the panel (1.20: config cellDisplayBytes). */
     public static volatile long INFINITE_BYTES = 300_000_000L;
@@ -670,25 +669,27 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     }
 
     /**
-     * Reports keys as infinite WITHOUT accumulating, publishing {@link #REPORTED_INFINITE}.
+     * Reports keys as infinite WITHOUT accumulating, publishing what this channel publishes for an infinite
+     * row ({@link CellChannel#reportedInfinite()}).
      *
      * <p>rv6's {@code IItemList.add} merges by summing sizes, so when two unlimited cells report a truly huge
      * value into the same grid list the result overflows to a negative number -- the terminal then shows
      * negative stock and extraction fails. The 1.20 line hit exactly this and fixed it by taking the maximum
      * instead of adding. rv6 has no {@code set}, so we mutate the entry that {@code findPrecise} hands back.
      *
-     * <p>The value itself is {@link #REPORTED_INFINITE} for the same reason one level up: AE2's own aggregate
-     * list sums whatever the cells report. See that constant for the experiment that proved it.
+     * <p>The value itself is per channel for the same reason one level up: AE2's aggregate list sums whatever
+     * the cells report. See {@link #SAFE_INFINITE} for the experiment that proved it.
      */
-    private static <S extends IAEStack<S>> void reportInfinite(IItemList<S> out, Iterable<S> keys) {
+    private <S extends IAEStack<S>> void reportInfinite(IItemList<S> out, Iterable<S> keys) {
+        long infinite = cellChannel.reportedInfinite();
         for (S key : keys) {
             S existing = out.findPrecise(key);
             if (existing == null) {
                 S stack = key.copy();
-                stack.setStackSize(REPORTED_INFINITE);
+                stack.setStackSize(infinite);
                 out.add(stack);
-            } else if (existing.getStackSize() < REPORTED_INFINITE) {
-                existing.setStackSize(REPORTED_INFINITE);
+            } else if (existing.getStackSize() < infinite) {
+                existing.setStackSize(infinite);
             }
         }
     }
@@ -705,7 +706,8 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
      * <p>So the decision is made with {@code findPrecise} -- the very identity {@code ItemList.add} uses to
      * find its record -- instead of a Set lookup, which can disagree with it and let the add through.
      */
-    private static <S extends IAEStack<S>> void reportMap(IItemList<S> out, Map<IAEStack<?>, BigInteger> map) {
+    private <S extends IAEStack<S>> void reportMap(IItemList<S> out, Map<IAEStack<?>, BigInteger> map) {
+        long infinite = cellChannel.reportedInfinite();
         for (Map.Entry<IAEStack<?>, BigInteger> entry : map.entrySet()) {
             long size = clamp(entry.getValue());
             if (size <= 0) {
@@ -713,7 +715,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             }
             S key = castKey(entry.getKey());
             S existing = out.findPrecise(key);
-            if (existing != null && existing.getStackSize() >= REPORTED_INFINITE) {
+            if (existing != null && existing.getStackSize() >= infinite) {
                 continue;
             }
             S stack = key.copy();

@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Set;
 
 import com.ae2addon.cell.CellChannel;
+import com.ae2addon.cell.ChannelCellCore;
 
 import appeng.api.AEApi;
 import appeng.api.storage.IStorageChannel;
@@ -43,6 +44,21 @@ public final class EssentiaCellChannel implements CellChannel<IAEEssentiaStack> 
     private static final long DEFAULT_ESSENTIA_THRESHOLD = 65536L;
 
     private EssentiaCellChannel() {
+    }
+
+    /**
+     * Essentia publishes a sum-safe value for its infinite rows ({@link ChannelCellCore#SAFE_INFINITE}).
+     *
+     * <p>Why only essentia (sensei's call, 2026-10-04): the Thaumic Energistics terminal is where the overflow
+     * actually bit. AE2's {@code NetworkMonitor} sums what cells report, so a {@code Long.MAX_VALUE} row wraps
+     * negative the second time the same key is aggregated -- and since mode 3 covers EVERY aspect at once, the
+     * whole essentia channel went negative, taking a normal Thaumic Energistics cell in the same network down
+     * with it (sensei's three-way experiment). Every other channel is left exactly as it was; if another
+     * terminal shows the same symptom, opting it in is a one-line override here.
+     */
+    @Override
+    public long reportedInfinite() {
+        return ChannelCellCore.SAFE_INFINITE;
     }
 
     @Override
