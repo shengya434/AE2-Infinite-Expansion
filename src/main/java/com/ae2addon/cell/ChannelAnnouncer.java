@@ -56,6 +56,19 @@ public final class ChannelAnnouncer {
     /** provider -> channels that owe an announcement on the next tick. */
     private static final Map<ISaveProvider, List<IStorageChannel<?>>> DIRTY = new WeakHashMap<>();
 
+    /**
+     * provider -> channel -> the size we last TOLD the network for a key.
+     *
+     * <p>Needed for the one case the monitor cannot answer: a key we used to list and no longer do (a mode
+     * switch back to finite storage). AE2's aggregate list adds what it is handed, so the old amount has to be
+     * taken back explicitly; the monitor itself cannot tell "our" keys from another cell's.
+     */
+    private static final Map<ISaveProvider, Map<IStorageChannel<?>, Map<IAEStack<?>, Long>>> ANNOUNCED =
+            new WeakHashMap<>();
+
+    /** Pairs whose next pass is a pure notification (a terminal just started listening), not a stock change. */
+    private static final Map<ISaveProvider, List<IStorageChannel<?>>> NOTIFY_ONLY = new WeakHashMap<>();
+
     /** Upper bound on tracked providers, so a pathological rebuild loop cannot grow this without limit. */
     private static final int MAX_PROVIDERS = 64;
 
@@ -111,13 +124,25 @@ public final class ChannelAnnouncer {
         }
         for (Map.Entry<ISaveProvider, Map<IStorageChannel<?>, List<ItemStack>>> binding : BOUND.entrySet()) {
             if (binding.getValue().containsKey(channel)) {
-                markForFlush(binding.getKey(), channel);
+                markForFlush(binding.getKey(), channel, true);
             }
         }
     }
 
     /** Schedules one (provider, channel) pair for the next tick. Caller holds the lock. */
     private static void markForFlush(ISaveProvider provider, IStorageChannel<?> channel) {
+        markForFlush(provider, channel, false);
+    }
+
+    /**
+     * Schedules one (provider, channel) pair for the next tick.
+     *
+     * @param notifyOnly true when the pass exists because a terminal started listening: then keys whose stock
+     *                   did not change are still sent, with size 0. Third-party terminals learn keys only from
+     *                   a notification and read the real amount out of the monitor themselves (ThE's
+     *                   {@code sendDelta} does exactly that), so the notification must not carry stock.
+     */
+    private static void markForFlush(ISaveProvider provider, IStorageChannel<?> channel, boolean notifyOnly) {
         List<IStorageChannel<?>> channels = DIRTY.get(provider);
         if (channels == null) {
             channels = new ArrayList<>();
@@ -125,6 +150,16 @@ public final class ChannelAnnouncer {
         }
         if (!channels.contains(channel)) {
             channels.add(channel);
+        }
+        if (notifyOnly) {
+            List<IStorageChannel<?>> flags = NOTIFY_ONLY.get(provider);
+            if (flags == null) {
+                flags = new ArrayList<>();
+                NOTIFY_ONLY.put(provider, flags);
+            }
+            if (!flags.contains(channel)) {
+                flags.add(channel);
+            }
         }
     }
 
@@ -152,12 +187,14 @@ public final class ChannelAnnouncer {
                     continue;
                 }
                 IActionSource source = new MachineSource(host);
+                List<IStorageChannel<?>> notifyFlags = NOTIFY_ONLY.get(provider);
                 for (IStorageChannel<?> channel : entry.getValue()) {
-                    List<IAEStack<?>> keys = keysNow(provider, channel);
-                    if (keys.isEmpty()) {
-                        continue;
+                    boolean notifyOnly = notifyFlags != null && notifyFlags.remove(channel);
+                    Map<IAEStack<?>, Long> now = keysNow(provider, channel);
+                    List<IAEStack<?>> delta = deltasFor(storage, provider, channel, now, notifyOnly);
+                    if (!delta.isEmpty()) {
+                        storage.postAlterationOfStoredItems(channel, delta, source);
                     }
-                    storage.postAlterationOfStoredItems(channel, keys, source);
                 }
             } catch (RuntimeException | LinkageError failed) {
                 // Never let a notification problem escape into the tick loop: the cell itself is fine, the
@@ -173,8 +210,8 @@ public final class ChannelAnnouncer {
      * not of the moment the drive happened to bind us.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private static List<IAEStack<?>> keysNow(ISaveProvider provider, IStorageChannel<?> channel) {
-        List<IAEStack<?>> keys = new ArrayList<>();
+    private static Map<IAEStack<?>, Long> keysNow(ISaveProvider provider, IStorageChannel<?> channel) {
+        Map<IAEStack<?>, Long> keys = new LinkedHashMap<>();
         Map<IStorageChannel<?>, List<ItemStack>> perProvider = BOUND.get(provider);
         List<ItemStack> cells = perProvider == null ? null : perProvider.get(channel);
         if (cells == null) {
@@ -203,7 +240,9 @@ public final class ChannelAnnouncer {
                     handler.getAvailableItems(list);
                 }
                 for (Object element : list) {
-                    keys.add((IAEStack<?>) element);
+                    IAEStack<?> key = (IAEStack<?>) element;
+                    Long already = keys.get(key);
+                    keys.put(key, (already == null ? 0L : already) + key.getStackSize());
                 }
             } catch (RuntimeException | LinkageError failed) {
                 // A cell that cannot be asked right now simply contributes nothing this round. Note by
@@ -213,6 +252,85 @@ public final class ChannelAnnouncer {
             }
         }
         return keys;
+    }
+
+    /**
+     * The CHANGE to tell the network about -- never the whole state.
+     *
+     * <p>AE2's aggregate list ADDS whatever it is handed ({@code ItemVariantList.addStorage} compiles to
+     * {@code findPrecise} + {@code incStackSize}, verified with javap), and the monitor is already rebuilt from
+     * the cells on every grid update ({@code forceUpdate} zeroes the sizes and re-asks them). Announcing the
+     * full state therefore counted our cell twice: sensei's mana read 2x after a re-entry while only half of it
+     * could be extracted (2026-10-04). So ask the network what it holds and send the difference:
+     * <ul>
+     * <li>key already there at our value &rarr; nothing to say (this is the normal case);</li>
+     * <li>key it does not have yet (a mode-3 row that just appeared) &rarr; send it whole;</li>
+     * <li>key we announced once and no longer list &rarr; take our old amount back;</li>
+     * <li>a pass caused by a NEW LISTENER &rarr; send the key with size 0 instead of skipping it, because those
+     *     terminals learn keys only from a notification and read the amount from the monitor themselves.</li>
+     * </ul>
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static List<IAEStack<?>> deltasFor(IStorageGrid storage, ISaveProvider provider,
+            IStorageChannel<?> channel, Map<IAEStack<?>, Long> now, boolean notifyOnly) {
+        List<IAEStack<?>> out = new ArrayList<>();
+        appeng.api.storage.data.IItemList known = null;
+        try {
+            appeng.api.storage.IMEMonitor monitor = storage.getInventory((IStorageChannel) channel);
+            if (monitor != null) {
+                known = monitor.getStorageList();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            known = null; // no monitor yet (grid still building): then everything we list counts as new
+        }
+        Map<IAEStack<?>, Long> was = announcedFor(provider, channel);
+        for (Map.Entry<IAEStack<?>, Long> entry : now.entrySet()) {
+            long mine = entry.getValue();
+            long theirs = 0L;
+            if (known != null) {
+                IAEStack<?> there = known.findPrecise(entry.getKey());
+                theirs = there == null ? 0L : there.getStackSize();
+            }
+            long diff = mine - theirs;
+            if (diff != 0L) {
+                out.add(sized(entry.getKey(), diff));
+            } else if (notifyOnly) {
+                out.add(sized(entry.getKey(), 0L));
+            }
+        }
+        for (Map.Entry<IAEStack<?>, Long> entry : was.entrySet()) {
+            if (!now.containsKey(entry.getKey()) && entry.getValue() != 0L) {
+                out.add(sized(entry.getKey(), -entry.getValue()));
+            }
+        }
+        was.clear();
+        was.putAll(now);
+        return out;
+    }
+
+    /** The remembered announcement sizes for one (provider, channel). Caller holds the lock. */
+    private static Map<IAEStack<?>, Long> announcedFor(ISaveProvider provider, IStorageChannel<?> channel) {
+        Map<IStorageChannel<?>, Map<IAEStack<?>, Long>> perProvider = ANNOUNCED.get(provider);
+        if (perProvider == null) {
+            if (ANNOUNCED.size() >= MAX_PROVIDERS) {
+                return new LinkedHashMap<>();
+            }
+            perProvider = new LinkedHashMap<>();
+            ANNOUNCED.put(provider, perProvider);
+        }
+        Map<IAEStack<?>, Long> perChannel = perProvider.get(channel);
+        if (perChannel == null) {
+            perChannel = new LinkedHashMap<>();
+            perProvider.put(channel, perChannel);
+        }
+        return perChannel;
+    }
+
+    /** A copy of the key carrying the given amount (never the shared key object itself). */
+    private static IAEStack<?> sized(IAEStack<?> key, long size) {
+        IAEStack<?> copy = key.copy();
+        copy.setStackSize(size);
+        return copy;
     }
 
     /** True when this channel is served by AE2's own terminal, which pulls the list instead of waiting. */
