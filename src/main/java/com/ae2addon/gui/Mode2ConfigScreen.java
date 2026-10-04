@@ -588,6 +588,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
             if (row >= 0 && row < filtered.size()) {
                 Mode2ConfigPacket.PanelEntry entry = filtered.get(row);
                 List<String> tooltip = new ArrayList<>(getItemToolTip(entry.item));
+                // In the "全部" view rows of several channels sit side by side and only the item channel has an
+                // icon, so the row has to say which channel it belongs to.
+                if (Mode2ConfigPacket.ALL_CHANNELS.equals(panelChannel)) {
+                    tooltip.add(I18n.format("gui.ae2addon.mode2.channel_of",
+                            channelDisplayName(entry.channelId)));
+                }
                 tooltip.add(entry.infinite ? I18n.format("gui.ae2addon.mode2.infinite")
                         : I18n.format("gui.ae2addon.mode2.amount", entry.amount.toString()));
                 if (entry.infinite) tooltip.add(I18n.format("gui.ae2addon.p3.bytes", entry.bytes));
@@ -634,9 +640,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
      * shared, so this only changes which storage rows are listed.
      */
     private void drawChannelSelector() {
-        java.util.List<com.ae2addon.cell.CellChannel<?>> channels =
-                new java.util.ArrayList<>(com.ae2addon.cell.CellChannelRegistry.all());
-        if (channels.size() < 2) {
+        if (selectableChannels().size() < 2) {
             return;
         }
         String name = channelDisplayName(panelChannel);
@@ -647,22 +651,31 @@ public final class Mode2ConfigScreen extends GuiContainer {
         fontRenderer.drawString("§7›", guiLeft + 246 - 6, guiTop + 4, 0xFFFFFF);
     }
 
-    /** Cycles the panel's channel by {@code step} through the registered channels. */
+    /**
+     * What the selector cycles through: "全部" first (every channel in one list), then each channel the cell
+     * speaks (sensei asked for the All entry on 2026-10-04).
+     */
+    private static java.util.List<String> selectableChannels() {
+        java.util.List<String> ids = new java.util.ArrayList<>();
+        ids.add(Mode2ConfigPacket.ALL_CHANNELS);
+        for (com.ae2addon.cell.CellChannel<?> channel : com.ae2addon.cell.CellChannelRegistry.all()) {
+            ids.add(channel.id());
+        }
+        return ids;
+    }
+
+    /** Cycles the panel's channel by {@code step} through "全部" and the registered channels. */
     private void cyclePanelChannel(int step) {
-        java.util.List<com.ae2addon.cell.CellChannel<?>> channels =
-                new java.util.ArrayList<>(com.ae2addon.cell.CellChannelRegistry.all());
-        if (channels.isEmpty()) {
+        java.util.List<String> ids = selectableChannels();
+        if (ids.size() < 2) {
             return;
         }
-        int index = 0;
-        for (int i = 0; i < channels.size(); i++) {
-            if (channels.get(i).id().equals(panelChannel)) {
-                index = i;
-                break;
-            }
+        int index = ids.indexOf(panelChannel);
+        if (index < 0) {
+            index = 0;
         }
-        index = (index + step % channels.size() + channels.size()) % channels.size();
-        panelChannel = channels.get(index).id();
+        index = (index + step % ids.size() + ids.size()) % ids.size();
+        panelChannel = ids.get(index);
         scrollOffset = 0;
         // Drop the previous channel's rows immediately: the new set arrives as fresh chunks, and leaving the
         // old rows on screen under the new label looks exactly like "the switch did nothing".
@@ -677,6 +690,9 @@ public final class Mode2ConfigScreen extends GuiContainer {
 
     /** Display name for a channel id (the panel is Chinese-facing; the id is the fallback). */
     private static String channelDisplayName(String channelId) {
+        if (Mode2ConfigPacket.ALL_CHANNELS.equals(channelId)) {
+            return "§d全部";
+        }
         switch (channelId) {
             case "item": return "§b物品";
             case "fluid": return "§b流体";

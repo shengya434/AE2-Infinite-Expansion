@@ -119,6 +119,8 @@ gui.ae2addon.cell.short3=All-Types
 
 gui.ae2addon.mode2.filter_active=§eCategory: %s §7(click empty strip space to clear)
 gui.ae2addon.mode2.cat_scroll_tip=§7Wheel or click the arrows to scroll categories
+# "All channels" panel view: only the item channel has an icon, so a row has to name its channel
+gui.ae2addon.mode2.channel_of=§7Channel: %s
 # Per-channel tooltip lines (2026-10-04): the cell serves several channels at once and its NBT keeps one
 # counter set per channel, so the tooltip lists them one per line (drive slot / inventory hover alike)
 gui.ae2addon.cell.channel_line=§7%s: §b%s §7types / §b%s §7bytes

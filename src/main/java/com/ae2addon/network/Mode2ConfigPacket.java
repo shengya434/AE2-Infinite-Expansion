@@ -168,6 +168,10 @@ public final class Mode2ConfigPacket implements IMessage {
                     buf.writeLong(entry.threshold);
                     buf.writeBoolean(entry.quantityLocked);
                     buf.writeBoolean(entry.whitelisted);
+                    // Per ROW, not just per packet: with the "all channels" view one chunk set carries rows of
+                    // several channels, and an action on a row has to name the row's own channel (sensei's
+                    // "add an All option", 2026-10-04).
+                    buf.writeString(entry.channelId == null ? "" : entry.channelId);
                 }
                 break;
             case 24: buf.writeString(channelId); break;
@@ -217,9 +221,13 @@ public final class Mode2ConfigPacket implements IMessage {
                         long threshold = buf.readLong();
                         boolean locked = buf.readBoolean();
                         boolean whitelisted = buf.readBoolean();
+                        // The row's own channel (see the encoder): an action on a row names the row's channel,
+                        // which is what makes the "all channels" view usable.
+                        String rowChannel = buf.readString(64);
+                        if (rowChannel.isEmpty()) rowChannel = channelId;
                         // A row is valid when it carries a key or at least an icon: non-item channels have no icon.
                         if (amount.length > 0 && (!stack.isEmpty() || keyTag != null)) {
-                            entries.add(new PanelEntry(channelId, keyTag, label, stack,
+                            entries.add(new PanelEntry(rowChannel, keyTag, label, stack,
                                     new BigInteger(amount), infinite, bytes, threshold, locked, whitelisted));
                         }
                     }
@@ -278,7 +286,9 @@ public final class Mode2ConfigPacket implements IMessage {
         // (mode / work mode / threshold / rules / reject) are shared, so only the storage rows change.
         String channelId = msg.channelId == null || msg.channelId.isEmpty()
                 ? panelChannelOf(player) : msg.channelId;
-        if (CellChannelRegistry.byId(channelId) == null) channelId = CellChannelRegistry.ITEM;
+        if (!ALL_CHANNELS.equals(channelId) && CellChannelRegistry.byId(channelId) == null) {
+            channelId = CellChannelRegistry.ITEM;
+        }
         if (msg.channelId != null && !msg.channelId.isEmpty()) {
             PANEL_CHANNEL.put(player.getUniqueID(), channelId);
         }
@@ -370,8 +380,18 @@ public final class Mode2ConfigPacket implements IMessage {
     /** Which channel each player has selected in the config panel (one short string per online player). */
     private static final Map<UUID, String> PANEL_CHANNEL = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * The panel's "every channel at once" view (sensei, 2026-10-04). A sentinel rather than a real channel id:
+     * it is only ever a SELECTION, never a key's channel -- each row still carries its own channel, which is
+     * what actions name.
+     */
+    public static final String ALL_CHANNELS = "all";
+
     private static String panelChannelOf(EntityPlayerMP player) {
         String id = PANEL_CHANNEL.get(player.getUniqueID());
+        if (ALL_CHANNELS.equals(id)) {
+            return ALL_CHANNELS;
+        }
         return id == null || CellChannelRegistry.byId(id) == null ? CellChannelRegistry.ITEM : id;
     }
 
@@ -394,22 +414,47 @@ public final class Mode2ConfigPacket implements IMessage {
         sendRules(player, inv, true);
         sendRules(player, inv, false);
         // The rows come from the SELECTED channel's view of the cell; every row carries its key (as that
-        // channel's own NBT) and a display label, because only the item channel has an icon to show.
-        ChannelCellCore<?> core = CellInventories.open(inv.getItemStack(), null, channelId);
-        if (core == null) core = inv;
-        List<PanelEntry> all = new ArrayList<>();
-        for (ChannelCellCore.PanelItem row : core.getPanelItems()) {
-            NBTTagCompound keyTag = new NBTTagCompound();
-            row.key.writeToNBT(keyTag);
-            all.add(new PanelEntry(channelId, keyTag, core.displayNameOf(row.key),
-                    row.key.asItemStackRepresentation(), row.amount, row.isInfinite,
-                    row.bytes, row.itemThreshold, row.quantityLocked, core.isWhitelisted(row.key)));
-        }
+        // channel's own NBT), a display label (only the item channel has an icon to show) and its own channel id.
+        List<PanelEntry> all = panelRows(inv.getItemStack(), channelId);
         int total = Math.max(1, (all.size() + MAX_ITEMS_PER_CHUNK - 1) / MAX_ITEMS_PER_CHUNK);
         for (int index = 0; index < total; index++) {
             int from = index * MAX_ITEMS_PER_CHUNK;
             int to = Math.min(all.size(), from + MAX_ITEMS_PER_CHUNK);
             CellNetwork.sendTo(panel(index, total, channelId, new ArrayList<>(all.subList(from, to))), player);
+        }
+    }
+
+    /**
+     * The rows one panel view lists: the selected channel's, or -- for {@link #ALL_CHANNELS} -- every channel
+     * the cell speaks, one group per channel.
+     *
+     * <p>Public so the in-game self-test can pin the assembly without a player: sensei asked for an "All" entry
+     * in the channel selector (2026-10-04), and the thing that can silently go wrong is a row naming the wrong
+     * channel (an action would then hit the cell's item view instead of the row's own channel).
+     */
+    public static List<PanelEntry> panelRows(ItemStack cell, String channelId) {
+        List<PanelEntry> rows = new ArrayList<>();
+        if (ALL_CHANNELS.equals(channelId)) {
+            for (CellChannel<?> channel : CellChannelRegistry.all()) {
+                appendRows(rows, cell, channel.id());
+            }
+        } else {
+            appendRows(rows, cell, channelId);
+        }
+        return rows;
+    }
+
+    private static void appendRows(List<PanelEntry> out, ItemStack cell, String channelId) {
+        ChannelCellCore<?> core = CellInventories.open(cell, null, channelId);
+        if (core == null) {
+            return;
+        }
+        for (ChannelCellCore.PanelItem row : core.getPanelItems()) {
+            NBTTagCompound keyTag = new NBTTagCompound();
+            row.key.writeToNBT(keyTag);
+            out.add(new PanelEntry(channelId, keyTag, core.displayNameOf(row.key),
+                    row.key.asItemStackRepresentation(), row.amount, row.isInfinite,
+                    row.bytes, row.itemThreshold, row.quantityLocked, core.isWhitelisted(row.key)));
         }
     }
 

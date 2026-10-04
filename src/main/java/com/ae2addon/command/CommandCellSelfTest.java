@@ -407,6 +407,7 @@ public class CommandCellSelfTest extends CommandBase {
         runDrivePathGroup(sender);
         runDriveBindingGroup(sender);
         runChannelSummaryGroup(sender);
+        runPanelAllChannelsGroup(sender);
         runOptionalChannelGroups(sender);
 
         finish(sender);
@@ -1810,9 +1811,67 @@ public class CommandCellSelfTest extends CommandBase {
                 emptyAdded == 0 && stickAdded == 0, "0/0", emptyAdded + "/" + stickAdded);
     }
 
+    /**
+     * W group: the panel's "全部" view -- one list holding every channel's rows (sensei 2026-10-04).
+     *
+     * <p>What can silently break here is a row naming the wrong channel: the panel sends an action as
+     * (channelId, key's own NBT), so a row that claims to be the item channel while carrying a fluid key would
+     * act on the wrong view. These assertions drive the same assembly the server uses ({@code panelRows}).
+     */
+    private void runPanelAllChannelsGroup(ICommandSender sender) {
+        ItemStack cell = cellWithUuid(testUuid("w1"));
+        UnlimitedCellInventory items = new UnlimitedCellInventory(cell, null);
+        wipe(items);
+        items.setMode(1);
+        items.setWorkMode(1);
+        FluidCellInventory fluids = new FluidCellInventory(cell, null);
+        items.injectItems(stack(Items.STICK, 5L), Actionable.MODULATE, NO_SOURCE);
+        fluids.injectItems(fluidStack(FluidRegistry.WATER, 3000), Actionable.MODULATE, NO_SOURCE);
+
+        int expected = 0;
+        for (com.ae2addon.cell.CellChannel<?> channel : com.ae2addon.cell.CellChannelRegistry.all()) {
+            com.ae2addon.cell.ChannelCellCore<?> core = CellInventories.open(cell, null, channel.id());
+            expected += core == null ? 0 : core.getPanelItems().size();
+        }
+        java.util.List<com.ae2addon.network.Mode2ConfigPacket.PanelEntry> allRows =
+                com.ae2addon.network.Mode2ConfigPacket.panelRows(cell,
+                        com.ae2addon.network.Mode2ConfigPacket.ALL_CHANNELS);
+
+        // W1: the All view is exactly the sum of every channel's rows (item + fluid here), not just one channel
+        check(sender, "W1", "★ 「全部」视图把各通道的行合成一份（行数 = 各通道行数之和）",
+                expected >= 2 && allRows.size() == expected, String.valueOf(expected),
+                allRows.size() + "（期望 " + expected + "）");
+
+        // W2: every row carries a channel id whose own reader can parse that row's key
+        boolean everyRowResolves = true;
+        StringBuilder detail = new StringBuilder();
+        for (com.ae2addon.network.Mode2ConfigPacket.PanelEntry row : allRows) {
+            com.ae2addon.cell.CellChannel<?> channel = com.ae2addon.cell.CellChannelRegistry.byId(row.channelId);
+            boolean ok = channel != null && row.keyNbt != null && channel.readKeyUntyped(row.keyNbt) != null;
+            if (!ok) {
+                everyRowResolves = false;
+            }
+            detail.append(row.channelId).append(ok ? "=ok " : "=BAD ");
+        }
+        check(sender, "W2", "★ 每行都带自己的通道身份，且该通道能读回自己的键（动作不会被算到物品视图）",
+                everyRowResolves && !allRows.isEmpty(), "全部 ok", detail.toString().trim());
+
+        // W3: a single-channel view is unchanged, and a non-item row is shown by label (it has no icon)
+        java.util.List<com.ae2addon.network.Mode2ConfigPacket.PanelEntry> fluidRows =
+                com.ae2addon.network.Mode2ConfigPacket.panelRows(cell, CellChannelRegistry.FLUID);
+        boolean fluidRowOk = fluidRows.size() == 1
+                && CellChannelRegistry.FLUID.equals(fluidRows.get(0).channelId)
+                && fluidRows.get(0).item.isEmpty() && fluidRows.get(0).label != null
+                && !fluidRows.get(0).label.isEmpty();
+        check(sender, "W3", "★ 单通道视图不变：选流体只有 1 行、行归属流体、无图标但有显示名",
+                fluidRowOk, "1 行 / fluid / 无图标 / 有名字",
+                fluidRows.size() + " 行 / " + (fluidRows.isEmpty() ? "?" : fluidRows.get(0).channelId) + " / "
+                        + (fluidRows.isEmpty() ? "?" : String.valueOf(fluidRows.get(0).item.isEmpty())) + " / "
+                        + (fluidRows.isEmpty() ? "?" : fluidRows.get(0).label));
+    }
+
     /** A channel map with one empty list per registered channel, the way AE2 lays it out. */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static java.util.Map<IStorageChannel, java.util.List<appeng.api.storage.IMEInventoryHandler>> emptyChannelMap(
+    @SuppressWarnings({"unchecked", "rawtypes"})    private static java.util.Map<IStorageChannel, java.util.List<appeng.api.storage.IMEInventoryHandler>> emptyChannelMap(
             java.util.List<IStorageChannel> order) {
         java.util.Map<IStorageChannel, java.util.List<appeng.api.storage.IMEInventoryHandler>> map =
                 new java.util.LinkedHashMap<IStorageChannel, java.util.List<appeng.api.storage.IMEInventoryHandler>>();

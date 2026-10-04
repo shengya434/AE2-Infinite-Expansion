@@ -119,6 +119,8 @@ gui.ae2addon.cell.short3=全类型无限
 
 gui.ae2addon.mode2.filter_active=§e当前分类: %s §7（点分类条空白处清除）
 gui.ae2addon.mode2.cat_scroll_tip=§7滚轮或点箭头：左右滚动分类
+# 面板「全部」视图：非物品通道的行没有图标，只能靠这行说明它属于哪个通道
+gui.ae2addon.mode2.channel_of=§7通道: %s
 # 元件 tooltip 的逐通道行（2026-10-04）：这只元件同时服务多个通道，NBT 里每个通道各存一份计数
 # ⇒ 提示里一条通道一行，驱动器槽位/背包里悬停都能一眼看全
 gui.ae2addon.cell.channel_line=§7%s: §b%s §7类型 / §b%s §7字节
