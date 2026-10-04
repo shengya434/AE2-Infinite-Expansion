@@ -370,8 +370,9 @@ public class CommandCellSelfTest extends CommandBase {
         UnlimitedCellInventory inv11 = new UnlimitedCellInventory(cell11, null);
         long b11stored = inv11.storedAmount(stick).longValue();
         int b11version = cell11.getTagCompound().getCompoundTag("ae2addon:cell").getInteger("v");
-        check(sender, "B11", "★ v1(P1) 数据迁移：12345 进 mode1 存储，且版本升到 2",
-                b11stored == 12345L && b11version == 2, "12345/2", b11stored + "/" + b11version);
+        check(sender, "B11", "★ v1(P1) 数据迁移：12345 进 mode1 存储，且版本升到当前格式版本",
+                b11stored == 12345L && b11version == UnlimitedCellInventory.FORMAT_VERSION,
+                "12345/" + UnlimitedCellInventory.FORMAT_VERSION, b11stored + "/" + b11version);
 
         // ---- B12: mode 2's committed amount must never cross into mode 1's isolated room ----
         // ca only exists because of mode 2 features (rules / promotion / 存入无限 / panel toggle), and the
