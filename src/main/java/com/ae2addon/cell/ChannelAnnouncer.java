@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 
+import com.ae2addon.AE2Addon;
+
 import appeng.api.AEApi;
 import appeng.api.networking.IGridNode;
 import appeng.api.networking.security.IActionHost;
@@ -132,6 +134,48 @@ public final class ChannelAnnouncer {
     }
 
     /**
+     * A cell of ours changed what it reports, and it tells us which stack it is so the binding can be learned
+     * even if the drive patch never ran.
+     *
+     * <p>That last part matters: in sensei's MeatballCraft pack (378 mods) the notification produced nothing,
+     * and the reason is that this path used to REQUIRE a binding recorded by the drive patch. If that patch is
+     * absent or displaced there, {@code BOUND} stays empty and no announcement is ever made -- silently. Since
+     * the cell record does change in that pack (the diag proves it), routing the same information through
+     * {@code saveChanges} makes the notification independent of the mixin.
+     *
+     * <p>Registering an unknown pair here is safe: it only happens when a cell of ours actually saved a change,
+     * and {@code flush} resolves the grid through the provider (a drive) anyway. A cell that is not in a drive
+     * never gets this far -- a GUI view passes a null provider.
+     */
+    public static synchronized void onCellChanged(ISaveProvider provider, IStorageChannel<?> channel,
+            ItemStack stack) {
+        if (provider == null || channel == null) {
+            return;
+        }
+        Map<IStorageChannel<?>, List<ItemStack>> perProvider = BOUND.get(provider);
+        if (perProvider != null && perProvider.containsKey(channel)) {
+            markForFlush(provider, channel);
+            return;
+        }
+        if (stack == null || stack.isEmpty()) {
+            return;
+        }
+        if (BINDINGS_FROM_SAVE.add(channel.getClass().getName()) && AE2Addon.LOG != null) {
+            // One line per channel per launch: evidence about whether the drive patch is doing its job in this
+            // installation. Not a warning about a mistake -- the fallback is legitimate, just less precise
+            // (the drive knows exactly which slots hold which cell; this only knows "this cell is bound here").
+            AE2Addon.LOG.info("[ae2addon] 通道 {} 的绑定记录来自元件存档路径（驱动器补丁未登记该绑定）", channel.getClass().getSimpleName());
+        }
+        queue(provider, channel, stack);
+    }
+
+    /** Channels whose binding was first learned through the save path; logged once each per launch. */
+    private static final java.util.Set<String> BINDINGS_FROM_SAVE = new java.util.HashSet<>();
+
+    /** Channels that have announced at least once this launch; logged once each, for diagnosis. */
+    private static final java.util.Set<String> ANNOUNCED_CHANNELS = new java.util.HashSet<>();
+
+    /**
      * A new listener registered on this channel (AE2's {@code NetworkMonitor.addListener}) -- announce every
      * bound cell that speaks it.
      *
@@ -215,6 +259,14 @@ public final class ChannelAnnouncer {
                     List<IAEStack<?>> delta = deltasFor(storage, provider, channel, now, notifyOnly);
                     if (!delta.isEmpty()) {
                         storage.postAlterationOfStoredItems(channel, delta, source);
+                        if (AE2Addon.LOG != null && ANNOUNCED_CHANNELS.add(channel.getClass().getSimpleName())) {
+                            // One line per channel per launch: proves the whole path ran (grid found, keys asked
+                            // from the cell, difference posted). Enough to tell "nothing was announced" apart from
+                            // "announced but the terminal ignored it" without a second pack run.
+                            AE2Addon.LOG.info("[ae2addon] 已通知网络 channel={} 变化条目={}（{}）",
+                                    channel.getClass().getSimpleName(), delta.size(),
+                                    notifyOnly ? "纯通知" : "库存变化");
+                        }
                     }
                 }
             } catch (RuntimeException | LinkageError failed) {

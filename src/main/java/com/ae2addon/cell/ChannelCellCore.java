@@ -460,8 +460,8 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         if (worldData == null) {
             AE2Addon.LOG.warn("[ae2addon] 没有可用的世界存档，元件改动只留在内存里（uuid={}）", uuid);
             // Still tell the network: the change is real even when it cannot be written down (client-side views
-            // come here too, and they must not announce -- onCellChanged ignores unknown bindings by itself).
-            ChannelAnnouncer.onCellChanged(container, channel);
+            // come here too, and they must not announce -- onCellChanged ignores null providers).
+            ChannelAnnouncer.onCellChanged(container, channel, cellStack);
             return;
         }
         worldData.put(uuid, data);
@@ -472,7 +472,8 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         // MeatballCraft run (2026-10-04) showed mode-2 "store = infinite" rows staying finite until the cell was
         // pulled out and put back; the diag proved our record was already right, so the missing piece was this
         // notification. The announcement carries a DIFFERENCE, so calling it on every change is cheap and safe.
-        ChannelAnnouncer.onCellChanged(container, channel);
+        // The stack goes along so the binding can be learned even if the drive patch is not active.
+        ChannelAnnouncer.onCellChanged(container, channel, cellStack);
     }
 
     @Override
