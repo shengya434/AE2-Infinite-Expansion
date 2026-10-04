@@ -6,7 +6,7 @@ import net.minecraft.item.Item;
 import net.minecraftforge.event.RegistryEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-
+import net.minecraftforge.fml.common.gameevent.TickEvent;
 /**
  * Common-side registry events.
  *
@@ -40,5 +40,21 @@ public final class RegistryHandler {
         AE2Addon.UNLIMITED_CELL = new ItemUnlimitedCell();
         event.getRegistry().register(AE2Addon.UNLIMITED_CELL);
         AE2Addon.LOG.info("[ae2addon] 已注册物品 {}", AE2Addon.UNLIMITED_CELL.getRegistryName());
+    }
+
+    /**
+     * Flushes the "these keys exist in this channel" announcements queued by
+     * {@link com.ae2addon.cell.ChannelAnnouncer}.
+     *
+     * <p>Deferred to a tick on purpose: the drive asks the cell for its channel views from inside the grid's
+     * cell-array rebuild, at a moment when the grid has no monitors yet -- posting there would be lost. Here
+     * the grid is complete, which is what makes third-party terminals (Thaumic Energistics, ...) show rows
+     * that appeared without an insert (sensei BUG3, 2026-10-04).
+     */
+    @SubscribeEvent
+    public static void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase == TickEvent.Phase.END) {
+            com.ae2addon.cell.ChannelAnnouncer.flush();
+        }
     }
 }
