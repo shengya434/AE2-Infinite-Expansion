@@ -30,9 +30,19 @@ public abstract class MixinNetworkMonitor {
     @Shadow(remap = false)
     private IStorageChannel myChannel;
 
+    /** {@code Object2ObjectMap<IMEMonitorHandlerReceiver<T>, Object>} -- raw, only its size is of interest. */
+    @Shadow(remap = false)
+    private it.unimi.dsi.fastutil.objects.Object2ObjectMap listeners;
+
     @Inject(method = "addListener", at = @At("RETURN"), remap = false)
     private void ae2addon$announceToNewListener(IMEMonitorHandlerReceiver<?> listener, Object verificationToken,
             CallbackInfo ci) {
+        // TEMPORARY evidence for BUG3 (2026-10-04): shows that a terminal really did register a listener on
+        // this channel, and how many are now there. Pairs with the flush probe in ChannelAnnouncer: with both
+        // lines in the log, whichever side stays silent is the broken link.
+        ChannelAnnouncer.probe("监听者注册 channel=" + (myChannel == null ? "null" : myChannel.getClass().getSimpleName())
+                + " 监听者数=" + (listeners == null ? -1 : listeners.size())
+                + " 类=" + (listener == null ? "null" : listener.getClass().getName()));
         ChannelAnnouncer.onListenerRegistered(this.myChannel);
     }
 }

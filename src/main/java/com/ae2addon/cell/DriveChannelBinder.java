@@ -115,14 +115,12 @@ public final class DriveChannelBinder {
                 }
                 list.add(watchers.create(handler, stack, cellHandler, slots.provider(), slots.priority()));
                 added++;
-                // Tell the network these rows exist. Terminals that only react to change notifications
-                // (Thaumic Energistics, Mekanism Energistics, ...) never PULL the monitor's list, so rows that
-                // appear without an insert -- mode 3's "everything infinite", or a rule listing an unstored
-                // item -- stay invisible to them. That was sensei BUG3 (mode 3 + empty essentia terminal).
-                // Queued, not posted here: this runs inside the drive's updateState, which itself runs during
-                // the grid's cell-array rebuild, where the grid's monitors do not exist yet.
+                // Remember that this cell is bound on this channel. The keys are NOT computed here on purpose:
+                // binding happens during a grid rebuild, which usually runs while the cell is still in mode 1,
+                // and switching modes does not rebuild the drive -- so a key list captured now would be empty
+                // forever. ChannelAnnouncer asks the cell again every time it announces.
                 if (!ChannelAnnouncer.pullsItself(channel)) {
-                    ChannelAnnouncer.queue(slots.provider(), channel, keysOf(channel, handler));
+                    ChannelAnnouncer.queue(slots.provider(), channel, stack);
                 }
             }
         }
@@ -159,23 +157,4 @@ public final class DriveChannelBinder {
             new java.util.concurrent.atomic.AtomicLong();
     /** How many stack traces are still worth printing. */
     private static volatile int TRACES_LEFT = 2;
-
-    /**
-     * The keys one channel view currently reports, for {@link ChannelAnnouncer}. Empty when listing fails --
-     * an announcement is an optimisation for third-party terminals, never something to crash over.
-     */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static List<IAEStack<?>> keysOf(IStorageChannel channel, ICellInventoryHandler<?> handler) {
-        List<IAEStack<?>> keys = new ArrayList<>();
-        try {
-            appeng.api.storage.data.IItemList list = channel.createList();
-            handler.getAvailableItems(list);
-            for (Object element : list) {
-                keys.add((IAEStack<?>) element);
-            }
-        } catch (RuntimeException | LinkageError failed) {
-            keys.clear();
-        }
-        return keys;
-    }
 }
