@@ -181,8 +181,12 @@ public final class ChannelAnnouncer {
         Map<IStorageChannel<?>, List<ItemStack>> perProvider = BOUND.get(provider);
         List<ItemStack> cells = perProvider == null ? null : perProvider.get(channel);
         if (cells == null) {
+            // TEMPORARY evidence for BUG3: says whether the binding was ever recorded for this pair.
+            probe("算键 channel=" + channel.getClass().getSimpleName() + " 没有登记（cells=null）");
             return keys;
         }
+        int handlers = 0;
+        String failure = null;
         for (ItemStack stack : new ArrayList<>(cells)) {
             try {
                 ICellInventoryHandler<?> handler = AEApi.instance().registries().cell()
@@ -190,6 +194,7 @@ public final class ChannelAnnouncer {
                 if (handler == null) {
                     continue;
                 }
+                handlers++;
                 appeng.api.storage.data.IItemList list = channel.createList();
                 handler.getAvailableItems(list);
                 for (Object element : list) {
@@ -197,8 +202,12 @@ public final class ChannelAnnouncer {
                 }
             } catch (RuntimeException | LinkageError failed) {
                 // A cell that cannot be asked right now simply contributes nothing this round.
+                failure = failed.toString();
             }
         }
+        // TEMPORARY evidence for BUG3: how many cells we asked, how many answered, how many keys came back.
+        probe("算键 channel=" + channel.getClass().getSimpleName() + " cells=" + cells.size()
+                + " handler=" + handlers + " keys=" + keys.size() + (failure == null ? "" : " EX=" + failure));
         return keys;
     }
 
