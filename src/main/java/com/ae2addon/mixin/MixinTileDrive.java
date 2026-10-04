@@ -23,10 +23,18 @@ import net.minecraft.item.ItemStack;
  * Makes the AE2 drive register our universal cell for <b>every</b> channel it speaks, not just the first one
  * that answers. See {@link DriveChannelBinder} for the bytecode evidence behind that.
  *
- * <p>The injection point is the end of {@code TileDrive.updateState()} -- the private method every grid
- * rebuild funnels through ({@code getCellArray()} calls it, and so does the inventory-change callback). AE2
- * keeps its own behaviour; we only append the channels it dropped. Re-implementing the loop instead would
- * couple this file to AE2's private control flow, which is worse than one extra pass.
+ * <p>The injection point is the tail of {@code TileDrive.updateState()}'s <b>full</b> path -- the call to
+ * {@code AENetworkProxy.setIdlePowerUsage}, which sits after the slot loop and just before
+ * {@code isCached = true}. AE2 keeps its own behaviour; we only append the channels it dropped.
+ *
+ * <p><b>Why not {@code @At("RETURN")}</b> (this cost a real bug, 2026-10-04): {@code updateState} starts with
+ * {@code if (isCached) return;} -- the cached call {@code getCellArray()} makes on every grid rebuild. A RETURN
+ * injection fires on that early return too, so every grid rebuild appended another copy of our registrations to
+ * the SAME lists AE2 only clears when it really rebuilds. The lists grew without bound (log evidence: the item
+ * channel went 1 -> 21 -> 27 entries), the network summed the same cell that many times, and the terminal showed
+ * sensei's "1 item becomes 2 / 10 / 14" phantom row. Anchoring inside the rebuild-only path fixes it at the
+ * source; {@code defaultRequire = 1} in the config makes a future mismatch fail loudly instead of silently
+ * binding nothing.
  *
  * <p>{@code remap = false} everywhere: the target is a mod class whose members are not obfuscated, so there is
  * nothing to remap and no refmap to generate. That is also why the config declares no refmap.
@@ -41,7 +49,11 @@ public abstract class MixinTileDrive {
     @Shadow(remap = false)
     private AppEngCellInventory inv;
 
-    @Inject(method = "updateState", at = @At("RETURN"), remap = false)
+    @Inject(method = "updateState",
+            at = @At(value = "INVOKE",
+                    target = "Lappeng/me/helpers/AENetworkProxy;setIdlePowerUsage(D)V",
+                    shift = At.Shift.AFTER),
+            remap = false)
     private void ae2addon$bindEveryChannel(CallbackInfo ci) {
         final AppEngCellInventory cellSlots = this.inv;
         final Map handlers = this.inventoryHandlers;
