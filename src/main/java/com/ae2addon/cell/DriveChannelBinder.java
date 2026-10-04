@@ -119,9 +119,14 @@ public final class DriveChannelBinder {
                 // binding happens during a grid rebuild, which usually runs while the cell is still in mode 1,
                 // and switching modes does not rebuild the drive -- so a key list captured now would be empty
                 // forever. ChannelAnnouncer asks the cell again every time it announces.
-                if (!ChannelAnnouncer.pullsItself(channel)) {
-                    ChannelAnnouncer.queue(slots.provider(), channel, stack);
-                }
+                //
+                // The ITEM channel is tracked too. It used to be skipped ("AE2's own terminal pulls the list"),
+                // but a cell that changes what it reports between rebuilds never reaches that list on its own:
+                // sensei's mode-2 "store = infinite" items stayed finite in the terminal until the cell was
+                // pulled out and put back (2026-10-04). Announcements now carry the DIFFERENCE, so including the
+                // item channel costs nothing when nothing changed (and mode 3's thousands of rows are already in
+                // the network's list, so they contribute a difference of zero).
+                ChannelAnnouncer.queue(slots.provider(), channel, stack);
             }
         }
         return added;

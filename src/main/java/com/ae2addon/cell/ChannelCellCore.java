@@ -459,12 +459,20 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         CellWorldData worldData = CellWorldData.get();
         if (worldData == null) {
             AE2Addon.LOG.warn("[ae2addon] 没有可用的世界存档，元件改动只留在内存里（uuid={}）", uuid);
+            // Still tell the network: the change is real even when it cannot be written down (client-side views
+            // come here too, and they must not announce -- onCellChanged ignores unknown bindings by itself).
+            ChannelAnnouncer.onCellChanged(container, channel);
             return;
         }
         worldData.put(uuid, data);
         if (container != null) {
             container.saveChanges(this);
         }
+        // Tell the network what changed, rather than waiting for something else to rebuild the grid. sensei's
+        // MeatballCraft run (2026-10-04) showed mode-2 "store = infinite" rows staying finite until the cell was
+        // pulled out and put back; the diag proved our record was already right, so the missing piece was this
+        // notification. The announcement carries a DIFFERENCE, so calling it on every change is cheap and safe.
+        ChannelAnnouncer.onCellChanged(container, channel);
     }
 
     @Override

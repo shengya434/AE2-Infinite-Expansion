@@ -111,6 +111,27 @@ public final class ChannelAnnouncer {
     }
 
     /**
+     * A cell of ours changed what it reports (promotion, cancel-infinite, mode change, panel toggle).
+     *
+     * <p>Without this the network keeps its old picture until something unrelated happens to rebuild the grid:
+     * sensei's MeatballCraft run showed mode-2 "store = infinite" not showing up until the cell was taken out
+     * and put back (2026-10-04). The diag output proved our side was right -- the key WAS in {@code ul} -- so the
+     * missing part was this notification, not the promotion.
+     *
+     * <p>Announcements carry a DIFFERENCE (see {@link #deltasFor}), so calling this freely is cheap and cannot
+     * double-count.
+     */
+    public static synchronized void onCellChanged(ISaveProvider provider, IStorageChannel<?> channel) {
+        if (provider == null || channel == null) {
+            return;
+        }
+        Map<IStorageChannel<?>, List<ItemStack>> perProvider = BOUND.get(provider);
+        if (perProvider != null && perProvider.containsKey(channel)) {
+            markForFlush(provider, channel);
+        }
+    }
+
+    /**
      * A new listener registered on this channel (AE2's {@code NetworkMonitor.addListener}) -- announce every
      * bound cell that speaks it.
      *
@@ -294,7 +315,12 @@ public final class ChannelAnnouncer {
             long diff = mine - theirs;
             if (diff != 0L) {
                 out.add(sized(entry.getKey(), diff));
-            } else if (notifyOnly) {
+            } else if (notifyOnly && (!pullsItself(channel) || was.containsKey(entry.getKey()))) {
+                // A pure notification, so the terminal learns the key without the network counting stock twice.
+                // On the ITEM channel only keys we already announced are re-sent: mode 3 lists tens of thousands
+                // of rows there (35,740 in sensei's MeatballCraft pack, whose diag run cost 28 s of server time),
+                // and AE2's own terminal pulls that channel anyway -- this pass exists for the few rows our cell
+                // is the only source of.
                 out.add(sized(entry.getKey(), 0L));
             }
         }
