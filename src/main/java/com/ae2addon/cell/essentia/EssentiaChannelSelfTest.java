@@ -48,9 +48,13 @@ public final class EssentiaChannelSelfTest {
         n1.setMode(3);
         IItemList<IAEEssentiaStack> n1list = essentiaChannel.createList();
         n1.getAvailableItems(n1list);
+        // Compare against what THIS channel publishes for an infinite row, not a hard-coded Long.MAX: essentia
+        // deliberately publishes the sum-safe Integer.MAX_VALUE (sensei, 2026-10-04) so that AE2's aggregating
+        // network list cannot wrap it negative -- see CellChannel#reportedInfinite.
+        long infiniteHere = EssentiaCellChannel.INSTANCE.reportedInfinite();
         boolean n1all = true;
         for (IAEEssentiaStack listed : n1list) {
-            if (listed.getStackSize() != ChannelCellCore.INFINITE) {
+            if (listed.getStackSize() != infiniteHere) {
                 n1all = false;
                 break;
             }
@@ -58,7 +62,7 @@ public final class EssentiaChannelSelfTest {
         host.report(sender, "N1", "源质通道 mode3：列出全部注册要素且都算无限，类型数与条数一致",
                 n1list.size() == registered && registered > 5 && n1all
                         && n1.getStoredItemTypes() == n1list.size(),
-                "=" + registered + "/全无限/types=list",
+                "=" + registered + "/全无限(" + infiniteHere + ")/types=list",
                 "listed=" + n1list.size() + " types=" + n1.getStoredItemTypes() + " all=" + n1all);
 
         // N2: a mod rule (thaumcraft) reaches aspects, whose tags carry no namespace
@@ -69,7 +73,7 @@ public final class EssentiaChannelSelfTest {
         boolean n2rule = n2.isInfiniteByRule(sampleKey);
         long n2listed = essentiaListedSize(n2, sampleKey);
         host.report(sender, "N2", "★ 模组规则 thaumcraft 命中要素（要素 tag 无命名空间，按 thaumcraft 算）",
-                n2rule && n2listed == ChannelCellCore.INFINITE, "true/infinite", n2rule + "/" + n2listed);
+                n2rule && n2listed == infiniteHere, "true/" + infiniteHere, n2rule + "/" + n2listed);
 
         // N3: ore rules are item-only
         EssentiaCellInventory n3 = newEssentiaInventory(host, "n3");

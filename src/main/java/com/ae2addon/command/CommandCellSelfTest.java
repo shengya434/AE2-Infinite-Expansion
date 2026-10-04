@@ -1859,17 +1859,18 @@ public class CommandCellSelfTest extends CommandBase {
         check(sender, "W2", "★ 每行都带自己的通道身份，且该通道能读回自己的键（动作不会被算到物品视图）",
                 everyRowResolves && !allRows.isEmpty(), "全部 ok", detail.toString().trim());
 
-        // W3: a single-channel view is unchanged, and a non-item row is shown by label (it has no icon)
+        // W3: a single-channel view is unchanged, and a row is identified by its channel + label
         java.util.List<com.ae2addon.network.Mode2ConfigPacket.PanelEntry> fluidRows =
                 com.ae2addon.network.Mode2ConfigPacket.panelRows(cell, CellChannelRegistry.FLUID);
+        // No "must have no icon" requirement: AE2-UEL gives a fluid key an item representation (its bucket), so
+        // that check said more about my assumption than about the row. What matters is the row's own channel id
+        // and a non-empty label, because a channel without an icon is rendered from the label alone.
         boolean fluidRowOk = fluidRows.size() == 1
                 && CellChannelRegistry.FLUID.equals(fluidRows.get(0).channelId)
-                && fluidRows.get(0).item.isEmpty() && fluidRows.get(0).label != null
-                && !fluidRows.get(0).label.isEmpty();
-        check(sender, "W3", "★ 单通道视图不变：选流体只有 1 行、行归属流体、无图标但有显示名",
-                fluidRowOk, "1 行 / fluid / 无图标 / 有名字",
+                && fluidRows.get(0).label != null && !fluidRows.get(0).label.isEmpty();
+        check(sender, "W3", "★ 单通道视图不变：选流体只有 1 行、行归属流体、有显示名",
+                fluidRowOk, "1 行 / fluid / 有名字",
                 fluidRows.size() + " 行 / " + (fluidRows.isEmpty() ? "?" : fluidRows.get(0).channelId) + " / "
-                        + (fluidRows.isEmpty() ? "?" : String.valueOf(fluidRows.get(0).item.isEmpty())) + " / "
                         + (fluidRows.isEmpty() ? "?" : fluidRows.get(0).label));
     }
 
