@@ -16,7 +16,11 @@ import net.minecraftforge.fml.common.event.FMLServerStartingEvent;
 
 @Mod(modid = AE2Addon.MODID, name = AE2Addon.NAME, version = AE2Addon.VERSION,
         acceptedMinecraftVersions = "[1.12.2]",
-        dependencies = "required-after:appliedenergistics2")
+        // mixinbooter is a REAL requirement, not a nicety: on 1.12.2 the Mixin library itself comes from it, and
+        // the drive patch (ae2addon.mixins.json, required=true) is what lets one universal cell serve every
+        // channel. Without it the manifest entry is simply ignored -- no crash, just a silent return of "the
+        // drive only shows one storage type". Declaring it turns that silence into a startup error.
+        dependencies = "required-after:appliedenergistics2;required-after:mixinbooter")
 public class AE2Addon {
 
     public static final String MODID = "ae2addon";
