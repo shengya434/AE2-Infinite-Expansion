@@ -651,40 +651,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 }
             }
         }
-        probeInventoryHover(mouseX, mouseY);
     }
-
-    /**
-     * TEMPORARY probe for sensei's "no tooltip over the player inventory" (2026-10-04): reports whether the
-     * vanilla slot hover is even recognised down there, plus whether the menu thinks the slots are hidden.
-     * Delete once that bug is closed.
-     */
-    private void probeInventoryHover(int mouseX, int mouseY) {
-        if (mouseY <= guiTop + 170) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        if (now - LAST_INVENTORY_PROBE < 5000L) {
-            return;
-        }
-        LAST_INVENTORY_PROBE = now;
-        net.minecraft.inventory.Slot hovered = null;
-        for (net.minecraft.inventory.Slot slot : menu.inventorySlots) {
-            if (mouseX >= guiLeft + slot.xPos && mouseX < guiLeft + slot.xPos + 16
-                    && mouseY >= guiTop + slot.yPos && mouseY < guiTop + slot.yPos + 16) {
-                hovered = slot;
-                break;
-            }
-        }
-        com.ae2addon.AE2Addon.LOG.info(
-                "[ae2addon] PROBE 物品栏悬停 mouse=({},{}) guiTop={} slot={} enabled={} hasStack={} slotsHidden={}",
-                mouseX, mouseY, guiTop, hovered == null ? -1 : hovered.slotNumber,
-                hovered == null ? "?" : String.valueOf(hovered.isEnabled()),
-                hovered == null ? "?" : String.valueOf(hovered.getHasStack()), menu.slotsHidden);
-    }
-
-    /** Throttle for {@link #probeInventoryHover}. */
-    private static volatile long LAST_INVENTORY_PROBE;
     /**
      * The channel selector in the title row: {@code ‹ 流体 ›}.
      *

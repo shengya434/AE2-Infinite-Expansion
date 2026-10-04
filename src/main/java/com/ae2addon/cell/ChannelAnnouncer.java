@@ -157,9 +157,6 @@ public final class ChannelAnnouncer {
                     if (keys.isEmpty()) {
                         continue;
                     }
-                    // TEMPORARY evidence for BUG3 (2026-10-04): pairs with the listener probe in
-                    // MixinNetworkMonitor. Delete with the other probes.
-                    probe("播报 channel=" + channel.getClass().getSimpleName() + " keys=" + keys.size());
                     storage.postAlterationOfStoredItems(channel, keys, source);
                 }
             } catch (RuntimeException | LinkageError failed) {
@@ -181,12 +178,8 @@ public final class ChannelAnnouncer {
         Map<IStorageChannel<?>, List<ItemStack>> perProvider = BOUND.get(provider);
         List<ItemStack> cells = perProvider == null ? null : perProvider.get(channel);
         if (cells == null) {
-            // TEMPORARY evidence for BUG3: says whether the binding was ever recorded for this pair.
-            probe("算键 channel=" + channel.getClass().getSimpleName() + " 没有登记（cells=null）");
             return keys;
         }
-        int handlers = 0;
-        String failure = null;
         for (ItemStack stack : new ArrayList<>(cells)) {
             try {
                 ICellInventoryHandler<?> handler = AEApi.instance().registries().cell()
@@ -194,16 +187,15 @@ public final class ChannelAnnouncer {
                 if (handler == null) {
                     continue;
                 }
-                handlers++;
                 appeng.api.storage.data.IItemList list = channel.createList();
                 // List through the CELL INVENTORY, not through the handler.
                 //
                 // MEInventoryHandler.getAvailableItems starts with
                 //     if (gettingAvailableContent || !hasReadAccess) return out;
                 // and a handler taken straight from the cell registry has not been granted read access -- the
-                // drive grants it when it wraps the handler in a DriveWatcher. So asking the handler listed
-                // NOTHING (probe: cells=1 handler=1 keys=0), while the self-test and the diag command, which go
-                // through getCellInv(), see the full mode-3 set (37 aspects).
+                // drive grants it when it wraps the handler in a DriveWatcher. Asking the handler therefore
+                // listed NOTHING, while the self-test and the diag command, which go through getCellInv(), see
+                // the whole mode-3 row set. (Cost a full debugging round on 2026-10-04.)
                 appeng.api.storage.ICellInventory cellInv = handler.getCellInv();
                 if (cellInv != null) {
                     cellInv.getAvailableItems(list);
@@ -213,73 +205,14 @@ public final class ChannelAnnouncer {
                 for (Object element : list) {
                     keys.add((IAEStack<?>) element);
                 }
-                // TEMPORARY evidence for BUG3, round 3: WHICH cell is this, what mode does its view run in, can
-                // the channel enumerate at all, and did the cell inventory come back at all. Four candidates,
-                // one line: a different cell than the one the player configured / a view stuck in mode 1 /
-                // an empty registry enumeration / a null cellInv that silently fell back to the gated handler.
-                com.ae2addon.cell.CellChannel<?> adapter = CellChannelRegistry.byStorage((IStorageChannel) channel);
-                ChannelCellCore<?> core = adapter == null ? null
-                        : CellInventories.open(stack, provider, adapter.id());
-                probe("算键详情 channel=" + channel.getClass().getSimpleName()
-                        + " adapter=" + (adapter == null ? "null" : adapter.id())
-                        + " core=" + (core == null ? "null" : ("mode=" + core.getMode()))
-                        + " cellInv=" + (cellInv == null ? "null" : "ok")
-                        + " allKeys=" + (adapter == null ? -1 : adapter.allKeys().size())
-                        + " keys=" + keys.size()
-                        + " stackUuid=" + uuidOf(stack) + " record=" + hasRecord(stack));
             } catch (RuntimeException | LinkageError failed) {
-                // A cell that cannot be asked right now simply contributes nothing this round.
-                failure = failed.toString();
+                // A cell that cannot be asked right now simply contributes nothing this round. Note by
+                // experience (2026-10-04): a silent catch here made four different failures look identical --
+                // if this ever needs debugging again, log the exception instead of swallowing it.
+                com.ae2addon.AE2Addon.LOG.warn("[ae2addon] 播报前向元件取键失败：{}", failed.toString());
             }
         }
-        // TEMPORARY evidence for BUG3: how many cells we asked, how many answered, how many keys came back.
-        probe("算键 channel=" + channel.getClass().getSimpleName() + " cells=" + cells.size()
-                + " handler=" + handlers + " keys=" + keys.size() + (failure == null ? "" : " EX=" + failure));
         return keys;
-    }
-
-    /** Throttled diagnostic sink (5 s per distinct message); temporary, for the BUG3 investigation. */
-    public static void probe(String what) {        long now = System.currentTimeMillis();
-        synchronized (PROBE) {
-            Long last = PROBE.get(what);
-            if (last != null && now - last < 5000L) {
-                return;
-            }
-            PROBE.put(what, now);
-        }
-        com.ae2addon.AE2Addon.LOG.info("[ae2addon] PROBE {}", what);
-    }
-
-    private static final Map<String, Long> PROBE = new java.util.HashMap<>();
-
-    /** The uuid the cell item carries (empty when it has none). TEMPORARY, with the probe above. */
-    private static String uuidOf(ItemStack stack) {
-        try {
-            net.minecraft.nbt.NBTTagCompound tag = stack.getTagCompound();
-            if (tag == null || !tag.hasKey("ae2addon:cell", 10)) {
-                return "无";
-            }
-            String raw = tag.getCompoundTag("ae2addon:cell").getString("uuid");
-            return raw == null || raw.isEmpty() ? "空" : raw.substring(0, Math.min(8, raw.length()));
-        } catch (RuntimeException failed) {
-            return "EX";
-        }
-    }
-
-    /** Whether the world-saved record for this cell exists. TEMPORARY, with the probe above. */
-    private static String hasRecord(ItemStack stack) {
-        try {
-            String raw = uuidOf(stack);
-            if (raw.length() < 8) {
-                return "无uuid";
-            }
-            net.minecraft.nbt.NBTTagCompound tag = stack.getTagCompound().getCompoundTag("ae2addon:cell");
-            java.util.UUID id = java.util.UUID.fromString(tag.getString("uuid"));
-            com.ae2addon.data.CellWorldData world = com.ae2addon.data.CellWorldData.get();
-            return world == null ? "无世界" : String.valueOf(world.get(id) != null);
-        } catch (RuntimeException failed) {
-            return "EX";
-        }
     }
 
     /** True when this channel is served by AE2's own terminal, which pulls the list instead of waiting. */

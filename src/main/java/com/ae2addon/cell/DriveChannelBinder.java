@@ -124,37 +124,6 @@ public final class DriveChannelBinder {
                 }
             }
         }
-        // Temporary evidence that the drive patch really ran (throttled): after all six channels are bound the
-        // drive's own probe lines stop being the only proof. Delete together with the probe in UnlimitedCellHandler.
-        long calls = BIND_CALLS.incrementAndGet();
-        if (added > 0 && System.currentTimeMillis() - LAST_BIND_LOG > 5000L) {
-            LAST_BIND_LOG = System.currentTimeMillis();
-            // Per-channel registration counts, so "the terminal shows the item twice" can be told apart from
-            // "the item channel really has two handlers" (sensei, 2026-10-04). Plus the caller of updateState,
-            // because the drive re-runs it a few times per second and every re-run makes AE2 rebuild its
-            // network storage -- the prime suspect for a client-side double count.
-            StringBuilder sizes = new StringBuilder();
-            for (Object element : order) {
-                IStorageChannel channel = (IStorageChannel) element;
-                Object list = inventoryHandlers.get(channel);
-                sizes.append(channel.getClass().getSimpleName()).append('=')
-                        .append(list instanceof List ? ((List) list).size() : -1).append(' ');
-            }
-            com.ae2addon.AE2Addon.LOG.info("[ae2addon] 驱动器补绑 #{}：本次补上 {} 条；各通道注册数 {}",
-                    calls, added, sizes.toString().trim());
-            if (TRACES_LEFT > 0) {
-                TRACES_LEFT--;
-                new Throwable("谁在跑 updateState（第 " + TRACES_LEFT + " 次之后不再打）").printStackTrace();
-            }
-        }
         return added;
     }
-
-    /** Throttle for the temporary evidence line above. */
-    private static volatile long LAST_BIND_LOG;
-    /** Cumulative bind passes, for the temporary evidence line (patch ran how often?). */
-    private static final java.util.concurrent.atomic.AtomicLong BIND_CALLS =
-            new java.util.concurrent.atomic.AtomicLong();
-    /** How many stack traces are still worth printing. */
-    private static volatile int TRACES_LEFT = 2;
 }
