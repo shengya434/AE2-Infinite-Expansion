@@ -196,7 +196,20 @@ public final class ChannelAnnouncer {
                 }
                 handlers++;
                 appeng.api.storage.data.IItemList list = channel.createList();
-                handler.getAvailableItems(list);
+                // List through the CELL INVENTORY, not through the handler.
+                //
+                // MEInventoryHandler.getAvailableItems starts with
+                //     if (gettingAvailableContent || !hasReadAccess) return out;
+                // and a handler taken straight from the cell registry has not been granted read access -- the
+                // drive grants it when it wraps the handler in a DriveWatcher. So asking the handler listed
+                // NOTHING (probe: cells=1 handler=1 keys=0), while the self-test and the diag command, which go
+                // through getCellInv(), see the full mode-3 set (37 aspects).
+                appeng.api.storage.ICellInventory cellInv = handler.getCellInv();
+                if (cellInv != null) {
+                    cellInv.getAvailableItems(list);
+                } else {
+                    handler.getAvailableItems(list);
+                }
                 for (Object element : list) {
                     keys.add((IAEStack<?>) element);
                 }
