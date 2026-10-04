@@ -47,6 +47,15 @@ public final class ChannelAnnouncer {
     private static final Map<ISaveProvider, Map<IStorageChannel<?>, List<IAEStack<?>>>> PENDING =
             new WeakHashMap<>();
 
+    /**
+     * What each bound cell currently lists, kept so we can repeat the announcement when a NEW listener shows
+     * up. That repeat is the actual fix for sensei's BUG3: a third-party terminal registers its listener when
+     * the player OPENS it, and AE2 pushes nothing at that moment, so an announcement that only happens when
+     * the cell is bound is already history by the time anyone looks.
+     */
+    private static final Map<ISaveProvider, Map<IStorageChannel<?>, List<IAEStack<?>>>> BOUND =
+            new WeakHashMap<>();
+
     /** Upper bound on queued providers, so a pathological rebuild loop cannot grow this without limit. */
     private static final int MAX_PROVIDERS = 64;
 
@@ -59,15 +68,49 @@ public final class ChannelAnnouncer {
         if (provider == null || channel == null || keys == null || keys.isEmpty()) {
             return;
         }
-        Map<IStorageChannel<?>, List<IAEStack<?>>> perProvider = PENDING.get(provider);
+        Map<IStorageChannel<?>, List<IAEStack<?>>> perProvider = BOUND.get(provider);
         if (perProvider == null) {
-            if (PENDING.size() >= MAX_PROVIDERS) {
+            if (BOUND.size() >= MAX_PROVIDERS) {
                 return;
             }
             perProvider = new LinkedHashMap<>();
-            PENDING.put(provider, perProvider);
+            BOUND.put(provider, perProvider);
         }
         perProvider.put(channel, new ArrayList<IAEStack<?>>(keys));
+        markForFlush(provider, channel);
+    }
+
+    /**
+     * A new listener registered on this channel (AE2's {@code NetworkMonitor.addListener}) -- repeat the
+     * announcement for every bound cell that speaks it.
+     *
+     * <p>This is the half that actually fixes sensei's BUG3: third-party terminals register their listener when
+     * the player OPENS them, and AE2 pushes nothing at that moment, so the announcement made when the cell was
+     * bound is long past by the time anyone looks.
+     */
+    public static synchronized void onListenerRegistered(IStorageChannel<?> channel) {
+        if (channel == null || BOUND.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<ISaveProvider, Map<IStorageChannel<?>, List<IAEStack<?>>>> binding : BOUND.entrySet()) {
+            if (binding.getValue().containsKey(channel)) {
+                markForFlush(binding.getKey(), channel);
+            }
+        }
+    }
+
+    /** Moves one (provider, channel) pair into the next tick's flush list. Caller holds the lock. */
+    private static void markForFlush(ISaveProvider provider, IStorageChannel<?> channel) {
+        List<IAEStack<?>> keys = BOUND.get(provider) == null ? null : BOUND.get(provider).get(channel);
+        if (keys == null || keys.isEmpty()) {
+            return;
+        }
+        Map<IStorageChannel<?>, List<IAEStack<?>>> perProvider = PENDING.get(provider);
+        if (perProvider == null) {
+            perProvider = new LinkedHashMap<>();
+            PENDING.put(provider, perProvider);
+        }
+        perProvider.put(channel, keys);
     }
 
     /** Posts everything queued so far. Called once per server tick, server thread only. */

@@ -375,8 +375,28 @@ public final class Mode2ConfigScreen extends GuiContainer {
         List<Mode2ConfigPacket.PanelEntry> source = new ArrayList<>(all);
         if (rejectTab) {
             source.clear();
-            if (!rejectList.pending()) for (ItemStack item : rejectItems)
-                source.add(new Mode2ConfigPacket.PanelEntry(com.ae2addon.cell.CellChannelRegistry.ITEM, null, item.getDisplayName(), item, BigInteger.ZERO, false, 0L, 0L, false, false));
+            // The reject page lists what you can MARK. It used to list only the two explicit reject sets, so an
+            // item that was merely STORED had nothing to click -- "in the reject page there is no match for a
+            // stored item" (sensei, 2026-10-04). Now it shows the cell's own rows plus any reject entry the cell
+            // does not list (rejected but nothing stored). Reject is item-scoped on the wire (packet type 21
+            // sends item stacks), so non-item rows are left out.
+            if (!rejectList.pending()) {
+                for (Mode2ConfigPacket.PanelEntry entry : all) {
+                    if (!entry.item.isEmpty()) {
+                        source.add(entry);
+                    }
+                }
+                for (ItemStack item : rejectItems) {
+                    boolean present = false;
+                    for (Mode2ConfigPacket.PanelEntry entry : source) {
+                        if (sameKey(entry.item, item)) { present = true; break; }
+                    }
+                    if (!present) {
+                        source.add(new Mode2ConfigPacket.PanelEntry(com.ae2addon.cell.CellChannelRegistry.ITEM,
+                                null, item.getDisplayName(), item, BigInteger.ZERO, false, 0L, 0L, false, false));
+                    }
+                }
+            }
         } else if ("blacklist".equals(activeRule)) {
             for (ItemStack item : blacklist) {
                 boolean present = false;
@@ -631,8 +651,40 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 }
             }
         }
+        probeInventoryHover(mouseX, mouseY);
     }
 
+    /**
+     * TEMPORARY probe for sensei's "no tooltip over the player inventory" (2026-10-04): reports whether the
+     * vanilla slot hover is even recognised down there, plus whether the menu thinks the slots are hidden.
+     * Delete once that bug is closed.
+     */
+    private void probeInventoryHover(int mouseX, int mouseY) {
+        if (mouseY <= guiTop + 170) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - LAST_INVENTORY_PROBE < 5000L) {
+            return;
+        }
+        LAST_INVENTORY_PROBE = now;
+        net.minecraft.inventory.Slot hovered = null;
+        for (net.minecraft.inventory.Slot slot : menu.inventorySlots) {
+            if (mouseX >= guiLeft + slot.xPos && mouseX < guiLeft + slot.xPos + 16
+                    && mouseY >= guiTop + slot.yPos && mouseY < guiTop + slot.yPos + 16) {
+                hovered = slot;
+                break;
+            }
+        }
+        com.ae2addon.AE2Addon.LOG.info(
+                "[ae2addon] PROBE 物品栏悬停 mouse=({},{}) guiTop={} slot={} enabled={} hasStack={} slotsHidden={}",
+                mouseX, mouseY, guiTop, hovered == null ? -1 : hovered.slotNumber,
+                hovered == null ? "?" : String.valueOf(hovered.isEnabled()),
+                hovered == null ? "?" : String.valueOf(hovered.getHasStack()), menu.slotsHidden);
+    }
+
+    /** Throttle for {@link #probeInventoryHover}. */
+    private static volatile long LAST_INVENTORY_PROBE;
     /**
      * The channel selector in the title row: {@code ‹ 流体 ›}.
      *
