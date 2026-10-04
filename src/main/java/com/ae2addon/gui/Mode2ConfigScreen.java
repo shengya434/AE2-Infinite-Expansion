@@ -527,6 +527,13 @@ public final class Mode2ConfigScreen extends GuiContainer {
         if (rebuildPending) { rebuildPending = false; buildControls(); }
         drawDefaultBackground();
         super.drawScreen(mouseX, mouseY, partialTicks);
+        // 1.12.2 does NOT draw slot tooltips for a container screen: GuiContainer.drawScreen only fills
+        // hoveredSlot (javap), and every vanilla container calls this itself at the end of its own drawScreen.
+        // GuiContainer contains exactly ONE reference to renderToolTip, inside renderHoveredToolTip, so
+        // overriding drawScreen without calling it means no slot has a tooltip at all -- which is what sensei
+        // saw over the player inventory (BUG2). (My earlier probe only checked that the slot geometry matched,
+        // not that this call site existed; that is why it wrongly looked fine.)
+        renderHoveredToolTip(mouseX, mouseY);
         if (uiState == 0) {
             fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.select_title"), guiLeft + 10, guiTop + 4, 0xFFFFFF);
             return;

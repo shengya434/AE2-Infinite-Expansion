@@ -105,6 +105,9 @@ public final class ModeSelectScreen extends GuiContainer {
     @Override public void drawScreen(int mouseX, int mouseY, float partialTicks) {
         drawDefaultBackground();
         super.drawScreen(mouseX, mouseY, partialTicks);
+        // Same reason as in Mode2ConfigScreen: GuiContainer fills hoveredSlot but never draws a slot tooltip
+        // itself, so an overriding screen has to ask for it. Its player inventory was tooltip-less too.
+        renderHoveredToolTip(mouseX, mouseY);
         fontRenderer.drawString(I18n.format("gui.ae2addon.mode_select.title"), guiLeft + 10, guiTop, 0xFFFFFF);
         fontRenderer.drawString(fontRenderer.trimStringToWidth(
                 I18n.format("gui.ae2addon.mode_select.format_warn"), 160), guiLeft + 10, guiTop + 141, 0xBBBBBB);
