@@ -500,17 +500,27 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             return; // a GUI view: nothing to announce (and onCellChanged would ignore it anyway)
         }
         if (!global && !before.isEmpty()) {
-            List<IAEStack<?>> keys = new ArrayList<>(before.size());
-            List<Long> deltas = new ArrayList<>(before.size());
+            long infinite = cellChannel.reportedInfinite();
+            List<ChannelAnnouncer.Change> changes = new ArrayList<>(before.size());
             for (Map.Entry<IAEStack<?>, Long> entry : before.entrySet()) {
-                long delta = reportFor(entry.getKey()) - entry.getValue();
-                if (delta != 0L) {
-                    keys.add(entry.getKey());
-                    deltas.add(delta);
+                long after = reportFor(entry.getKey());
+                long was = entry.getValue();
+                if (after == was) {
+                    continue;
                 }
+                // Two shapes, because the network's aggregate list ADDS what it is handed:
+                //   * a finite move is a real difference (after - before);
+                //   * an infinite row must be SET, not added. Posting "0 -> Long.MAX_VALUE" onto a row that
+                //     already holds anything wraps negative and the row disappears -- that is why
+                //     「存入无限」 took minutes to show up in sensei's MeatballCraft pack (2026-10-05: the
+                //     announce went out with 变化=9223372036854775807 and the item only turned infinite when a
+                //     later grid rebuild re-read the cells). The announcer posts "target minus what the row
+                //     reads now" for these, which lands exactly on the value and cannot overflow.
+                boolean crossesInfinite = after == infinite || was == infinite;
+                changes.add(new ChannelAnnouncer.Change(entry.getKey(), after - was, after, crossesInfinite));
             }
-            if (!keys.isEmpty()) {
-                ChannelAnnouncer.onReportChanged(container, channel, cellStack, keys, deltas);
+            if (!changes.isEmpty()) {
+                ChannelAnnouncer.onReportChanged(container, channel, cellStack, changes);
             }
             return;
         }
