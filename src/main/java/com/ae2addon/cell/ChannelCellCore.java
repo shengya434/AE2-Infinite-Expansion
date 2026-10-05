@@ -2,6 +2,7 @@ package com.ae2addon.cell;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -461,19 +462,121 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             AE2Addon.LOG.warn("[ae2addon] 没有可用的世界存档，元件改动只留在内存里（uuid={}）", uuid);
             // Still tell the network: the change is real even when it cannot be written down (client-side views
             // come here too, and they must not announce -- onCellChanged ignores null providers).
-            ChannelAnnouncer.onCellChanged(container, channel, cellStack);
+            announceChange();
             return;
         }
         worldData.put(uuid, data);
         if (container != null) {
             container.saveChanges(this);
         }
-        // Tell the network what changed, rather than waiting for something else to rebuild the grid. sensei's
-        // MeatballCraft run (2026-10-04) showed mode-2 "store = infinite" rows staying finite until the cell was
-        // pulled out and put back; the diag proved our record was already right, so the missing piece was this
-        // notification. The announcement carries a DIFFERENCE, so calling it on every change is cheap and safe.
-        // The stack goes along so the binding can be learned even if the drive patch is not active.
+        announceChange();
+    }
+
+    /**
+     * Tells the network what changed, without waiting for something else to rebuild the grid.
+     *
+     * <p>sensei's MeatballCraft run (2026-10-04) showed mode-2 "store = infinite" rows staying finite until the
+     * cell was pulled out and put back, while the diag proved our record was already right -- the missing piece
+     * was this notification.
+     *
+     * <p><b>Two shapes, and why the cheap one is the normal one</b> (2026-10-05). AE2 already posts the items
+     * that physically move through our cell: the drive wraps our inventory in a {@code DriveWatcher}, and that
+     * class calls {@code postAlterationOfStoredItems} itself (javap on AE2-UEL v0.56.7). What nothing posts is a
+     * change in what the cell REPORTS that no movement caused -- a key turning infinite through promotion, a
+     * toggle, a rule. So:
+     * <ul>
+     * <li>a mutation that named its key (item movement, one panel toggle) announces the difference of that key's
+     *     reported amount, one map lookup, no listing, and nothing at all when the report did not move;</li>
+     * <li>everything else (mode switch, threshold, rules, format) re-lists the cells -- expensive, so it is the
+     *     fallback and the announcer rate-limits it.</li>
+     * </ul>
+     */
+    private void announceChange() {
+        boolean global = pendingGlobal;
+        Map<IAEStack<?>, Long> before = new LinkedHashMap<>(pendingBefore);
+        pendingGlobal = false;
+        pendingBefore.clear();
+        if (container == null) {
+            return; // a GUI view: nothing to announce (and onCellChanged would ignore it anyway)
+        }
+        if (!global && !before.isEmpty()) {
+            List<IAEStack<?>> keys = new ArrayList<>(before.size());
+            List<Long> deltas = new ArrayList<>(before.size());
+            for (Map.Entry<IAEStack<?>, Long> entry : before.entrySet()) {
+                long delta = reportFor(entry.getKey()) - entry.getValue();
+                if (delta != 0L) {
+                    keys.add(entry.getKey());
+                    deltas.add(delta);
+                }
+            }
+            if (!keys.isEmpty()) {
+                ChannelAnnouncer.onReportChanged(container, channel, cellStack, keys, deltas);
+            }
+            return;
+        }
         ChannelAnnouncer.onCellChanged(container, channel, cellStack);
+    }
+
+    /** Keys whose reported amount may have moved since the last save; see {@link #markChanged}. */
+    private final Map<IAEStack<?>, Long> pendingBefore = new LinkedHashMap<>();
+
+    /** Set when a change can move many keys at once and naming them is not possible. */
+    private boolean pendingGlobal;
+
+    /** Cap on tracked keys per save; past it the change is announced as a full pass instead. */
+    private static final int MAX_PENDING_KEYS = 32;
+
+    /**
+     * Remembers what this cell reported for a key BEFORE the caller mutates it, so {@link #saveChanges()} can
+     * announce the difference. Must be called before the mutation, on the normalised key.
+     */
+    private void markChanged(T key) {
+        if (key == null || pendingGlobal) {
+            return;
+        }
+        if (pendingBefore.size() >= MAX_PENDING_KEYS) {
+            markGlobalChange();
+            return;
+        }
+        if (!pendingBefore.containsKey(key)) {
+            pendingBefore.put(key, reportFor(key));
+        }
+    }
+
+    /** A change that can move many keys at once (mode switch, threshold, rules): announce as a full pass. */
+    private void markGlobalChange() {
+        pendingGlobal = true;
+        pendingBefore.clear();
+    }
+
+    /**
+     * What this cell reports for one key RIGHT NOW: the same number {@link #getAvailableItems} would put into the
+     * network's list, or 0 when the key is not listed at all. One lookup, so the announcer can work per key.
+     *
+     * <p>Mode 2 lists the whitelist, the infinite set and live rule matches as infinite, and everything else at
+     * its finite amount -- exactly the three sources and the "ca is not a source" rule of
+     * {@link #infiniteKeys()}. Mode 3 lists everything as infinite.
+     */
+    public long reportFor(IAEStack<?> rawKey) {
+        if (rawKey == null) {
+            return 0L;
+        }
+        T key = lookupKey(castKey(rawKey));
+        if (key == null) {
+            return 0L;
+        }
+        if (mode() == 3) {
+            return cellChannel.reportedInfinite();
+        }
+        if (mode() == 2) {
+            if (data.wl.contains(key) || data.ul.contains(key) || ruleActive(key)) {
+                return cellChannel.reportedInfinite();
+            }
+            BigInteger finite = stocks().s2.get(key);
+            return finite == null ? 0L : clamp(finite);
+        }
+        BigInteger finite = stocks().s1.get(key);
+        return finite == null ? 0L : clamp(finite);
     }
 
     @Override
@@ -512,6 +615,11 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
      * @return whether the amount is accepted.
      */
     private boolean insertInternal(T key, BigInteger amount, boolean mutate) {
+        if (mutate) {
+            // Before anything moves: what we report for this key right now. The announcer posts the difference
+            // afterwards, which is the only part AE2's own accounting cannot know (see announceChange).
+            markChanged(key);
+        }
         // Quantity-locked entries swallow everything without recording it (1.20 L366/L375/L392).
         if (mode() == 2 && data.qtyLocked.contains(key)) {
             return true;
@@ -585,6 +693,10 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         T key = lookupKey(input);
         long requested = input.getStackSize();
         boolean mutate = action == Actionable.MODULATE;
+        if (mutate) {
+            // Same reason as in insertInternal: remember the reported amount first, announce the difference after.
+            markChanged(key);
+        }
 
         BigInteger taken;
         if (mode() == 2 && data.qtyLocked.contains(key)) {

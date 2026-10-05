@@ -34,18 +34,25 @@ import net.minecraft.item.ItemStack;
  * item nobody stored) is invisible to those terminals until something posts an alteration mentioning those
  * keys.
  *
- * <p><b>The keys are computed at announcement time, never cached.</b> First attempt stored the key list that
- * was current when the drive bound the cell, and that silently missed the whole case: binding happens during a
- * grid rebuild, which usually runs while the cell is still in mode 1 (zero essentia), and switching to mode 3
- * does not rebuild the drive. The log then showed the listener registering with nothing to announce. So all we
- * remember here is <i>which cell sits in which channel</i>; the keys come from the cell itself when we post.
+ * <p><b>What AE2 already does for us, and what it does not</b> (javap on AE2-UEL v0.56.7, 2026-10-05): the
+ * drive wraps our cell inventory in a {@code DriveWatcher}, and that class <i>itself</i> calls
+ * {@code IStorageGrid.postAlterationOfStoredItems} for the items that physically move through it. So plain
+ * storing and taking out is already accounted for -- and posting it a second time from here is exactly the
+ * "the terminal shows 100-something too many" phantom sensei hit in the MeatballCraft pack (2026-10-04).
+ * What nothing posts is the part AE2 cannot see: a change in what our cell <i>reports</i> that no item movement
+ * caused -- storing into mode 2's "store = infinite" turns the key into an infinite row, a panel toggle or a
+ * rule does the same, and in mode 3 rows simply exist. That is what this class posts now, and only that.
+ *
+ * <p><b>Single key deltas, not a re-listing</b> (2026-10-05): the previous shape computed the cell's whole
+ * report and compared it with the network on every change. That is O(types) per change -- 35,740 keys on the
+ * item channel of a 378-mod pack -- and the difference it posted was written as "the network should hold what
+ * our cell reports", which silently erased any amount other cells contributed to the same key. Both problems
+ * are gone now: the cell tells us which key changed and by how much (before/after of its own report), so a
+ * change costs one map lookup, and we never look at the network to compute a number.
  *
  * <p><b>Why deferred by a tick</b>: the drive asks us for a channel view from inside
  * {@code GridStorageCache.cellUpdate()}, which clears its monitor table first -- posting right then would land
  * in a grid that has no monitors yet and be silently lost.
- *
- * <p>Only non-item channels are announced: AE2's own item terminal pulls the list itself, and in mode 3 that
- * list is thousands of keys, which would be a pointless flood.
  */
 public final class ChannelAnnouncer {
 
@@ -57,6 +64,17 @@ public final class ChannelAnnouncer {
 
     /** provider -> channels that owe an announcement on the next tick. */
     private static final Map<ISaveProvider, List<IStorageChannel<?>>> DIRTY = new WeakHashMap<>();
+
+    /**
+     * provider -> channel -> key -> the amount to tell the network about.
+     *
+     * <p>Accumulated instead of posted right away for two reasons: the post has to happen on a later tick (see
+     * the class comment), and a pair whose grid cannot be resolved yet must keep its change instead of dropping
+     * it -- that was the "infinite takes 90 seconds to show up" report of 2026-10-04 (announcement landed at
+     * 22:52:03 for a store made at 22:50:31). Entries leave this map only after a successful post.
+     */
+    private static final Map<ISaveProvider, Map<IStorageChannel<?>, Map<IAEStack<?>, Long>>> PENDING =
+            new WeakHashMap<>();
 
     /**
      * provider -> channel -> the size we last TOLD the network for a key.
@@ -71,11 +89,36 @@ public final class ChannelAnnouncer {
     /** Pairs whose next pass is a pure notification (a terminal just started listening), not a stock change. */
     private static final Map<ISaveProvider, List<IStorageChannel<?>>> NOTIFY_ONLY = new WeakHashMap<>();
 
+    /**
+     * Pairs that owe the FULL pass (re-list the cells and difference against what we announced before).
+     *
+     * <p>Only settings changes need this: a mode switch, a threshold, a rule, "format" -- anything that can move
+     * many keys at once, where naming the affected keys up front is not possible. Item movement never comes
+     * here; it is handled per key.
+     */
+    private static final Map<ISaveProvider, List<IStorageChannel<?>>> GLOBAL = new WeakHashMap<>();
+
+    /** provider -> channel -> how many ticks in a row the post failed; gives up (loudly) past the cap. */
+    private static final Map<ISaveProvider, Map<IStorageChannel<?>, Integer>> ATTEMPTS = new WeakHashMap<>();
+
+    /** provider -> channel -> the tick of the last full pass, so settings bursts cannot cause a listing storm. */
+    private static final Map<ISaveProvider, Map<IStorageChannel<?>, Long>> LAST_GLOBAL =
+            new WeakHashMap<>();
+
     /** Upper bound on tracked providers, so a pathological rebuild loop cannot grow this without limit. */
     private static final int MAX_PROVIDERS = 64;
 
     /** Upper bound on remembered cells per provider+channel. */
     private static final int MAX_CELLS = 64;
+
+    /** Ticks between two full passes on the same pair (0.5 s at 20 tps). */
+    private static final int GLOBAL_COOLDOWN = 10;
+
+    /** How many ticks a post may keep failing before it is dropped with a warning (10 s at 20 tps). */
+    private static final int MAX_ATTEMPTS = 200;
+
+    /** Ticks this class has been flushed for. Only used for the full-pass cooldown. */
+    private static long tick;
 
     /**
      * Remembers that a cell of ours is bound on this channel, and schedules an announcement for it. Called from
@@ -113,29 +156,62 @@ public final class ChannelAnnouncer {
     }
 
     /**
-     * A cell of ours changed what it reports (promotion, cancel-infinite, mode change, panel toggle).
+     * One key's reported amount changed (a promotion, a toggle, a rule, or plain storage that moved the finite
+     * row). The caller has already computed "what we report now minus what we reported before", which is the
+     * only number the network needs: AE2's aggregate list ADDS what it is handed, and the drive's own watcher
+     * already accounted for the physical movement.
      *
-     * <p>Without this the network keeps its old picture until something unrelated happens to rebuild the grid:
-     * sensei's MeatballCraft run showed mode-2 "store = infinite" not showing up until the cell was taken out
-     * and put back (2026-10-04). The diag output proved our side was right -- the key WAS in {@code ul} -- so the
-     * missing part was this notification, not the promotion.
-     *
-     * <p>Announcements carry a DIFFERENCE (see {@link #deltasFor}), so calling this freely is cheap and cannot
-     * double-count.
+     * @param keys   the keys that changed (all of them, normalised to this channel)
+     * @param deltas the change per key, same order as {@code keys}; 0 entries are ignored
+     * @param stack  the cell stack, so the binding can be learned even if the drive patch never ran
      */
-    public static synchronized void onCellChanged(ISaveProvider provider, IStorageChannel<?> channel) {
-        if (provider == null || channel == null) {
+    public static synchronized void onReportChanged(ISaveProvider provider, IStorageChannel<?> channel,
+            ItemStack stack, List<IAEStack<?>> keys, List<Long> deltas) {
+        if (provider == null || channel == null || keys == null || keys.isEmpty()) {
             return;
         }
-        Map<IStorageChannel<?>, List<ItemStack>> perProvider = BOUND.get(provider);
-        if (perProvider != null && perProvider.containsKey(channel)) {
+        Map<IAEStack<?>, Long> perPair = pendingFor(provider, channel);
+        if (perPair == null) {
+            return;
+        }
+        learnBinding(provider, channel, stack);
+        for (int i = 0; i < keys.size(); i++) {
+            IAEStack<?> key = keys.get(i);
+            long delta = i < deltas.size() ? deltas.get(i) : 0L;
+            if (key == null || delta == 0L) {
+                continue;
+            }
+            Long already = perPair.get(key);
+            long merged = (already == null ? 0L : already) + delta;
+            if (merged == 0L) {
+                perPair.remove(key);
+            } else {
+                perPair.put(key, merged);
+            }
+        }
+        if (!perPair.isEmpty()) {
             markForFlush(provider, channel);
         }
     }
 
     /**
-     * A cell of ours changed what it reports, and it tells us which stack it is so the binding can be learned
-     * even if the drive patch never ran.
+     * A cell of ours changed in a way that can move many keys at once (mode switch, threshold, rules, format).
+     *
+     * <p>Without any announcement the network keeps its old picture until something unrelated rebuilds the
+     * grid: sensei's MeatballCraft run showed mode-2 "store = infinite" not showing up until the cell was taken
+     * out and put back (2026-10-04). This is the fallback for the changes that cannot name their keys; item
+     * movement uses {@link #onReportChanged} instead, which is O(1).
+     */
+    public static synchronized void onCellChanged(ISaveProvider provider, IStorageChannel<?> channel) {
+        if (provider == null || channel == null) {
+            return;
+        }
+        markGlobal(provider, channel);
+    }
+
+    /**
+     * Same as {@link #onCellChanged(ISaveProvider, IStorageChannel)}, but it also carries the cell stack so the
+     * binding can be learned even if the drive patch never ran.
      *
      * <p>That last part matters: in sensei's MeatballCraft pack (378 mods) the notification produced nothing,
      * and the reason is that this path used to REQUIRE a binding recorded by the drive patch. If that patch is
@@ -152,21 +228,8 @@ public final class ChannelAnnouncer {
         if (provider == null || channel == null) {
             return;
         }
-        Map<IStorageChannel<?>, List<ItemStack>> perProvider = BOUND.get(provider);
-        if (perProvider != null && perProvider.containsKey(channel)) {
-            markForFlush(provider, channel);
-            return;
-        }
-        if (stack == null || stack.isEmpty()) {
-            return;
-        }
-        if (BINDINGS_FROM_SAVE.add(channel.getClass().getName()) && AE2Addon.LOG != null) {
-            // One line per channel per launch: evidence about whether the drive patch is doing its job in this
-            // installation. Not a warning about a mistake -- the fallback is legitimate, just less precise
-            // (the drive knows exactly which slots hold which cell; this only knows "this cell is bound here").
-            AE2Addon.LOG.info("[ae2addon] 通道 {} 的绑定记录来自元件存档路径（驱动器补丁未登记该绑定）", channel.getClass().getSimpleName());
-        }
-        queue(provider, channel, stack);
+        learnBinding(provider, channel, stack);
+        markGlobal(provider, channel);
     }
 
     /** Channels whose binding was first learned through the save path; logged once each per launch. */
@@ -228,8 +291,68 @@ public final class ChannelAnnouncer {
         }
     }
 
+    /** Remembers a binding learned outside the drive patch, and says so once per channel per launch. */
+    private static void learnBinding(ISaveProvider provider, IStorageChannel<?> channel, ItemStack stack) {
+        Map<IStorageChannel<?>, List<ItemStack>> perProvider = BOUND.get(provider);
+        if (perProvider != null && perProvider.containsKey(channel)) {
+            return;
+        }
+        if (stack == null || stack.isEmpty()) {
+            return;
+        }
+        if (BINDINGS_FROM_SAVE.add(channel.getClass().getName()) && AE2Addon.LOG != null) {
+            // One line per channel per launch: evidence about whether the drive patch is doing its job in this
+            // installation. Not a warning about a mistake -- the fallback is legitimate, just less precise
+            // (the drive knows exactly which slots hold which cell; this only knows "this cell is bound here").
+            AE2Addon.LOG.info("[ae2addon] 通道 {} 的绑定记录来自元件存档路径（驱动器补丁未登记该绑定）",
+                    channel.getClass().getSimpleName());
+        }
+        queue(provider, channel, stack);
+    }
+
+    /** The pending per-key amounts for one pair, created on demand; null when nothing may be tracked. */
+    private static Map<IAEStack<?>, Long> pendingFor(ISaveProvider provider, IStorageChannel<?> channel) {
+        Map<IStorageChannel<?>, Map<IAEStack<?>, Long>> perProvider = PENDING.get(provider);
+        if (perProvider == null) {
+            if (PENDING.size() >= MAX_PROVIDERS) {
+                return null;
+            }
+            perProvider = new LinkedHashMap<>();
+            PENDING.put(provider, perProvider);
+        }
+        Map<IAEStack<?>, Long> perPair = perProvider.get(channel);
+        if (perPair == null) {
+            perPair = new LinkedHashMap<>();
+            perProvider.put(channel, perPair);
+        }
+        return perPair;
+    }
+
+    /** Marks a pair as owing the full pass. Caller holds the lock. */
+    private static void markGlobal(ISaveProvider provider, IStorageChannel<?> channel) {
+        Map<IStorageChannel<?>, List<ItemStack>> perProvider = BOUND.get(provider);
+        if (perProvider == null || !perProvider.containsKey(channel)) {
+            // No binding recorded: the only way in is a cell that saved a change and told us its stack, which
+            // onCellChanged(provider, channel, stack) has already queued by now.
+            return;
+        }
+        List<IStorageChannel<?>> channels = GLOBAL.get(provider);
+        if (channels == null) {
+            if (GLOBAL.size() >= MAX_PROVIDERS) {
+                return;
+            }
+            channels = new ArrayList<>();
+            GLOBAL.put(provider, channels);
+        }
+        if (!channels.contains(channel)) {
+            channels.add(channel);
+        }
+        markForFlush(provider, channel);
+    }
+
     /** Posts everything scheduled so far. Called once per server tick, server thread only. */
     public static synchronized void flush() {
+        tick++;
         if (DIRTY.isEmpty()) {
             return;
         }
@@ -238,81 +361,279 @@ public final class ChannelAnnouncer {
         for (Map.Entry<ISaveProvider, List<IStorageChannel<?>>> entry : work) {
             ISaveProvider provider = entry.getKey();
             if (!(provider instanceof IActionHost)) {
+                drop(provider, entry.getValue());
                 continue;
             }
             IActionHost host = (IActionHost) provider;
             try {
                 IGridNode node = host.getActionableNode();
-                if (node == null || node.getGrid() == null) {
-                    retry(provider, entry.getValue());
-                    continue;
-                }
-                // rv6 has no IGrid#getStorage(): the storage grid is a grid cache.
-                IStorageGrid storage = node.getGrid().getCache(IStorageGrid.class);
+                IStorageGrid storage = node == null || node.getGrid() == null ? null
+                        // rv6 has no IGrid#getStorage(): the storage grid is a grid cache.
+                        : node.getGrid().getCache(IStorageGrid.class);
                 if (storage == null) {
-                    retry(provider, entry.getValue());
+                    // Keep the change for the next tick instead of dropping it -- see PENDING. Nothing is
+                    // recomputed on the retry, so this cannot turn into per-tick work on a big cell.
+                    defer(provider, entry.getValue());
                     continue;
                 }
                 IActionSource source = new MachineSource(host);
                 List<IStorageChannel<?>> notifyFlags = NOTIFY_ONLY.get(provider);
+                List<IStorageChannel<?>> globalFlags = GLOBAL.get(provider);
                 for (IStorageChannel<?> channel : entry.getValue()) {
+                    postPendingKeys(storage, provider, channel, source);
                     boolean notifyOnly = notifyFlags != null && notifyFlags.remove(channel);
-                    Map<IAEStack<?>, Long> now = keysNow(provider, channel);
-                    List<IAEStack<?>> delta = deltasFor(storage, provider, channel, now, notifyOnly);
-                    if (!delta.isEmpty()) {
-                        storage.postAlterationOfStoredItems(channel, delta, source);
-                        if (AE2Addon.LOG != null && ANNOUNCED_CHANNELS.add(channel.getClass().getSimpleName())) {
-                            // One line per channel per launch: proves the whole path ran (grid found, keys asked
-                            // from the cell, difference posted). Enough to tell "nothing was announced" apart from
-                            // "announced but the terminal ignored it" without a second pack run.
-                            AE2Addon.LOG.info("[ae2addon] 已通知网络 channel={} 变化条目={}（{}）",
-                                    channel.getClass().getSimpleName(), delta.size(),
-                                    notifyOnly ? "纯通知" : "库存变化");
+                    boolean global = globalFlags != null && globalFlags.remove(channel);
+                    if (global || notifyOnly) {
+                        if (notifyOnly || cooldownElapsed(provider, channel)) {
+                            rememberGlobalPass(provider, channel);
+                            fullPass(storage, provider, channel, source, notifyOnly);
+                        } else {
+                            // Held back by the cooldown: put it back so a burst of settings clicks ends in
+                            // exactly one pass instead of one per click.
+                            markGlobal(provider, channel);
+                            if (notifyOnly) {
+                                markForFlush(provider, channel, true);
+                            }
                         }
                     }
                 }
+                clearAttempts(provider);
             } catch (RuntimeException | LinkageError failed) {
                 // Never let a notification problem escape into the tick loop: the cell itself is fine, the
                 // terminals simply keep their previous picture until the next announcement.
-                com.ae2addon.AE2Addon.LOG.warn("[ae2addon] 通知网络库存变化失败：{}", failed.toString());
+                AE2Addon.LOG.warn("[ae2addon] 通知网络库存变化失败：{}", failed.toString());
             }
         }
     }
 
     /**
-     * Puts a pair back on the queue for the next tick, because there was no grid to talk to yet.
+     * Posts the accumulated single-key changes for one pair.
      *
-     * <p>This is the difference between "eventually" and "immediately": sensei's MeatballCraft pack showed the
-     * announcement landing 90 seconds after the store (log: 22:50:31 -> 22:52:03), because the single attempt had
-     * failed on a grid that was not ready and nothing retried it until the NEXT change. The queue is keyed by a
-     * weak provider, so a dropped drive takes its own retries with it; a cap stops a pathological loop.
+     * <p>The amounts here are "our reported amount now minus our reported amount before", so they are safe to
+     * add to a list that SUMS: AE2's aggregate already holds whatever the drive's watcher posted for the
+     * physical movement, and the difference is exactly the part it could not know.
      */
-    private static void retry(ISaveProvider provider, List<IStorageChannel<?>> channels) {
-        Map<IStorageChannel<?>, Integer> perProvider = RETRIES.get(provider);
-        if (perProvider == null) {
-            if (RETRIES.size() >= MAX_PROVIDERS) {
-                return;
-            }
-            perProvider = new LinkedHashMap<>();
-            RETRIES.put(provider, perProvider);
+    private static void postPendingKeys(IStorageGrid storage, ISaveProvider provider, IStorageChannel<?> channel,
+            IActionSource source) {
+        Map<IAEStack<?>, Long> perPair = PENDING.containsKey(provider) ? PENDING.get(provider).get(channel) : null;
+        if (perPair == null || perPair.isEmpty()) {
+            return;
         }
-        for (IStorageChannel<?> channel : channels) {
-            int attempts = perProvider.getOrDefault(channel, 0) + 1;
-            perProvider.put(channel, attempts);
-            if (attempts <= MAX_RETRIES) {
-                markForFlush(provider, channel);
-            } else if (AE2Addon.LOG != null && attempts == MAX_RETRIES + 1) {
-                AE2Addon.LOG.warn("[ae2addon] 通道 {} 的通知一直找不到网格，已放弃（{} 次）",
-                        channel.getClass().getSimpleName(), MAX_RETRIES);
+        List<IAEStack<?>> delta = new ArrayList<>(perPair.size());
+        for (Map.Entry<IAEStack<?>, Long> e : perPair.entrySet()) {
+            delta.add(sized(e.getKey(), e.getValue()));
+        }
+        try {
+            post(storage, channel, delta, source);
+        } catch (RuntimeException | LinkageError failed) {
+            attemptFailed(provider, channel, failed);
+            markForFlush(provider, channel);
+            return;
+        }
+        Map<IAEStack<?>, Long> was = announcedFor(provider, channel);
+        for (Map.Entry<IAEStack<?>, Long> e : perPair.entrySet()) {
+            Long before = was.get(e.getKey());
+            was.put(e.getKey(), (before == null ? 0L : before) + e.getValue());
+        }
+        perPair.clear();
+        clearAttempts(provider, channel);
+    }
+
+    /** Posts one alteration and logs the once-per-channel evidence line. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void post(IStorageGrid storage, IStorageChannel<?> channel, List<IAEStack<?>> delta,
+            IActionSource source) {
+        if (delta.isEmpty()) {
+            return;
+        }
+        storage.postAlterationOfStoredItems((IStorageChannel) channel, delta, source);
+        if (AE2Addon.LOG != null && ANNOUNCED_CHANNELS.add(channel.getClass().getSimpleName())) {
+            // One line per channel per launch: proves the whole path ran (grid found, keys asked from the cell,
+            // difference posted). Enough to tell "nothing was announced" apart from "announced but the terminal
+            // ignored it" without a second pack run.
+            AE2Addon.LOG.info("[ae2addon] 已通知网络 channel={} 变化条目={}（库存变化）",
+                    channel.getClass().getSimpleName(), delta.size());
+        }
+    }
+
+    /** Keeps a pair that could not be posted yet, and gives up loudly after {@link #MAX_ATTEMPTS}. */
+    private static void attemptFailed(ISaveProvider provider, IStorageChannel<?> channel, Throwable failed) {
+        Map<IStorageChannel<?>, Integer> perProvider = ATTEMPTS.get(provider);
+        if (perProvider == null) {
+            perProvider = new LinkedHashMap<>();
+            ATTEMPTS.put(provider, perProvider);
+        }
+        int attempts = perProvider.getOrDefault(channel, 0) + 1;
+        perProvider.put(channel, attempts);
+        if (attempts > MAX_ATTEMPTS) {
+            AE2Addon.LOG.warn("[ae2addon] 通道 {} 的通知一直发不出去，已放弃（{} 次）：{}",
+                    channel.getClass().getSimpleName(), MAX_ATTEMPTS, failed.toString());
+            perProvider.remove(channel);
+            Map<IAEStack<?>, Long> perPair = PENDING.containsKey(provider) ? PENDING.get(provider).get(channel)
+                    : null;
+            if (perPair != null) {
+                perPair.clear();
             }
         }
     }
 
-    /** Ticks a single announcement may wait for its grid before giving up (30 s at 20 tps). */
-    private static final int MAX_RETRIES = 600;
+    /** Keeps a pair that has no grid yet for the next tick. */
+    private static void defer(ISaveProvider provider, List<IStorageChannel<?>> channels) {
+        Map<IStorageChannel<?>, Integer> perProvider = ATTEMPTS.get(provider);
+        if (perProvider == null) {
+            if (ATTEMPTS.size() >= MAX_PROVIDERS) {
+                return;
+            }
+            perProvider = new LinkedHashMap<>();
+            ATTEMPTS.put(provider, perProvider);
+        }
+        for (IStorageChannel<?> channel : channels) {
+            int attempts = perProvider.getOrDefault(channel, 0) + 1;
+            perProvider.put(channel, attempts);
+            if (attempts <= MAX_ATTEMPTS) {
+                markForFlush(provider, channel);
+            } else if (AE2Addon.LOG != null && attempts == MAX_ATTEMPTS + 1) {
+                AE2Addon.LOG.warn("[ae2addon] 通道 {} 的通知一直找不到网格，已放弃（{} 次）",
+                        channel.getClass().getSimpleName(), MAX_ATTEMPTS);
+                perProvider.remove(channel);
+            }
+        }
+    }
 
-    /** provider -> channel -> attempts so far, for {@link #retry}. Weak keys, like every other map here. */
-    private static final Map<ISaveProvider, Map<IStorageChannel<?>, Integer>> RETRIES = new WeakHashMap<>();
+    /** Forgets a pair entirely (no host, no point in retrying). */
+    private static void drop(ISaveProvider provider, List<IStorageChannel<?>> channels) {
+        for (IStorageChannel<?> channel : channels) {
+            Map<IAEStack<?>, Long> perPair = PENDING.containsKey(provider) ? PENDING.get(provider).get(channel)
+                    : null;
+            if (perPair != null) {
+                perPair.clear();
+            }
+            List<IStorageChannel<?>> flags = GLOBAL.get(provider);
+            if (flags != null) {
+                flags.remove(channel);
+            }
+        }
+    }
+
+    private static void clearAttempts(ISaveProvider provider) {
+        Map<IStorageChannel<?>, Integer> perProvider = ATTEMPTS.get(provider);
+        if (perProvider != null && perProvider.isEmpty()) {
+            ATTEMPTS.remove(provider);
+        }
+    }
+
+    private static void clearAttempts(ISaveProvider provider, IStorageChannel<?> channel) {
+        Map<IStorageChannel<?>, Integer> perProvider = ATTEMPTS.get(provider);
+        if (perProvider != null) {
+            perProvider.remove(channel);
+        }
+    }
+
+    /** Whether the pair may run another full pass now (settings bursts must not cause a listing storm). */
+    private static boolean cooldownElapsed(ISaveProvider provider, IStorageChannel<?> channel) {
+        Map<IStorageChannel<?>, Long> perProvider = LAST_GLOBAL.get(provider);
+        Long last = perProvider == null ? null : perProvider.get(channel);
+        return last == null || tick - last >= GLOBAL_COOLDOWN;
+    }
+
+    private static void rememberGlobalPass(ISaveProvider provider, IStorageChannel<?> channel) {
+        Map<IStorageChannel<?>, Long> perProvider = LAST_GLOBAL.get(provider);
+        if (perProvider == null) {
+            if (LAST_GLOBAL.size() >= MAX_PROVIDERS) {
+                return;
+            }
+            perProvider = new LinkedHashMap<>();
+            LAST_GLOBAL.put(provider, perProvider);
+        }
+        perProvider.put(channel, tick);
+    }
+
+    /**
+     * The full pass: list what the bound cells report right now and difference it against what we announced
+     * before (never against the whole network -- the network's row also holds other cells' amounts).
+     *
+     * <p>This is the expensive path (it lists the cells), so it is used only for changes that cannot name their
+     * keys. Item movement uses the per-key path.
+     *
+     * <p>The difference is posted in the direction the network can add: keys we list that it does not have yet
+     * are sent whole, keys we no longer list are taken back, and unchanged keys are sent with size 0 when the
+     * pass exists because a terminal just started listening (those terminals learn keys only from a
+     * notification and read the amount from the monitor themselves).
+     *
+     * <p>This pass keeps the shape sensei validated on 2026-10-04 (commit 9845835), including asking the
+     * network what it holds ({@code mine - theirs}). It is deliberately NOT rewritten to a "difference against
+     * our own last announcement" here: after a grid rebuild the network re-reads the cells, so our own record
+     * would be stale and the full amount would be added twice -- the "mana reads 2x" bug of that same day.
+     * The trade-off of {@code mine - theirs} (it makes the row read exactly what our cell reports, so another
+     * cell's share of the same key is not added) is confined to settings changes; plain item movement no longer
+     * comes here at all.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void fullPass(IStorageGrid storage, ISaveProvider provider, IStorageChannel<?> channel,
+            IActionSource source, boolean notifyOnly) {
+        Map<IAEStack<?>, Long> now = keysNow(provider, channel);
+        Map<IAEStack<?>, Long> was = announcedFor(provider, channel);
+        appeng.api.storage.data.IItemList known = null;
+        try {
+            appeng.api.storage.IMEMonitor monitor = storage.getInventory((IStorageChannel) channel);
+            if (monitor != null) {
+                known = monitor.getStorageList();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            known = null; // no monitor yet (grid still building): then everything we list counts as new
+        }
+        List<IAEStack<?>> out = new ArrayList<>();
+        for (Map.Entry<IAEStack<?>, Long> entry : now.entrySet()) {
+            long mine = entry.getValue();
+            long theirs = 0L;
+            if (known != null) {
+                IAEStack<?> there = known.findPrecise(entry.getKey());
+                theirs = there == null ? 0L : there.getStackSize();
+            }
+            long diff = mine - theirs;
+            if (diff != 0L) {
+                out.add(sized(entry.getKey(), diff));
+            } else if (notifyOnly && (!pullsItself(channel) || was.containsKey(entry.getKey()))) {
+                // A pure notification, so the terminal learns the key without the network counting stock twice.
+                // On the ITEM channel only keys we already announced are re-sent: mode 3 lists tens of thousands
+                // of rows there (35,740 in sensei's MeatballCraft pack, whose diag run cost 28 s of server time),
+                // and AE2's own terminal pulls that channel anyway -- this pass exists for the few rows our cell
+                // is the only source of.
+                out.add(sized(entry.getKey(), 0L));
+            }
+        }
+        for (Map.Entry<IAEStack<?>, Long> entry : was.entrySet()) {
+            if (!now.containsKey(entry.getKey()) && entry.getValue() != 0L) {
+                out.add(sized(entry.getKey(), -entry.getValue()));
+            }
+        }
+        try {
+            post(storage, channel, out, source);
+        } catch (RuntimeException | LinkageError failed) {
+            AE2Addon.LOG.warn("[ae2addon] 全量播报失败：{}", failed.toString());
+            return;
+        }
+        was.clear();
+        was.putAll(now);
+    }
+
+    /** The remembered announcement sizes for one (provider, channel). Caller holds the lock. */
+    private static Map<IAEStack<?>, Long> announcedFor(ISaveProvider provider, IStorageChannel<?> channel) {
+        Map<IStorageChannel<?>, Map<IAEStack<?>, Long>> perProvider = ANNOUNCED.get(provider);
+        if (perProvider == null) {
+            if (ANNOUNCED.size() >= MAX_PROVIDERS) {
+                return new LinkedHashMap<>();
+            }
+            perProvider = new LinkedHashMap<>();
+            ANNOUNCED.put(provider, perProvider);
+        }
+        Map<IAEStack<?>, Long> perChannel = perProvider.get(channel);
+        if (perChannel == null) {
+            perChannel = new LinkedHashMap<>();
+            perProvider.put(channel, perChannel);
+        }
+        return perChannel;
+    }
 
     /**
      * What the bound cells report for a channel RIGHT NOW. Asking the cell (through AE2's cell registry, the
@@ -358,87 +679,10 @@ public final class ChannelAnnouncer {
                 // A cell that cannot be asked right now simply contributes nothing this round. Note by
                 // experience (2026-10-04): a silent catch here made four different failures look identical --
                 // if this ever needs debugging again, log the exception instead of swallowing it.
-                com.ae2addon.AE2Addon.LOG.warn("[ae2addon] 播报前向元件取键失败：{}", failed.toString());
+                AE2Addon.LOG.warn("[ae2addon] 播报前向元件取键失败：{}", failed.toString());
             }
         }
         return keys;
-    }
-
-    /**
-     * The CHANGE to tell the network about -- never the whole state.
-     *
-     * <p>AE2's aggregate list ADDS whatever it is handed ({@code ItemVariantList.addStorage} compiles to
-     * {@code findPrecise} + {@code incStackSize}, verified with javap), and the monitor is already rebuilt from
-     * the cells on every grid update ({@code forceUpdate} zeroes the sizes and re-asks them). Announcing the
-     * full state therefore counted our cell twice: sensei's mana read 2x after a re-entry while only half of it
-     * could be extracted (2026-10-04). So ask the network what it holds and send the difference:
-     * <ul>
-     * <li>key already there at our value &rarr; nothing to say (this is the normal case);</li>
-     * <li>key it does not have yet (a mode-3 row that just appeared) &rarr; send it whole;</li>
-     * <li>key we announced once and no longer list &rarr; take our old amount back;</li>
-     * <li>a pass caused by a NEW LISTENER &rarr; send the key with size 0 instead of skipping it, because those
-     *     terminals learn keys only from a notification and read the amount from the monitor themselves.</li>
-     * </ul>
-     */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static List<IAEStack<?>> deltasFor(IStorageGrid storage, ISaveProvider provider,
-            IStorageChannel<?> channel, Map<IAEStack<?>, Long> now, boolean notifyOnly) {
-        List<IAEStack<?>> out = new ArrayList<>();
-        appeng.api.storage.data.IItemList known = null;
-        try {
-            appeng.api.storage.IMEMonitor monitor = storage.getInventory((IStorageChannel) channel);
-            if (monitor != null) {
-                known = monitor.getStorageList();
-            }
-        } catch (RuntimeException | LinkageError ignored) {
-            known = null; // no monitor yet (grid still building): then everything we list counts as new
-        }
-        Map<IAEStack<?>, Long> was = announcedFor(provider, channel);
-        for (Map.Entry<IAEStack<?>, Long> entry : now.entrySet()) {
-            long mine = entry.getValue();
-            long theirs = 0L;
-            if (known != null) {
-                IAEStack<?> there = known.findPrecise(entry.getKey());
-                theirs = there == null ? 0L : there.getStackSize();
-            }
-            long diff = mine - theirs;
-            if (diff != 0L) {
-                out.add(sized(entry.getKey(), diff));
-            } else if (notifyOnly && (!pullsItself(channel) || was.containsKey(entry.getKey()))) {
-                // A pure notification, so the terminal learns the key without the network counting stock twice.
-                // On the ITEM channel only keys we already announced are re-sent: mode 3 lists tens of thousands
-                // of rows there (35,740 in sensei's MeatballCraft pack, whose diag run cost 28 s of server time),
-                // and AE2's own terminal pulls that channel anyway -- this pass exists for the few rows our cell
-                // is the only source of.
-                out.add(sized(entry.getKey(), 0L));
-            }
-        }
-        for (Map.Entry<IAEStack<?>, Long> entry : was.entrySet()) {
-            if (!now.containsKey(entry.getKey()) && entry.getValue() != 0L) {
-                out.add(sized(entry.getKey(), -entry.getValue()));
-            }
-        }
-        was.clear();
-        was.putAll(now);
-        return out;
-    }
-
-    /** The remembered announcement sizes for one (provider, channel). Caller holds the lock. */
-    private static Map<IAEStack<?>, Long> announcedFor(ISaveProvider provider, IStorageChannel<?> channel) {
-        Map<IStorageChannel<?>, Map<IAEStack<?>, Long>> perProvider = ANNOUNCED.get(provider);
-        if (perProvider == null) {
-            if (ANNOUNCED.size() >= MAX_PROVIDERS) {
-                return new LinkedHashMap<>();
-            }
-            perProvider = new LinkedHashMap<>();
-            ANNOUNCED.put(provider, perProvider);
-        }
-        Map<IAEStack<?>, Long> perChannel = perProvider.get(channel);
-        if (perChannel == null) {
-            perChannel = new LinkedHashMap<>();
-            perProvider.put(channel, perChannel);
-        }
-        return perChannel;
     }
 
     /** A copy of the key carrying the given amount (never the shared key object itself). */

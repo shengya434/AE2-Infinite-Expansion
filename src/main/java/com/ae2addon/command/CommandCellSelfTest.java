@@ -1281,6 +1281,40 @@ public class CommandCellSelfTest extends CommandBase {
         long k3count = k3.getStoredItemCount();
         check(sender, "K3", "★ 别的通道的存量不会漏进物品通道的读数（每通道各自一间）",
                 k3count == 5L, "5", String.valueOf(k3count));
+
+        // K4: the primitive the single-key announcement rests on. The announcer is told "this key changed from
+        // before to after", so both readings have to agree with what the terminal actually lists -- if
+        // reportFor() disagreed with getAvailableItems(), the network would be handed a wrong difference and the
+        // row would drift away from the cell (sensei's "store = infinite does not show up immediately" and the
+        // "terminal shows 100-something too many" of 2026-10-04).
+        long reportedInfinite = ItemCellChannel.INSTANCE.reportedInfinite();
+        UnlimitedCellInventory k4 = newInventory("k4");
+        k4.setMode(2);
+        k4.setWorkMode(2); // 存入无限: storing anything at all makes it infinite
+        long k4before = k4.reportFor(stickKey);
+        k4.injectItems(stack(Items.STICK, 100L), Actionable.MODULATE, NO_SOURCE);
+        long k4after = k4.reportFor(stickKey);
+        IItemList<IAEItemStack> k4list = ItemCellChannel.INSTANCE.storage().createList();
+        k4.getAvailableItems(k4list);
+        IAEItemStack k4listed = k4list.findPrecise(stickKey);
+        check(sender, "K4", "★ 单键报告值（mode2 存入无限）：存 100 前报 0、后报无限，且与终端实际列出的数字一致",
+                k4before == 0L && k4after == reportedInfinite && k4listed != null
+                        && k4listed.getStackSize() == k4after,
+                "0/" + reportedInfinite + "/" + reportedInfinite,
+                k4before + "/" + k4after + "/" + (k4listed == null ? "未列出" : k4listed.getStackSize()));
+
+        // K5: mode 1 is a plain count, and reportFor follows it down after an extraction -- the announcement
+        // posts "after minus before", so a wrong reading would be posted as a wrong difference.
+        UnlimitedCellInventory k5 = newInventory("k5");
+        k5.setMode(1);
+        k5.injectItems(stack(Items.PAPER, 100L), Actionable.MODULATE, NO_SOURCE);
+        long k5stored = k5.reportFor(key(Items.PAPER));
+        k5.extractItems(stack(Items.PAPER, 40L), Actionable.MODULATE, NO_SOURCE);
+        long k5left = k5.reportFor(key(Items.PAPER));
+        long k5untouched = k5.reportFor(key(Items.COAL));
+        check(sender, "K5", "★ 单键报告值（mode1）：存 100 → 报 100、取 40 → 报 60，没碰过的键报 0",
+                k5stored == 100L && k5left == 60L && k5untouched == 0L,
+                "100/60/0", k5stored + "/" + k5left + "/" + k5untouched);
     }
 
     /** One count entry in the PRE-P4 layout: {@code k} = key tag, {@code n} = decimal count. */
