@@ -1,4 +1,4 @@
-{
+﻿{
   "required": true,
   "package": "com.ae2addon.mixin",
   "target": "@env(DEFAULT)",
@@ -7,8 +7,7 @@
   "mixins": [
     "MixinTileDrive",
     "MixinNetworkMonitor",
-    "MixinDriveWatcher",
-    "MixinNetworkMonitorDiag"
+    "MixinDriveWatcher"
   ],
   "injectors": {
     "defaultRequire": 1
