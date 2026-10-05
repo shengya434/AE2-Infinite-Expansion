@@ -434,9 +434,55 @@ public final class ChannelAnnouncer {
         for (Map.Entry<IAEStack<?>, Long> e : perPair.entrySet()) {
             Long before = was.get(e.getKey());
             was.put(e.getKey(), (before == null ? 0L : before) + e.getValue());
+            logKeyPost(channel, e.getKey(), e.getValue());
         }
         perPair.clear();
         clearAttempts(provider, channel);
+    }
+
+    /** Channels whose single-key posts have been logged this launch, and how many. */
+    private static final Map<String, Integer> KEY_LOGS = new java.util.HashMap<>();
+
+    /** How many single-key posts per channel are written to the log before it goes quiet again. */
+    private static final int MAX_KEY_LOGS = 8;
+
+    /**
+     * Writes the first few single-key announcements of a channel to the log.
+     *
+     * <p>Why: the once-per-channel "已通知网络" line above proves the path ran ONCE, and after that a run is
+     * blind -- on 2026-10-05 the MeatballCraft check could not tell "we never posted the change" apart from
+     * "we posted it and the network ignored it", which is the whole question. Bounded, so a busy run cannot
+     * flood the log.
+     */
+    private static void logKeyPost(IStorageChannel<?> channel, IAEStack<?> key, long delta) {
+        if (AE2Addon.LOG == null) {
+            return;
+        }
+        String name = channel.getClass().getSimpleName();
+        int shown = KEY_LOGS.getOrDefault(name, 0);
+        if (shown >= MAX_KEY_LOGS) {
+            return;
+        }
+        KEY_LOGS.put(name, shown + 1);
+        AE2Addon.LOG.info("[ae2addon] 已通知网络(单键) channel={} key={} 变化={}{}",
+                name, describe(key), delta,
+                shown + 1 == MAX_KEY_LOGS ? "（后续同类不再记录）" : "");
+    }
+
+    /** A stable, non-localised name for a key, for the log only. */
+    private static String describe(IAEStack<?> key) {
+        if (key == null) {
+            return "?";
+        }
+        try {
+            net.minecraft.item.ItemStack stack = key.asItemStackRepresentation();
+            if (stack != null && !stack.isEmpty() && stack.getItem().getRegistryName() != null) {
+                return stack.getItem().getRegistryName().toString();
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // Logging must never be able to break an announcement.
+        }
+        return String.valueOf(key);
     }
 
     /** Posts one alteration and logs the once-per-channel evidence line. */
