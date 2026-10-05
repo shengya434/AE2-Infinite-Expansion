@@ -47,15 +47,24 @@ public final class EssentiaCellChannel implements CellChannel<IAEEssentiaStack> 
     }
 
     /**
-     * Essentia used to publish its own smaller "infinite" value ({@code Integer.MAX_VALUE}) because a
-     * {@code Long.MAX_VALUE} row wrapped negative in the aggregating list, and mode 3 covers every aspect at once
-     * (sensei's 2026-10-04 three-way experiment).
+     * Essentia publishes a value that still fits in an {@code int} ({@link ChannelCellCore#SAFE_INFINITE}).
      *
-     * <p>That override is gone: since 2026-10-05 every channel publishes {@link ChannelCellCore#INFINITE}
-     * ({@code Long.MAX_VALUE / 4}), which is sum-safe for several claimants and still renders as an infinity
-     * symbol on the client. Keeping one value everywhere means one behaviour to reason about, and it is what
-     * sensei asked for ("撤掉源质的特例，统一走 Long.MAX/4 + ∞ 显示").
+     * <p><b>Why this channel keeps its own value</b> (learned the hard way on 2026-10-05, after trying to make
+     * every channel share {@code Long.MAX_VALUE / 4}): the essentia stack type that Thaumic Energistics and AE2
+     * carry around is int-sized somewhere in its own plumbing, and a value of 2.3e18 does not survive that --
+     * the rows disappear from the essentia terminal exactly like the overflow of 2026-10-04 did. 21亿
+     * ({@code Integer.MAX_VALUE}) is the largest amount that survives, which is what sensei asked for back then
+     * ("fix the essentia one only") and what this override restores.
+     *
+     * <p>Display: the infinity symbol on the client is driven by {@link ChannelCellCore#INFINITE_SIGHT}, so
+     * essentia rows read as a large number rather than ∞. That is fine -- the essentia terminal is Thaumic
+     * Energistics' own screen, which draws its numbers its own way anyway.
      */
+    @Override
+    public long reportedInfinite() {
+        return ChannelCellCore.SAFE_INFINITE;
+    }
+
     @Override
     public String id() {
         return "essentia";

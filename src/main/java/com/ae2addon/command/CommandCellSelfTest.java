@@ -1945,37 +1945,38 @@ public class CommandCellSelfTest extends CommandBase {
         wipe(items);
         items.setMode(3);
 
-        // X1: the published value must survive aggregation by as many claims as it is designed for
-        long essentiaReported = CellChannelRegistry.byId("essentia").reportedInfinite();
+        // X1: the published value must survive aggregation by as many claims as it is designed for.
+        // The item channel publishes Long.MAX/4, which keeps FOUR claimants inside the long range.
+        long itemValue = CellChannelRegistry.byId(CellChannelRegistry.ITEM).reportedInfinite();
         IItemList<IAEItemStack> list = AEApi.instance().storage()
                 .getStorageChannel(IItemStorageChannel.class).createList();
         IAEItemStack probe = stack(Items.STICK, 1L);
         int claimants = 4; // Long.MAX/4 is chosen so that this many cells can claim one key without wrapping
         for (int i = 0; i < claimants; i++) {
             IAEItemStack row = probe.copy();
-            row.setStackSize(essentiaReported);
+            row.setStackSize(itemValue);
             list.add(row);
         }
         IAEItemStack aggregated = list.findPrecise(probe);
         long summed = aggregated == null ? -1L : aggregated.getStackSize();
         check(sender, "X1", "★ " + claimants + " 只元件同时声明无限，按网络方式累加后仍为正（值=无限值×" + claimants + "）",
-                summed > 0L && summed == ChannelCellCore.INFINITE * claimants,
-                String.valueOf(ChannelCellCore.INFINITE * claimants), String.valueOf(summed));
+                summed > 0L && summed == itemValue * claimants,
+                String.valueOf(itemValue * claimants), String.valueOf(summed));
 
-        // X2: every channel publishes the SAME value now (the per-channel opt-in was retired on 2026-10-05)
-        long itemReported = CellChannelRegistry.byId(CellChannelRegistry.ITEM).reportedInfinite();
-        check(sender, "X2", "★ 各通道统一上报同一个无限值（= INFINITE，且低于 Long.MAX 留出加法余量）",
-                essentiaReported == itemReported && itemReported == ChannelCellCore.INFINITE
-                        && itemReported < Long.MAX_VALUE,
-                ChannelCellCore.INFINITE + "/" + ChannelCellCore.INFINITE,
-                essentiaReported + "/" + itemReported);
+        // X2: the essentia channel keeps its own, int-sized value (its stack type does not survive 2.3e18)
+        long essentiaReported = CellChannelRegistry.byId("essentia").reportedInfinite();
+        check(sender, "X2", "★ 源质单独用 int 能装下的安全值，物品通道用 Long.MAX/4（各自都要能活下来）",
+                essentiaReported == ChannelCellCore.SAFE_INFINITE && essentiaReported <= Integer.MAX_VALUE
+                        && itemValue == ChannelCellCore.INFINITE && itemValue < Long.MAX_VALUE,
+                ChannelCellCore.SAFE_INFINITE + "/" + ChannelCellCore.INFINITE,
+                essentiaReported + "/" + itemValue);
 
-        // X3: and the listing really uses that value
+        // X3: and the listing really uses each channel's own value
         long essentiaRow = firstListedRowSize(cell, "essentia");
         long itemRow = firstListedRowSize(cell, CellChannelRegistry.ITEM);
-        check(sender, "X3", "★ mode3 列出的行用的就是这个无限值（源质与物品都一样）",
-                essentiaRow == itemReported && itemRow == itemReported,
-                itemReported + "/" + itemReported, essentiaRow + "/" + itemRow);
+        check(sender, "X3", "★ mode3 列出的行确实用了各自通道的上报值（源质=安全值、物品=Long.MAX/4）",
+                essentiaRow == essentiaReported && itemRow == itemValue,
+                essentiaReported + "/" + itemValue, essentiaRow + "/" + itemRow);
     }
 
     /**

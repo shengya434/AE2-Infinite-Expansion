@@ -10,7 +10,8 @@
     "MixinDriveWatcher"
   ],
   "client": [
-    "MixinReadableNumberConverter"
+    "MixinReadableNumberConverter",
+    "MixinAEBaseMEGui"
   ],
   "injectors": {
     "defaultRequire": 1
