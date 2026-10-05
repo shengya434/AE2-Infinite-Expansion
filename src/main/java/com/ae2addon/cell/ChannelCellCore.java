@@ -501,34 +501,34 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         }
         if (!global && !before.isEmpty()) {
             long infiniteReport = cellChannel.reportedInfinite();
-            List<ChannelAnnouncer.Change> changes = new ArrayList<>(before.size());
+            Map<IAEStack<?>, Long> targets = new LinkedHashMap<>();
             for (Map.Entry<IAEStack<?>, Long> entry : before.entrySet()) {
                 long after = reportFor(entry.getKey());
                 long was = entry.getValue();
-                // Two shapes, because the network's aggregate list ADDS what it is handed:
-                //   * a finite move is a real difference (after - before);
-                //   * an infinite row must be SET, not added. Posting "0 -> Long.MAX_VALUE" onto a row that
-                //     already holds anything wraps negative and the row disappears -- that is why
-                //     「存入无限」 took minutes to show up in sensei's MeatballCraft pack (2026-10-05: the
-                //     announce went out with 变化=9223372036854775807 and the item only turned infinite when a
-                //     later grid rebuild re-read the cells). The announcer posts "target minus what the row
-                //     reads now" for these, which lands exactly on the value and cannot overflow.
-                boolean infinite = after == infiniteReport || was == infiniteReport;
-                if (after == was && !infinite) {
-                    // Nothing moved and it is not an infinite row: nothing to say.
+                // ONLY infinite rows are announced, and they are announced as a value to SET (never as a
+                // difference to add):
+                //   * a finite move needs nothing from us -- the drive wraps our inventory in a DriveWatcher and
+                //     that class posts the physical amount itself (javap, AE2-UEL v0.56.7). Posting it again here
+                //     would double count it (store 64 -> the terminal reads 128);
+                //   * an infinite row cannot be added either: the aggregate list SUMS, the cell's own rule is
+                //     set-max, and "0 -> Long.MAX_VALUE" onto a row that already holds anything wraps NEGATIVE,
+                //     which makes the row disappear -- that is why 「存入无限」 took minutes to show up in sensei's
+                //     MeatballCraft pack (2026-10-05: the announcement went out with 变化=9223372036854775807 and
+                //     the item only turned infinite when a later grid rebuild re-read the cells).
+                // The announcer then posts "target minus what the row reads now", which lands exactly on the
+                // value and cannot overflow.
+                //
+                // An infinite row is restated on EVERY movement, even when its reported value did not change:
+                // that is what pulls the row back after the drive's watcher nudged it (sensei saw "存入时数值
+                // 溢出，取出时数值减少"), and with the DriveWatcher patch in place it is a no-op that costs
+                // nothing, because a row that already reads the target posts nothing.
+                if (after != infiniteReport && was != infiniteReport) {
                     continue;
                 }
-                // An infinite row gets re-asserted on EVERY movement, even though its reported value did not
-                // change. Reason: the drive's own watcher posts the physical amount it just moved, on top of
-                // the infinite claim -- storing onto an infinite row makes it Long.MAX + n (wraps, so the
-                // terminal shows garbage) and taking out makes it Long.MAX - n (the number shrinks), which is
-                // exactly what sensei saw on 2026-10-05 ("存入时数值溢出，取出时数值减少"). Re-asserting costs
-                // nothing when the row is already right: the set path reads the row first and posts only the
-                // missing difference, so an untouched row produces no traffic at all.
-                changes.add(new ChannelAnnouncer.Change(entry.getKey(), after - was, after, infinite));
+                targets.put(entry.getKey(), after);
             }
-            if (!changes.isEmpty()) {
-                ChannelAnnouncer.onReportChanged(container, channel, cellStack, changes);
+            if (!targets.isEmpty()) {
+                ChannelAnnouncer.onReportChanged(container, channel, cellStack, targets);
             }
             return;
         }
@@ -565,6 +565,51 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     private void markGlobalChange() {
         pendingGlobal = true;
         pendingBefore.clear();
+    }
+
+    /**
+     * The value this channel publishes for an infinite row ({@link CellChannel#reportedInfinite()}).
+     *
+     * <p>Per channel on purpose: AE2's aggregate list SUMS what the cells report, so a value that two infinite
+     * cells both claim has to survive being added twice -- that is why essentia publishes
+     * {@link #SAFE_INFINITE} while the item channel keeps {@link #INFINITE} (sensei's decision, 2026-10-04).
+     */
+    public long reportedInfinite() {
+        return cellChannel.reportedInfinite();
+    }
+
+    /**
+     * Whether the inventory behind a drive slot (our cell, possibly nested in AE2's wrappers) reports this key as
+     * infinite right now.
+     *
+     * <p>Used by {@code MixinDriveWatcher}: the drive posts the amount it physically moved, which is meaningless
+     * for a row the cell reports as infinite -- adding it wraps the row negative, taking it away shrinks the
+     * number (sensei: "存入时数值溢出，取出时数值减少", 2026-10-05). Skipping that post at the source means the row
+     * never moves in the first place.
+     *
+     * <p>Unwrapping is bounded and defensive: this runs inside AE2's drive path, so an unexpected shape must
+     * simply answer "no" instead of throwing.
+     */
+    public static boolean reportsInfinite(appeng.api.storage.IMEInventory<?> inventory, IAEStack<?> key) {
+        if (inventory == null || key == null) {
+            return false;
+        }
+        Object current = inventory;
+        for (int depth = 0; depth < 8; depth++) {
+            if (!(current instanceof appeng.me.storage.MEInventoryHandler)) {
+                break;
+            }
+            Object next = ((appeng.me.storage.MEInventoryHandler<?>) current).getInternal();
+            if (next == null || next == current) {
+                break;
+            }
+            current = next;
+        }
+        if (!(current instanceof ChannelCellCore)) {
+            return false;
+        }
+        ChannelCellCore<?> core = (ChannelCellCore<?>) current;
+        return core.reportFor(key) == core.reportedInfinite();
     }
 
     /**

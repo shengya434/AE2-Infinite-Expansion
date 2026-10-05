@@ -6,7 +6,8 @@
   "compatibilityLevel": "JAVA_8",
   "mixins": [
     "MixinTileDrive",
-    "MixinNetworkMonitor"
+    "MixinNetworkMonitor",
+    "MixinDriveWatcher"
   ],
   "injectors": {
     "defaultRequire": 1
