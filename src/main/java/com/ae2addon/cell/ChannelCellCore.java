@@ -665,6 +665,13 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
                 if (mutate) {
                     stocks().ca.merge(key, amount, BigInteger::add);
                     data.ul.add(key);
+                    // Save right here, not "whenever something else saves": this branch is the whole point of
+                    // 存入无限, and without the save the new infinite row is announced only on the NEXT save
+                    // (AE2 calls persist() on its own schedule). sensei's MeatballCraft run showed exactly that
+                    // gap on 2026-10-05 -- the announcement landed minutes after the store, by which time the
+                    // network's row had grown and the "0 -> infinite" difference overflowed it away. Saving
+                    // here makes the change immediate and persistent, like the finite path below.
+                    saveChanges();
                 }
                 return true;
             }
