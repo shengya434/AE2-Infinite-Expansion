@@ -11,7 +11,8 @@
   ],
   "client": [
     "MixinReadableNumberConverter",
-    "MixinAEBaseMEGui"
+    "MixinAEBaseMEGui",
+    "MixinGuiFluidTerminal"
   ],
   "injectors": {
     "defaultRequire": 1
