@@ -500,14 +500,11 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             return; // a GUI view: nothing to announce (and onCellChanged would ignore it anyway)
         }
         if (!global && !before.isEmpty()) {
-            long infinite = cellChannel.reportedInfinite();
+            long infiniteReport = cellChannel.reportedInfinite();
             List<ChannelAnnouncer.Change> changes = new ArrayList<>(before.size());
             for (Map.Entry<IAEStack<?>, Long> entry : before.entrySet()) {
                 long after = reportFor(entry.getKey());
                 long was = entry.getValue();
-                if (after == was) {
-                    continue;
-                }
                 // Two shapes, because the network's aggregate list ADDS what it is handed:
                 //   * a finite move is a real difference (after - before);
                 //   * an infinite row must be SET, not added. Posting "0 -> Long.MAX_VALUE" onto a row that
@@ -516,8 +513,19 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
                 //     announce went out with 变化=9223372036854775807 and the item only turned infinite when a
                 //     later grid rebuild re-read the cells). The announcer posts "target minus what the row
                 //     reads now" for these, which lands exactly on the value and cannot overflow.
-                boolean crossesInfinite = after == infinite || was == infinite;
-                changes.add(new ChannelAnnouncer.Change(entry.getKey(), after - was, after, crossesInfinite));
+                boolean infinite = after == infiniteReport || was == infiniteReport;
+                if (after == was && !infinite) {
+                    // Nothing moved and it is not an infinite row: nothing to say.
+                    continue;
+                }
+                // An infinite row gets re-asserted on EVERY movement, even though its reported value did not
+                // change. Reason: the drive's own watcher posts the physical amount it just moved, on top of
+                // the infinite claim -- storing onto an infinite row makes it Long.MAX + n (wraps, so the
+                // terminal shows garbage) and taking out makes it Long.MAX - n (the number shrinks), which is
+                // exactly what sensei saw on 2026-10-05 ("存入时数值溢出，取出时数值减少"). Re-asserting costs
+                // nothing when the row is already right: the set path reads the row first and posts only the
+                // missing difference, so an untouched row produces no traffic at all.
+                changes.add(new ChannelAnnouncer.Change(entry.getKey(), after - was, after, infinite));
             }
             if (!changes.isEmpty()) {
                 ChannelAnnouncer.onReportChanged(container, channel, cellStack, changes);
