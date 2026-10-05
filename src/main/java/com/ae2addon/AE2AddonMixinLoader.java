@@ -1,4 +1,4 @@
-package com.ae2addon.mixin;
+package com.ae2addon;
 
 import java.util.Collections;
 import java.util.List;
@@ -21,7 +21,7 @@ import zone.rong.mixinbooter.MixinLoader;
  *     single run there);</li>
  * <li>the temporary "who posts this change" diagnostic (2026-10-05) produced not one line in that pack while the
  *     same build printed them on the test instance;</li>
- * <li>and {@code MixinDriveWatcher} could not stop the {@code ±n} posts, which is why the infinite row kept
+ * <li>and {@code MixinDriveWatcher} could not stop the {@code +-n} posts, which is why the infinite row kept
  *     "flashing" in the pack after it had been fixed on the test instance.</li>
  * </ul>
  *
@@ -29,6 +29,14 @@ import zone.rong.mixinbooter.MixinLoader;
  * documented route for a normal (non-coremod) mod to register its own config, and it is honoured by both 10.7 and
  * 11.x. "Late" is right for us: every target ({@code TileDrive}, {@code DriveWatcher}, {@code NetworkMonitor}) is
  * an AE2 class loaded well after the coremod phase.
+ *
+ * <p><b>This class must NOT live in the mixin package.</b> First attempt put it in {@code com.ae2addon.mixin} and
+ * the game crashed on startup: Mixin treats every package owned by a config as its own, and refuses to let
+ * anything load a normal class from there --
+ * <pre>IllegalClassLoadError: com.ae2addon.mixin.AE2AddonMixinLoader is in a defined mixin package
+ * com.ae2addon.mixin.* owned by ae2addon.mixins.json and cannot be referenced directly</pre>
+ * (MixinBooter 10.7 happens not to check it, so the pack ran; 11.17 enforces it, so the test instance crashed.)
+ * Keeping the loader one package up is the fix, and the reason it sits in {@code com.ae2addon} here.
  */
 @MixinLoader
 public class AE2AddonMixinLoader implements ILateMixinLoader {
