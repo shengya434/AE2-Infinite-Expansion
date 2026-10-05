@@ -173,20 +173,20 @@ public final class ChannelAnnouncer {
     }
 
     /**
-     * The rows one of our cells reports as INFINITE have to be (re)stated on the network now.
+     * Tells the network how much OUR contribution to some rows just moved.
      *
-     * <p>Called for every change that involves an infinite row -- including a plain store or take-out of a key
-     * that is already infinite, where the reported value did not change: the drive's watcher would otherwise add
-     * its moved amount on top of the infinite claim ({@code Long.MAX + n} wraps, {@code Long.MAX - n} shrinks the
-     * number), and since 2026-10-05 the drive patch also skips that post for exactly these keys. Restating costs
-     * nothing when the row is already right: the row is read first and only the missing difference is posted.
+     * <p>Called only for changes that involve an infinite row (a key turning infinite, or leaving the infinite
+     * set); purely finite movement is announced by AE2's own DriveWatcher and must not be posted twice. The
+     * amounts are differences of our own report ({@code after - before}), which is the one shape that is safe
+     * for a list that SUMS -- and since 2026-10-05 {@code INFINITE} is {@code Long.MAX_VALUE / 4}, so several
+     * cells claiming the same key still add up instead of wrapping negative.
      *
-     * @param targets key -> the value the row has to read afterwards
-     * @param stack   the cell stack, so the binding can be learned even if the drive patch never ran
+     * @param deltas key -> how much our reported amount for it changed (accumulated while the post waits)
+     * @param stack  the cell stack, so the binding can be learned even if the drive patch never ran
      */
     public static synchronized void onReportChanged(ISaveProvider provider, IStorageChannel<?> channel,
-            ItemStack stack, Map<IAEStack<?>, Long> targets) {
-        if (provider == null || channel == null || targets == null || targets.isEmpty()) {
+            ItemStack stack, Map<IAEStack<?>, Long> deltas) {
+        if (provider == null || channel == null || deltas == null || deltas.isEmpty()) {
             return;
         }
         Map<IAEStack<?>, Long> perPair = pendingFor(provider, channel);
@@ -194,8 +194,21 @@ public final class ChannelAnnouncer {
             return;
         }
         learnBinding(provider, channel, stack);
-        perPair.putAll(targets);
-        markForFlush(provider, channel);
+        for (Map.Entry<IAEStack<?>, Long> entry : deltas.entrySet()) {
+            if (entry.getKey() == null || entry.getValue() == null || entry.getValue() == 0L) {
+                continue;
+            }
+            Long already = perPair.get(entry.getKey());
+            long merged = (already == null ? 0L : already) + entry.getValue();
+            if (merged == 0L) {
+                perPair.remove(entry.getKey());
+            } else {
+                perPair.put(entry.getKey(), merged);
+            }
+        }
+        if (!perPair.isEmpty()) {
+            markForFlush(provider, channel);
+        }
     }
 
     /**
@@ -411,45 +424,29 @@ public final class ChannelAnnouncer {
     }
 
     /**
-     * Restates the infinite rows one pair owes, right now.
+     * Posts the accumulated per-key differences for one pair.
      *
-     * <p>Each target is posted as "the value the row has to read, minus what it reads now", so the row lands
-     * exactly on the intended value ({@code Long.MAX_VALUE} for the item channel) without ever overflowing, and
-     * a row that is already correct produces no traffic at all.
+     * <p>Each entry is "our contribution to this key moved by this much", which is the one shape AE2's summing
+     * inventory can absorb. No network lookup is needed any more: with a sum-safe {@code INFINITE}
+     * ({@code Long.MAX_VALUE / 4}) the arithmetic cannot wrap, and a difference is exactly what the aggregate
+     * expects -- the previous "read the row and set it to our value" shape existed only to dodge the overflow,
+     * and it had the side effect of erasing whatever other cells contributed to the same key.
      */
-    @SuppressWarnings({"unchecked", "rawtypes"})
     private static void postPendingKeys(IStorageGrid storage, ISaveProvider provider, IStorageChannel<?> channel,
             IActionSource source) {
-        Map<IAEStack<?>, Long> targets = PENDING.containsKey(provider) ? PENDING.get(provider).get(channel) : null;
-        if (targets == null || targets.isEmpty()) {
+        Map<IAEStack<?>, Long> perPair = PENDING.containsKey(provider) ? PENDING.get(provider).get(channel) : null;
+        if (perPair == null || perPair.isEmpty()) {
             return;
         }
-        appeng.api.storage.data.IItemList known = null;
-        try {
-            appeng.api.storage.IMEMonitor monitor = storage.getInventory((IStorageChannel) channel);
-            if (monitor != null) {
-                known = monitor.getStorageList();
+        List<IAEStack<?>> out = new ArrayList<>(perPair.size());
+        for (Map.Entry<IAEStack<?>, Long> e : perPair.entrySet()) {
+            if (e.getValue() == 0L) {
+                continue;
             }
-        } catch (RuntimeException | LinkageError ignored) {
-            known = null; // no monitor yet (grid still building): then the row counts as empty
-        }
-        List<IAEStack<?>> out = new ArrayList<>();
-        List<String> notes = new ArrayList<>();
-        for (Map.Entry<IAEStack<?>, Long> e : targets.entrySet()) {
-            long theirs = 0L;
-            if (known != null) {
-                IAEStack<?> there = known.findPrecise(e.getKey());
-                theirs = there == null ? 0L : there.getStackSize();
-            }
-            long diff = e.getValue() - theirs;
-            notes.add(describe(e.getKey()) + " 网络当前=" + theirs + " 我方报=" + e.getValue() + " 发差值=" + diff);
-            if (diff != 0L) {
-                out.add(sized(e.getKey(), diff));
-            }
+            out.add(sized(e.getKey(), e.getValue()));
         }
         if (out.isEmpty()) {
-            // The network already reads what we report: nothing to say, and the pending work is done.
-            targets.clear();
+            perPair.clear();
             return;
         }
         try {
@@ -460,14 +457,14 @@ public final class ChannelAnnouncer {
             return;
         }
         Map<IAEStack<?>, Long> was = announcedFor(provider, channel);
-        for (Map.Entry<IAEStack<?>, Long> e : targets.entrySet()) {
-            was.put(e.getKey(), e.getValue());
+        for (Map.Entry<IAEStack<?>, Long> e : perPair.entrySet()) {
+            Long before = was.get(e.getKey());
+            long total = (before == null ? 0L : before) + e.getValue();
+            was.put(e.getKey(), total);
+            logKeyPost(channel, describe(e.getKey()) + " 变化=" + e.getValue() + " 我方累计=" + total);
         }
-        targets.clear();
+        perPair.clear();
         clearAttempts(provider, channel);
-        for (String note : notes) {
-            logKeyPost(channel, note);
-        }
     }
 
     /** Channels whose single-key posts have been logged this launch, and how many. */

@@ -64,22 +64,37 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     public static final int FORMAT_VERSION = 3;
     public static final long DEFAULT_THRESHOLD = 65536L;
 
-    /** Amount reported for an "infinite" item (1.20 exposes this as config infiniteItemAmount). */
-    public static volatile long INFINITE = Long.MAX_VALUE;
+    /**
+     * Amount reported for an "infinite" item (1.20 exposes this as config infiniteItemAmount).
+     *
+     * <p><b>Why {@code Long.MAX_VALUE / 4} and not {@code Long.MAX_VALUE}</b> (sensei, 2026-10-05, matching how
+     * the 1.20.1/1.21.1 fork does it): AE2's network inventory is a list that SUMS whatever the cells report, and
+     * our value is a real number in that sum. At {@code Long.MAX_VALUE} the very first thing another cell adds to
+     * the same key -- a physical movement the drive posts, a second unlimited cell, anything -- wrapped the row
+     * NEGATIVE, and a negative row simply is not there. That produced a whole family of "the item vanished",
+     * "the number moved", "a ghost row is left behind" reports (see the 2026-10-05 chain in the diary).
+     *
+     * <p>{@code Long.MAX_VALUE / 4} keeps four such claims inside the {@code long} range (4 x it is exactly
+     * {@code Long.MAX_VALUE}), so a few cells and any number of {@code +-n} movements stay far from the edge.
+     * The "this is infinite" reading is not lost: the client renders any size at or above {@link #INFINITE_SIGHT}
+     * as an infinity symbol (see {@code MixinReadableNumberConverter}), which is the other half of the fork's
+     * approach -- a sum-safe value plus a display that says what it means.
+     */
+    public static volatile long INFINITE = Long.MAX_VALUE / 4;
 
     /**
-     * A sum-safe "infinite" size, for channels whose published rows go through an aggregation that SUMS.
+     * A size at or above which a row is treated as "infinite" for display and for guarding the drive's posts.
      *
-     * <p>AE2's {@code NetworkMonitor} sums whatever cells report into one list. Publishing
-     * {@code Long.MAX_VALUE} there meant the second aggregation of the same key wrapped to a negative number --
-     * and a negative entry does not exist as far as any terminal is concerned. Because a mode-3 row set covers
-     * EVERY key of a channel (all 37 Thaumcraft aspects, for instance), that poisoned the whole channel:
-     * sensei lost even the contents of a normal Thaumic Energistics essentia cell standing in the same network
-     * (2026-10-04). {@code Integer.MAX_VALUE} is AE2's own convention for infinite storage, and summing it a few
-     * thousand times still stays positive.
-     *
-     * <p>Channels opt in through {@link CellChannel#reportedInfinite()}; the default stays {@link #INFINITE}, so
-     * only the channels that need it change behaviour (sensei: "fix the essentia one only").
+     * <p>Deliberately half of {@link #INFINITE}: a row owned by an infinite claim may sit a few units below the
+     * exact value (the drive posts the physical amount it moved right on top of it), and no legitimate finite
+     * count in this game comes anywhere near 1.15e18.
+     */
+    public static final long INFINITE_SIGHT = INFINITE / 2;
+
+    /**
+     * Historic alias for the sum-safe value, kept because the essentia channel's self-test and older comments
+     * refer to it. All channels now publish {@link #INFINITE}; this is the same idea at an unnecessarily small
+     * scale ({@code Integer.MAX_VALUE}), from the 2026-10-04 experiment that proved the aggregate sums.
      */
     public static final long SAFE_INFINITE = Integer.MAX_VALUE;
 
@@ -501,34 +516,30 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         }
         if (!global && !before.isEmpty()) {
             long infiniteReport = cellChannel.reportedInfinite();
-            Map<IAEStack<?>, Long> targets = new LinkedHashMap<>();
+            Map<IAEStack<?>, Long> deltas = new LinkedHashMap<>();
             for (Map.Entry<IAEStack<?>, Long> entry : before.entrySet()) {
                 long after = reportFor(entry.getKey());
                 long was = entry.getValue();
-                // ONLY infinite rows are announced, and they are announced as a value to SET (never as a
-                // difference to add):
-                //   * a finite move needs nothing from us -- the drive wraps our inventory in a DriveWatcher and
-                //     that class posts the physical amount itself (javap, AE2-UEL v0.56.7). Posting it again here
-                //     would double count it (store 64 -> the terminal reads 128);
-                //   * an infinite row cannot be added either: the aggregate list SUMS, the cell's own rule is
-                //     set-max, and "0 -> Long.MAX_VALUE" onto a row that already holds anything wraps NEGATIVE,
-                //     which makes the row disappear -- that is why 「存入无限」 took minutes to show up in sensei's
-                //     MeatballCraft pack (2026-10-05: the announcement went out with 变化=9223372036854775807 and
-                //     the item only turned infinite when a later grid rebuild re-read the cells).
-                // The announcer then posts "target minus what the row reads now", which lands exactly on the
-                // value and cannot overflow.
-                //
-                // An infinite row is restated on EVERY movement, even when its reported value did not change:
-                // that is what pulls the row back after the drive's watcher nudged it (sensei saw "存入时数值
-                // 溢出，取出时数值减少"), and with the DriveWatcher patch in place it is a no-op that costs
-                // nothing, because a row that already reads the target posts nothing.
+                if (after == was) {
+                    continue; // this key's reported amount did not move
+                }
+                // ONLY changes that involve an infinite row are ours to announce:
+                //   * a purely finite move is already accounted for -- the drive wraps our inventory in a
+                //     DriveWatcher and that class posts the physical amount itself (javap, AE2-UEL v0.56.7), so
+                //     posting it again here would double count it (store 64 -> the terminal reads 128);
+                //   * a key turning infinite (promotion, 存入无限, a rule) or leaving the infinite set
+                //     (cancel-infinite, mode switch) is something no one else knows about.
+                // The amount posted is the CHANGE OF OUR OWN CONTRIBUTION (after - before), which is safe to add
+                // now that INFINITE is sum-safe: two cells claiming the same key add up instead of wrapping, and
+                // cancelling infinite takes back exactly what this cell claimed.
                 if (after != infiniteReport && was != infiniteReport) {
                     continue;
                 }
-                targets.put(entry.getKey(), after);
+                Long already = deltas.get(entry.getKey());
+                deltas.put(entry.getKey(), (already == null ? 0L : already) + (after - was));
             }
-            if (!targets.isEmpty()) {
-                ChannelAnnouncer.onReportChanged(container, channel, cellStack, targets);
+            if (!deltas.isEmpty()) {
+                ChannelAnnouncer.onReportChanged(container, channel, cellStack, deltas);
             }
             return;
         }

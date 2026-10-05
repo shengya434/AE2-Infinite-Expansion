@@ -47,20 +47,15 @@ public final class EssentiaCellChannel implements CellChannel<IAEEssentiaStack> 
     }
 
     /**
-     * Essentia publishes a sum-safe value for its infinite rows ({@link ChannelCellCore#SAFE_INFINITE}).
+     * Essentia used to publish its own smaller "infinite" value ({@code Integer.MAX_VALUE}) because a
+     * {@code Long.MAX_VALUE} row wrapped negative in the aggregating list, and mode 3 covers every aspect at once
+     * (sensei's 2026-10-04 three-way experiment).
      *
-     * <p>Why only essentia (sensei's call, 2026-10-04): the Thaumic Energistics terminal is where the overflow
-     * actually bit. AE2's {@code NetworkMonitor} sums what cells report, so a {@code Long.MAX_VALUE} row wraps
-     * negative the second time the same key is aggregated -- and since mode 3 covers EVERY aspect at once, the
-     * whole essentia channel went negative, taking a normal Thaumic Energistics cell in the same network down
-     * with it (sensei's three-way experiment). Every other channel is left exactly as it was; if another
-     * terminal shows the same symptom, opting it in is a one-line override here.
+     * <p>That override is gone: since 2026-10-05 every channel publishes {@link ChannelCellCore#INFINITE}
+     * ({@code Long.MAX_VALUE / 4}), which is sum-safe for several claimants and still renders as an infinity
+     * symbol on the client. Keeping one value everywhere means one behaviour to reason about, and it is what
+     * sensei asked for ("撤掉源质的特例，统一走 Long.MAX/4 + ∞ 显示").
      */
-    @Override
-    public long reportedInfinite() {
-        return ChannelCellCore.SAFE_INFINITE;
-    }
-
     @Override
     public String id() {
         return "essentia";

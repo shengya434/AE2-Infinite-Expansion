@@ -240,9 +240,10 @@ public class CommandCellSelfTest extends CommandBase {
         long b3committed = b2.storedAmount(stick).longValue();
         boolean b3s2clear = b2.rawData().stocks(CellChannelRegistry.ITEM).s2.isEmpty();
         long b3take = size(b2.extractItems(stack(Items.STICK, Long.MAX_VALUE), Actionable.MODULATE, NO_SOURCE));
-        check(sender, "B3", "累计到 1000 → 升级：ul 命中、s2 清空、承诺额度 1000，此后取 Long.MAX 返回 Long.MAX",
-                b3inf && b3s2clear && b3committed == 1000L && b3take == Long.MAX_VALUE,
-                "true/true/1000/" + Long.MAX_VALUE,
+        // The cap is the published infinite value (INFINITE, not Long.MAX_VALUE -- see the X group).
+        check(sender, "B3", "累计到 1000 → 升级：ul 命中、s2 清空、承诺额度 1000，此后取 Long.MAX 返回无限值",
+                b3inf && b3s2clear && b3committed == 1000L && b3take == ChannelCellCore.INFINITE,
+                "true/true/1000/" + ChannelCellCore.INFINITE,
                 b3inf + "/" + b3s2clear + "/" + b3committed + "/" + b3take);
 
         // ---- B4: mode 2 + wm 2 (store = infinite) ----
@@ -1928,12 +1929,14 @@ public class CommandCellSelfTest extends CommandBase {
     /**
      * X group: the value published for an "infinite" row must survive the NETWORK's aggregation.
      *
-     * <p>AE2's {@code NetworkMonitor} SUMS what cells report into one list. Publishing {@code Long.MAX_VALUE}
-     * there meant the second aggregation of the same key wrapped negative -- and since mode 3 covers every key
-     * of a channel (all 37 aspects, for instance), the whole channel went negative and the terminal lost even a
-     * normal cell's contents standing in the same network. That was sensei's three-way experiment of
-     * 2026-10-04 ("universal cell: nothing / universal + a real essentia cell: nothing / real cell alone: fine").
-     * These assertions pin the arithmetic instead of the symptom.
+     * <p>AE2's {@code NetworkMonitor} SUMS what cells report into one list, so the published value is a real
+     * number in that sum. {@code Long.MAX_VALUE} wrapped negative the second time a key was aggregated -- and
+     * since mode 3 covers every key of a channel (all 37 aspects, for instance), the whole channel went negative
+     * and the terminal lost even a normal cell's contents standing in the same network (sensei's three-way
+     * experiment of 2026-10-04). Since 2026-10-05 every channel publishes {@code Long.MAX_VALUE / 4} instead
+     * (sensei's call, matching the 1.20.1 fork: a sum-safe value plus a client-side infinity symbol for the
+     * display), which keeps several claimants inside the {@code long} range. These assertions pin the arithmetic
+     * and read the constants instead of literals.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void runReportedInfiniteGroup(ICommandSender sender) {
@@ -1942,33 +1945,37 @@ public class CommandCellSelfTest extends CommandBase {
         wipe(items);
         items.setMode(3);
 
-        // X1: the ESSENTIA published value must survive repeated aggregation (Long.MAX + Long.MAX is negative)
+        // X1: the published value must survive aggregation by as many claims as it is designed for
         long essentiaReported = CellChannelRegistry.byId("essentia").reportedInfinite();
         IItemList<IAEItemStack> list = AEApi.instance().storage()
                 .getStorageChannel(IItemStorageChannel.class).createList();
         IAEItemStack probe = stack(Items.STICK, 1L);
-        for (int i = 0; i < 20; i++) {
+        int claimants = 4; // Long.MAX/4 is chosen so that this many cells can claim one key without wrapping
+        for (int i = 0; i < claimants; i++) {
             IAEItemStack row = probe.copy();
             row.setStackSize(essentiaReported);
             list.add(row);
         }
         IAEItemStack aggregated = list.findPrecise(probe);
         long summed = aggregated == null ? -1L : aggregated.getStackSize();
-        check(sender, "X1", "★ 源质的上报值按网络方式累加 20 次仍为正（Long.MAX 会翻负 ⇒ 整条通道消失）",
-                summed > 0L, "> 0", String.valueOf(summed));
+        check(sender, "X1", "★ " + claimants + " 只元件同时声明无限，按网络方式累加后仍为正（值=无限值×" + claimants + "）",
+                summed > 0L && summed == ChannelCellCore.INFINITE * claimants,
+                String.valueOf(ChannelCellCore.INFINITE * claimants), String.valueOf(summed));
 
-        // X2: only essentia opts in -- every other channel keeps the historical Long.MAX (sensei's decision)
+        // X2: every channel publishes the SAME value now (the per-channel opt-in was retired on 2026-10-05)
         long itemReported = CellChannelRegistry.byId(CellChannelRegistry.ITEM).reportedInfinite();
-        check(sender, "X2", "★ 只有源质改用安全值 Integer.MAX_VALUE，其它通道仍是原来的 Long.MAX",
-                essentiaReported == Integer.MAX_VALUE && itemReported == Long.MAX_VALUE,
-                Integer.MAX_VALUE + "/" + Long.MAX_VALUE, essentiaReported + "/" + itemReported);
+        check(sender, "X2", "★ 各通道统一上报同一个无限值（= INFINITE，且低于 Long.MAX 留出加法余量）",
+                essentiaReported == itemReported && itemReported == ChannelCellCore.INFINITE
+                        && itemReported < Long.MAX_VALUE,
+                ChannelCellCore.INFINITE + "/" + ChannelCellCore.INFINITE,
+                essentiaReported + "/" + itemReported);
 
-        // X3: and the listing really uses each channel's own value
+        // X3: and the listing really uses that value
         long essentiaRow = firstListedRowSize(cell, "essentia");
         long itemRow = firstListedRowSize(cell, CellChannelRegistry.ITEM);
-        check(sender, "X3", "★ mode3 列出的行确实用了各自通道的上报值（源质=安全值、物品=Long.MAX）",
-                essentiaRow == ChannelCellCore.SAFE_INFINITE && itemRow == Long.MAX_VALUE,
-                ChannelCellCore.SAFE_INFINITE + "/" + Long.MAX_VALUE, essentiaRow + "/" + itemRow);
+        check(sender, "X3", "★ mode3 列出的行用的就是这个无限值（源质与物品都一样）",
+                essentiaRow == itemReported && itemRow == itemReported,
+                itemReported + "/" + itemReported, essentiaRow + "/" + itemRow);
     }
 
     /**
