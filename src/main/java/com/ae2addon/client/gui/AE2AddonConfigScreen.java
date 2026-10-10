@@ -6,6 +6,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.network.chat.Component;
 import net.minecraftforge.common.ForgeConfigSpec;
 
@@ -39,19 +40,28 @@ public class AE2AddonConfigScreen extends Screen {
     /** 列表起始 y（搜索栏在它上面） */
     private static final int TOP = 56;
 
-    // ── 分区名（显示顺序 = 声明顺序）──
-    private static final String SEC_CPU = "合成 / 批量（CPU）";
-    private static final String SEC_QIANJI = "千机 / 结算与日志限流";
-    private static final String SEC_FEEDER = "接口 · 供料与供电";
-    private static final String SEC_EXTRACT = "接口 · 主动抽取与归网";
-    private static final String SEC_DISPLAY = "显示数值（只影响界面显示）";
-    private static final String SEC_MISC = "终端 / 调试";
+    // ── 分区名（显示顺序 = 声明顺序；文案在语言文件里）──
+    private static final String SEC_CPU = "gui.ae2addon.config.sec.cpu";
+    private static final String SEC_QIANJI = "gui.ae2addon.config.sec.qianji";
+    private static final String SEC_FEEDER = "gui.ae2addon.config.sec.feeder";
+    private static final String SEC_EXTRACT = "gui.ae2addon.config.sec.extract";
+    private static final String SEC_DISPLAY = "gui.ae2addon.config.sec.display";
+    private static final String SEC_MISC = "gui.ae2addon.config.sec.misc";
 
     private final Screen parent;
     private final List<Entry> entries = new ArrayList<>();
     /** 过滤后的「行」列表（分区标题 + 配置项），滚动与点击都按它算 */
     private final List<Row> rows = new ArrayList<>();
     private String lastQuery = "\u0000"; // 与首次 rebuild 一定不等，保证首帧就会构建
+
+    /** 配置项的真实 config 键（行右侧名字用它，**不再**去切显示名的破折号）。 */
+    private record Entry(String sectionKey, String section, String key, String label,
+                         ForgeConfigSpec.ConfigValue value, long min, long max) {
+    }
+
+    /** 渲染行：分区标题（entry == null）或配置项。 */
+    private record Row(String section, Entry entry) {
+    }
 
     private int scrollOffset;
     /** 正在编辑的行下标（rows 的下标；-1 = 未编辑） */
@@ -61,107 +71,136 @@ public class AE2AddonConfigScreen extends Screen {
     private Component toast = null;
     private long toastUntil = 0;
 
-    /** 配置项：分区 + 显示名 + SpecValue + 允许范围（数字项 clamp 用；布尔/文本忽略）。 */
-    private record Entry(String section, String label, ForgeConfigSpec.ConfigValue value,
-                         long min, long max) {
-    }
-
-    /** 渲染行：分区标题（entry == null）或配置项。 */
-    private record Row(String section, Entry entry) {
-    }
-
     public AE2AddonConfigScreen(Screen parent) {
-        super(Component.literal("AE2Addon 配置"));
+        super(Component.translatable("gui.ae2addon.config.title"));
         this.parent = parent;
         // ⚠ 全部可配项在这里**手工**登记（范围与 defineInRange 一致）。
         //   新增配置项必须补到这里，否则游戏内界面看不到 —— 见类注释。
-        add(SEC_CPU, "maxConcurrent — 最大并行批次（0=无限制）",
+        add(SEC_CPU, "maxConcurrent",
+                "gui.ae2addon.config.item.maxConcurrent",
                 AE2AddonConfig.MAX_CONCURRENT, 0, Integer.MAX_VALUE);
-        add(SEC_CPU, "idleLaneTarget — 空闲虚拟 lane 池",
+        add(SEC_CPU, "idleLaneTarget",
+                "gui.ae2addon.config.item.idleLaneTarget",
                 AE2AddonConfig.IDLE_LANE_TARGET, 1, 4096);
-        add(SEC_CPU, "maxBatchCount — 单订单最大批数",
+        add(SEC_CPU, "maxBatchCount",
+                "gui.ae2addon.config.item.maxBatchCount",
                 AE2AddonConfig.MAX_BATCH_COUNT, 2, 10_000_000);
-        add(SEC_CPU, "batchMaxMultiplier — 批量翻倍上限",
-                AE2AddonConfig.BATCH_MAX_MULTIPLIER, 1, Long.MAX_VALUE);
-        add(SEC_CPU, "sharedExpCap — 经验共享继承上限（0=关）",
+        add(SEC_CPU, "sharedExpCap",
+                "gui.ae2addon.config.item.sharedExpCap",
                 AE2AddonConfig.SHARED_EXP_CAP, 0, Long.MAX_VALUE);
-        add(SEC_CPU, "dispatchBudgetPerTick — 全网格每tick成功push预算（0=不限）",
+        add(SEC_CPU, "dispatchBudgetPerTick",
+                "gui.ae2addon.config.item.dispatchBudgetPerTick",
                 AE2AddonConfig.DISPATCH_BUDGET_PER_TICK, 0, 10_000_000);
-        add(SEC_CPU, "cpuTimeSliceTargetMs — CPU 时间片目标ms（大=巨型订单更快，代价 MSPT 尖峰）",
+        add(SEC_CPU, "cpuTimeSliceTargetMs",
+                "gui.ae2addon.config.item.cpuTimeSliceTargetMs",
                 AE2AddonConfig.CPU_TIME_SLICE_TARGET_MS, 1, 500);
-        add(SEC_CPU, "cheapOrderAmount — 小额免估算阈值",
+        add(SEC_CPU, "cheapOrderAmount",
+                "gui.ae2addon.config.item.cheapOrderAmount",
                 AE2AddonConfig.CHEAP_ORDER_AMOUNT, 1, Long.MAX_VALUE);
 
-        add(SEC_QIANJI, "qianjiSettleCap — 千机虚拟结算每tick份数上限（集成型CPU在线时）",
+        add(SEC_QIANJI, "qianjiSettleCap",
+                "gui.ae2addon.config.item.qianjiSettleCap",
                 AE2AddonConfig.QIANJI_SETTLE_CAP, 1, 10_000_000);
-        add(SEC_QIANJI, "qianjiSettleCallsPerTick — 千机虚拟结算每tick结算次数上限（0=不限）",
+        add(SEC_QIANJI, "qianjiSettleCallsPerTick",
+                "gui.ae2addon.config.item.qianjiSettleCallsPerTick",
                 AE2AddonConfig.QIANJI_SETTLE_CALLS_PER_TICK, 0, 100_000);
-        add(SEC_QIANJI, "hotLogBudgetPerTick — 热路径每tick日志行数预算（0=不限）",
+        add(SEC_QIANJI, "hotLogBudgetPerTick",
+                "gui.ae2addon.config.item.hotLogBudgetPerTick",
                 AE2AddonConfig.HOT_LOG_BUDGET_PER_TICK, 0, 1_000_000);
 
-        add(SEC_FEEDER, "feederFeedBudget — 接口喂出尝试/tick（发送速度主旋钮）",
+        add(SEC_FEEDER, "feederFeedBudget",
+                "gui.ae2addon.config.item.feederFeedBudget",
                 AE2AddonConfig.FEEDER_FEED_BUDGET, 1, 1_000_000);
-        add(SEC_FEEDER, "feederFeedStack — 接口单次喂出堆叠（默认64，大堆叠机器可调大）",
+        add(SEC_FEEDER, "feederFeedStack",
+                "gui.ae2addon.config.item.feederFeedStack",
                 AE2AddonConfig.FEEDER_FEED_STACK, 1, Integer.MAX_VALUE);
-        add(SEC_FEEDER, "feederRestockInterval — 接口补货间隔 tick（1=最快）",
+        add(SEC_FEEDER, "feederRestockInterval",
+                "gui.ae2addon.config.item.feederRestockInterval",
                 AE2AddonConfig.FEEDER_RESTOCK_INTERVAL, 1, 200);
-        add(SEC_FEEDER, "feederStockTarget — 接口补货目标/种（0=关）",
+        add(SEC_FEEDER, "feederStockTarget",
+                "gui.ae2addon.config.item.feederStockTarget",
                 AE2AddonConfig.FEEDER_STOCK_TARGET, 0, Long.MAX_VALUE);
-        add(SEC_FEEDER, "feederPowerFeCap — 感应卡单轮供电FE上限（0/1/2速度卡=此值/×16/无上限）",
+        add(SEC_FEEDER, "feederPowerFeCap",
+                "gui.ae2addon.config.item.feederPowerFeCap",
                 AE2AddonConfig.FEEDER_POWER_FE_CAP, 1, Integer.MAX_VALUE);
-        add(SEC_FEEDER, "feederPowerPassesPerTick — 感应卡每tick供电轮数（1=单轮，N=N×单轮上限）",
+        add(SEC_FEEDER, "feederPowerPassesPerTick",
+                "gui.ae2addon.config.item.feederPowerPassesPerTick",
                 AE2AddonConfig.FEEDER_POWER_PASSES, 1, 1024);
 
-        add(SEC_EXTRACT, "feederExtractInterval — 主动抽取间隔 tick（1=每tick最快）",
+        add(SEC_EXTRACT, "feederExtractInterval",
+                "gui.ae2addon.config.item.feederExtractInterval",
                 AE2AddonConfig.FEEDER_EXTRACT_INTERVAL, 1, 10000);
-        add(SEC_EXTRACT, "feederExtractStack — 主动抽取每次物品数（默认64，调大提速）",
+        add(SEC_EXTRACT, "feederExtractStack",
+                "gui.ae2addon.config.item.feederExtractStack",
                 AE2AddonConfig.FEEDER_EXTRACT_STACK, 1, Integer.MAX_VALUE);
-        add(SEC_EXTRACT, "feederExtractFluid — 主动抽取每次流体 mB（默认1000）",
+        add(SEC_EXTRACT, "feederExtractFluid",
+                "gui.ae2addon.config.item.feederExtractFluid",
                 AE2AddonConfig.FEEDER_EXTRACT_FLUID, 1, Integer.MAX_VALUE);
-        add(SEC_EXTRACT, "feederExtractGas — 主动抽取每次气体量（默认1000）",
+        add(SEC_EXTRACT, "feederExtractGas",
+                "gui.ae2addon.config.item.feederExtractGas",
                 AE2AddonConfig.FEEDER_EXTRACT_GAS, 1, Integer.MAX_VALUE);
-        add(SEC_EXTRACT, "feederExtractLoopLimit — 主动抽取循环累计上限（0=关）",
+        add(SEC_EXTRACT, "feederExtractLoopLimit",
+                "gui.ae2addon.config.item.feederExtractLoopLimit",
                 AE2AddonConfig.FEEDER_EXTRACT_LOOP_CAP, 0, 2_000_000_000);
-        add(SEC_EXTRACT, "feederNetworkPushKeys — 待入网缓存每tick补送多少个物品种（不限单次数量）",
+        add(SEC_EXTRACT, "feederNetworkPushKeys",
+                "gui.ae2addon.config.item.feederNetworkPushKeys",
                 AE2AddonConfig.FEEDER_NETWORK_PUSH_KEYS, 1, 4096);
 
-        add(SEC_DISPLAY, "cellDisplayBytes — 无限元件显示字节",
+        add(SEC_DISPLAY, "cellDisplayBytes",
+                "gui.ae2addon.config.item.cellDisplayBytes",
                 AE2AddonConfig.CELL_DISPLAY_BYTES, 1, Long.MAX_VALUE);
-        add(SEC_DISPLAY, "infiniteItemAmount — 无限物品真实数量",
+        add(SEC_DISPLAY, "infiniteItemAmount",
+                "gui.ae2addon.config.item.infiniteItemAmount",
                 AE2AddonConfig.INFINITE_ITEM_AMOUNT, 1, Long.MAX_VALUE);
-        add(SEC_DISPLAY, "cpuDisplayBytes — CPU 显示字节",
+        add(SEC_DISPLAY, "cpuDisplayBytes",
+                "gui.ae2addon.config.item.cpuDisplayBytes",
                 AE2AddonConfig.CPU_DISPLAY_BYTES, 1, Long.MAX_VALUE);
-        add(SEC_DISPLAY, "cpuDisplayThreads — CPU 显示线程（0=拉满）",
+        add(SEC_DISPLAY, "cpuDisplayThreads",
+                "gui.ae2addon.config.item.cpuDisplayThreads",
                 AE2AddonConfig.CPU_DISPLAY_THREADS, 0, 100_000_000);
-        add(SEC_DISPLAY, "cpuStorageText — 存储显示文本覆盖（留空=数值/∞）",
+        add(SEC_DISPLAY, "cpuStorageText",
+                "gui.ae2addon.config.item.cpuStorageText",
                 AE2AddonConfig.CPU_STORAGE_TEXT, 0, 0);
-        add(SEC_DISPLAY, "cpuThreadsText — 并行显示文本覆盖（留空=数值/∞）",
+        add(SEC_DISPLAY, "cpuThreadsText",
+                "gui.ae2addon.config.item.cpuThreadsText",
                 AE2AddonConfig.CPU_THREADS_TEXT, 0, 0);
 
-        add(SEC_MISC, "wirelessTerminalCapacity — 无线千机终端能源上限AE（0=跟AE2一样）",
+        add(SEC_MISC, "wirelessTerminalCapacity",
+                "gui.ae2addon.config.item.wirelessTerminalCapacity",
                 AE2AddonConfig.WIRELESS_TERMINAL_CAPACITY, 0, Long.MAX_VALUE);
-        add(SEC_MISC, "debugLogs — 调试日志",
+        add(SEC_MISC, "debugLogs",
+                "gui.ae2addon.config.item.debugLogs",
                 AE2AddonConfig.DEBUG_LOGS, 0, 0);
     }
 
-    private void add(String section, String label, ForgeConfigSpec.ConfigValue value,
+    /**
+     * 登记一个配置项。
+     * <p>
+     * 2026-10-10（i18n）：显示名不再写死在代码里 —— 传进来的 {@code label} 是**翻译键**
+     * （{@code gui.ae2addon.config.item.<configKey>}），{@code key} 是配置真名
+     * （与 {@code defineInRange} 的第一参数一致，行右侧显示与搜索都用它）。
+     * 分区同理：{@code sectionKey} 是 {@code gui.ae2addon.config.sec.*}。
+     */
+    private void add(String sectionKey, String key, String labelKey, ForgeConfigSpec.ConfigValue value,
                      long min, long max) {
-        entries.add(new Entry(section, label, value, min, max));
+        entries.add(new Entry(sectionKey, I18n.get(sectionKey), key, I18n.get(labelKey),
+                value, min, max));
     }
 
     @Override
     protected void init() {
         // 顶部搜索栏（2026-09-27 sensei：配置项太多，要能搜）
         searchBox = new EditBox(font, 10, 32, width - 20, 16,
-                Component.literal("搜索配置项"));
-        searchBox.setHint(Component.literal("搜索：输入名称/说明/分区，边打边筛；Esc 清空"));
+                Component.translatable("gui.ae2addon.config.search_placeholder"));
+        searchBox.setHint(Component.translatable("gui.ae2addon.config.search_hint"));
         searchBox.setMaxLength(64);
         addRenderableWidget(searchBox);
         setInitialFocus(searchBox); // 一进来就能直接打字搜
 
-        addRenderableWidget(Button.builder(Component.literal("保存并应用"), b -> saveAndClose())
+        addRenderableWidget(Button.builder(Component.translatable("gui.ae2addon.config.save"),
+                b -> saveAndClose())
                 .bounds(width / 2 - 120, height - 30, 110, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("取消"), b -> {
+        addRenderableWidget(Button.builder(Component.translatable("gui.ae2addon.config.cancel"), b -> {
             minecraft.setScreen(parent);
         }).bounds(width / 2 + 10, height - 30, 110, 20).build());
     }
@@ -174,7 +213,8 @@ public class AE2AddonConfigScreen extends Screen {
         for (Entry e : entries) {
             boolean hit = q.isEmpty()
                     || e.label().toLowerCase().contains(q)
-                    || e.section().toLowerCase().contains(q);
+                    || e.section().toLowerCase().contains(q)
+                    || e.key().toLowerCase().contains(q);
             if (!hit) {
                 continue;
             }
@@ -202,10 +242,9 @@ public class AE2AddonConfigScreen extends Screen {
         }
 
         renderBackground(g);
-        g.drawCenteredString(font, Component.literal("AE2Addon 配置（改完保存，热加载生效）"),
+        g.drawCenteredString(font, Component.translatable("gui.ae2addon.config.header"),
                 width / 2, 8, 0xFFFFFF);
-        g.drawString(font, Component.literal("点击数字项编辑，点击布尔项切换；滚轮滚动"
-                        + "　·　共 " + rows.size() + " 行"),
+        g.drawString(font, Component.translatable("gui.ae2addon.config.help", rows.size()),
                 10, 20, 0x888888);
 
         int bottom = listBottom();
@@ -348,7 +387,8 @@ public class AE2AddonConfigScreen extends Screen {
         if (current instanceof Boolean b) {
             // 布尔：直接切换
             entry.value().set(!b);
-            showToast("已切换 " + nameOf(entry) + " = " + (!b ? "ON" : "OFF"));
+            showToast(I18n.get("gui.ae2addon.config.toast.toggled",
+                    nameOf(entry), !b ? "ON" : "OFF"));
             return;
         }
         editingRow = rowIndex;
@@ -360,7 +400,8 @@ public class AE2AddonConfigScreen extends Screen {
         if (searchBox != null) {
             searchBox.setFocused(false); // 让键位进值输入框
         }
-        editBox = new EditBox(font, 16, y + 2, width - 160, 16, Component.literal("值"));
+        editBox = new EditBox(font, 16, y + 2, width - 160, 16,
+                Component.translatable("gui.ae2addon.config.value_placeholder"));
         editBox.setValue(String.valueOf(current));
         editBox.setMaxLength(64);
         // ⚠ 必须用 addRenderableWidget：addWidget 只进 children/narratables，
@@ -385,7 +426,8 @@ public class AE2AddonConfigScreen extends Screen {
             }
             if (current instanceof String) {
                 entry.value().set(text); // 文本项：直接存字符串（2026-09-03）
-                showToast("已修改 " + nameOf(entry) + " = " + (text.isEmpty() ? "（空）" : text));
+                showToast(I18n.get("gui.ae2addon.config.toast.modified", nameOf(entry),
+                        text.isEmpty() ? I18n.get("gui.ae2addon.config.toast.empty") : text));
                 cancelEdit();
                 return;
             }
@@ -399,19 +441,22 @@ public class AE2AddonConfigScreen extends Screen {
             }
             entry.value().set(parsed);
             if (clamped != raw) {
-                showToast(nameOf(entry) + " 超限，已回退到 "
-                        + (entry.max() < raw ? "上限 " + entry.max() : "下限 " + entry.min()));
+                showToast(I18n.get(entry.max() < raw
+                                ? "gui.ae2addon.config.toast.clamped_max"
+                                : "gui.ae2addon.config.toast.clamped_min",
+                        nameOf(entry), entry.max() < raw ? entry.max() : entry.min()));
             } else {
-                showToast("已修改 " + nameOf(entry) + " = " + clamped);
+                showToast(I18n.get("gui.ae2addon.config.toast.modified", nameOf(entry), clamped));
             }
         } catch (NumberFormatException e) {
-            showToast("无效输入：" + e.getMessage());
+            showToast(I18n.get("gui.ae2addon.config.toast.invalid", e.getMessage()));
         }
         cancelEdit();
     }
 
+    /** 行右侧显示的配置名 = 配置真名（原先靠切显示名的破折号，换语言就会错）。 */
     private static String nameOf(Entry entry) {
-        return entry.label().split(" — ")[0];
+        return entry.key();
     }
 
     private void cancelEdit() {
@@ -438,9 +483,9 @@ public class AE2AddonConfigScreen extends Screen {
             // 写盘 + 热加载
             AE2AddonConfig.SPEC.save();
             AE2AddonConfig.apply();
-            showToast("已保存并热加载");
+            showToast(I18n.get("gui.ae2addon.config.toast.saved"));
         } catch (RuntimeException e) {
-            showToast("保存失败: " + e.getMessage());
+            showToast(I18n.get("gui.ae2addon.config.toast.save_failed", e.getMessage()));
         }
         minecraft.setScreen(parent);
     }
