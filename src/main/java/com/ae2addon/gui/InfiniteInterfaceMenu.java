@@ -44,6 +44,18 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
     /** 客户端：蓄水池状态行（FeederStatusPacket 同步）。 */
     public volatile List<String> statusLines = List.of();
 
+    /**
+     * 客户端：每接口参数的真实数值（FeederStatusPacket 同步）。
+     * <p>
+     * 界面拿它填输入框 —— **不再**去反解析 {@code gui.ae2addon.feeder.params} 的本地化文案
+     * （那样一改文案/换语言就静默填不上）。文案只负责显示。
+     */
+    public volatile long syncedStockTarget = -1;
+
+    public volatile int syncedRestockInterval = -1;
+
+    public volatile int syncedFeedBudget = -1;
+
     /** 服务端：上次发送的状态指纹（变化检测，防高频刷包）。 */
     private String lastStatusKey = "";
 
@@ -379,7 +391,10 @@ public class InfiniteInterfaceMenu extends AbstractContainerMenu {
             if (opener instanceof ServerPlayer serverPlayer) {
                 AE2Addon.NETWORK.send(
                         net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> serverPlayer),
-                        new FeederStatusPacket(lines));
+                        new FeederStatusPacket(lines,
+                                feeder.stockTargetValue(),
+                                feeder.restockIntervalValue(),
+                                feeder.feedBudgetValue()));
             }
         }
         super.broadcastChanges();

@@ -52,20 +52,25 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
     /** 蓄水池状态行（服务端 FeederStatusPacket → 主线程）。 */
     private boolean paramBoxesFilled = false;
 
-    public static void handleStatus(List<String> lines) {
+    /**
+     * 服务端状态包入口：状态行只用于显示，输入框用**包里带的真实数值**填。
+     * <p>
+     * 2026-10-10（i18n 收尾）：原先这里是把 {@code gui.ae2addon.feeder.params} 的
+     * **本地化文案**反解析（{@code contains("目标=")} / {@code startsWith("间隔=")}）来回填输入框 ——
+     * 改文案或换语言就静默填不上，而且不会报错。现在数值随包一起来，文本只用于显示。
+     */
+    public static void handleStatus(List<String> lines, long stockTarget, int restockInterval,
+            int feedBudget) {
         var mc = Minecraft.getInstance();
         if (mc.screen instanceof InfiniteInterfaceScreen screen) {
             screen.menu.statusLines = lines;
-            // 首次收到时用每接口参数填充输入框（§7参数: 目标=.. 间隔=.. 预算=..）
+            screen.menu.syncedStockTarget = stockTarget;
+            screen.menu.syncedRestockInterval = restockInterval;
+            screen.menu.syncedFeedBudget = feedBudget;
+            // 首次收到时用包里的真实数值填充输入框（此后不覆盖玩家正在编辑的值）
             if (!screen.paramBoxesFilled) {
-                for (String line : lines) {
-                    String text = deserialize(line).getString();
-                    if (text.contains("目标=") || text.contains("Target=")) {
-                        screen.fillParamBoxes(text);
-                        screen.paramBoxesFilled = true;
-                        break;
-                    }
-                }
+                screen.fillParamBoxes(stockTarget, restockInterval, feedBudget);
+                screen.paramBoxesFilled = true;
             }
         }
     }
@@ -97,23 +102,12 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         }
     }
 
-    /** 解析「参数: 目标=1000000 间隔=4 预算=4096」填充三个输入框。 */
-    private void fillParamBoxes(String line) {
-        String plain = line.replaceAll("§.", "");
-        String[] parts = plain.split(" ");
-        for (String part : parts) {
-            if (part.startsWith("目标=")) {
-                if (boxes[0] != null) boxes[0].setValue(part.substring(3));
-            } else if (part.startsWith("Target=")) {
-                if (boxes[0] != null) boxes[0].setValue(part.substring(6));
-            } else if (part.startsWith("间隔=")) {
-                if (boxes[1] != null) boxes[1].setValue(part.substring(3));
-            } else if (part.startsWith("Interval=")) {
-                if (boxes[1] != null) boxes[1].setValue(part.substring(9));
-            } else if (part.startsWith("预算=")) {
-                if (boxes[2] != null) boxes[2].setValue(part.substring(3));
-            } else if (part.startsWith("Budget=")) {
-                if (boxes[2] != null) boxes[2].setValue(part.substring(7));
+    /** 用服务端同步来的真实数值填三个输入框（不再解析本地化文案）。 */
+    private void fillParamBoxes(long stockTarget, int restockInterval, int feedBudget) {
+        long[] values = {stockTarget, restockInterval, feedBudget};
+        for (int i = 0; i < boxes.length; i++) {
+            if (boxes[i] != null) {
+                boxes[i].setValue(String.valueOf(values[i]));
             }
         }
     }
@@ -140,15 +134,24 @@ public class InfiniteInterfaceScreen extends AbstractContainerScreen<InfiniteInt
         // 「退回网络」按钮（右侧竖排空档，2026-09-06 sensei）：
         // 把蓄水池全部材料（未喂出的推送料 + 待入网缓存）插回网络存储，
         // 适用样板发错/任务放弃后材料收不回的情况
-        addRenderableWidget(Button.builder(Component.literal("⇦退网"),
+        addRenderableWidget(Button.builder(
+                Component.translatable("gui.ae2addon.iface.btn.disconnect"),
                 b -> AE2Addon.NETWORK.sendToServer(
                         new com.ae2addon.network.FeederReturnPacket(
                                 getMenu().getFeeder().feederPos()))
         ).bounds(leftPos + 164, topPos + 82, 36, 12).build());
+        // 三个参数输入框的初值 = 服务端同步来的真实数值（没同步到时先用本地宿主值兜底，
+        // 状态包一到就会用 synced* 覆盖）。**注意别改成去解析界面文案。**
         long[] values = {
-                getMenu().getFeeder().stockTargetValue(),
-                getMenu().getFeeder().restockIntervalValue(),
-                getMenu().getFeeder().feedBudgetValue()
+                getMenu().syncedStockTarget >= 0
+                        ? getMenu().syncedStockTarget
+                        : getMenu().getFeeder().stockTargetValue(),
+                getMenu().syncedRestockInterval >= 0
+                        ? getMenu().syncedRestockInterval
+                        : getMenu().getFeeder().restockIntervalValue(),
+                getMenu().syncedFeedBudget >= 0
+                        ? getMenu().syncedFeedBudget
+                        : getMenu().getFeeder().feedBudgetValue()
         };
         for (int i = 0; i < 3; i++) {
             final int idx = i;
