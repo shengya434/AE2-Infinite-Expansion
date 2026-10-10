@@ -1170,7 +1170,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
                     }
                     else if (!rejectTab && mouseButton == 0 && isShiftKeyDown())
                         CellNetwork.send(withChannel(new Mode2ConfigPacket(5, entry.item.copy()), entry));
-                    else if (!rejectTab && mouseButton == 1 && !isShiftKeyDown())
+                    else if (false /* 临时对照实验：按 sensei 2026-10-10 要求暂时禁用右键单物品阈值，用来判断数量编辑是不是真的坏了 */ && !rejectTab && mouseButton == 1 && !isShiftKeyDown())
                         editingKeyNbt = entry.keyNbt;
                 showItemThreshold(entry.item.copy(), entry.threshold);
                     return;
