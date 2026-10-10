@@ -331,7 +331,13 @@ public final class Mode2ConfigPacket implements IMessage {
         if (!ALL_CHANNELS.equals(channelId) && CellChannelRegistry.byId(channelId) == null) {
             channelId = CellChannelRegistry.ITEM;
         }
-        if (msg.channelId != null && !msg.channelId.isEmpty()) {
+        // The SELECTION only changes through the channel arrows (type 24). Every other packet carries the
+        // channel of the KEY it acts on -- a row of the 全部 view names its own channel -- and must not drag
+        // the panel along with it. Before 2026-10-10 this put() ran for ANY packet with a channelId, so as soon
+        // as the row's channel became the one being sent (the threshold/quantity fix), editing a value in the
+        // 全部 view switched the view to that row's channel (sensei: "如果在全部通道内进行数值修改时不会自动
+        // 切到对应存储类型的通道应该会更方便点").
+        if (msg.type == 24 && msg.channelId != null && !msg.channelId.isEmpty()) {
             PANEL_CHANNEL.put(player.getUniqueID(), channelId);
         }
         ChannelCellCore<?> core = CellInventories.open(target.stack, null, channelId);
