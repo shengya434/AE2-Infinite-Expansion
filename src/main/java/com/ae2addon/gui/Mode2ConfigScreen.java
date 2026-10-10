@@ -634,10 +634,10 @@ public final class Mode2ConfigScreen extends GuiContainer {
         }
         String result = I18n.format("gui.ae2addon.mode2.batch_result", filtered.size(),
                 Mode2ConfigPacket.MAX_SEARCH_ROWS);
-        // The row-click limitation is permanent for every channel but the item one (see mouseClicked), so it is
-        // stated where the count is, instead of leaving a dead click unexplained.
-        return searchChannel().equals(com.ae2addon.cell.CellChannelRegistry.ITEM) ? result
-                : result + I18n.format("gui.ae2addon.mode2.batch_row_item_only");
+        // Row clicks work on every channel now: the key travels as its own channel's NBT (2026-10-10), which is
+        // exactly what used to be missing -- a non-item row click made the server rebuild the key from an item
+        // stack and threw ClassCastException inside the channel's normalise().
+        return result;
     }
 
     /** The channel a registry search really runs on: the "all" view scans the item channel (see the server). */
@@ -1092,8 +1092,10 @@ public final class Mode2ConfigScreen extends GuiContainer {
                         // (FluidCellChannel's normalise bridge does `checkcast IAEFluidStack`). The bulk button
                         // works on every channel because type 27 carries the channel id and the server names
                         // the keys itself.
-                        if (mouseButton == 0 && !isShiftKeyDown() && !isCtrlKeyDown()
-                                && com.ae2addon.cell.CellChannelRegistry.ITEM.equals(entry.channelId)) {
+                        // Any channel: the packet now carries the key's own channel NBT (2026-10-10), so the
+                        // server never has to guess the key from the row's icon. This used to be gated on the
+                        // item channel because type 5 dropped that information on the wire.
+                        if (mouseButton == 0 && !isShiftKeyDown() && !isCtrlKeyDown()) {
                             batchArmed = 0;
                             applyTabVisibility();
                             updateBatchButtons();

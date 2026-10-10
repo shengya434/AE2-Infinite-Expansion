@@ -152,11 +152,24 @@ public final class Mode2ConfigPacket implements IMessage {
         buf.writeByte(type);
         switch (type) {
             case 0: case 2: case 14: buf.writeLong(value); buf.writeString(text); break;
-            case 1: case 5: case 7: case 11: case 13: case 22: buf.writeItemStack(item); break;
+            // Key actions also carry the key itself -- as its OWN channel's NBT plus the channel id. The client
+            // has always filled both in (Mode2ConfigScreen#withChannel), but they were never written to the wire,
+            // so the server had to rebuild the key from the item stack. On a fluid / gas / essentia / mana / flux
+            // row that stack is not the channel's key type at all and the channel's normalise() threw
+            // ClassCastException (found 2026-10-10 while adding the batch tab; javap showed every one of these
+            // cases wrote itemStack alone). Empty string + empty compound mean "no key": the bare blacklist-row
+            // request (type 11) and item-channel actions use that and fall back to the stack.
+            case 1: case 5: case 7: case 11: case 13: case 22:
+                buf.writeItemStack(item);
+                writeKeyIdentity(buf);
+                break;
             case 6: buf.writeVarInt(workMode); break;
             case 8: case 10: buf.writeBoolean(flag); break;
-            case 16: buf.writeItemStack(item); buf.writeLong(value); break;
-            case 17: buf.writeItemStack(item); buf.writeString(quantityText); buf.writeBoolean(lock); break;
+            case 16: buf.writeItemStack(item); buf.writeLong(value); writeKeyIdentity(buf); break;
+            case 17:
+                buf.writeItemStack(item); buf.writeString(quantityText); buf.writeBoolean(lock);
+                writeKeyIdentity(buf);
+                break;
             case 18: buf.writeCompoundTag(state); break;
             case 9:
                 buf.writeBoolean(isOre); buf.writeVarInt(rules.size());
@@ -207,11 +220,17 @@ public final class Mode2ConfigPacket implements IMessage {
         try {
             switch (type) {
                 case 0: case 2: case 14: value = buf.readLong(); text = buf.readString(256); break;
-                case 1: case 5: case 7: case 11: case 13: case 22: item = buf.readItemStack(); break;
+                case 1: case 5: case 7: case 11: case 13: case 22:
+                    item = buf.readItemStack();
+                    readKeyIdentity(buf);
+                    break;
                 case 6: workMode = buf.readVarInt(); break;
                 case 8: case 10: flag = buf.readBoolean(); break;
-                case 16: item = buf.readItemStack(); value = buf.readLong(); break;
-                case 17: item = buf.readItemStack(); quantityText = buf.readString(128); lock = buf.readBoolean(); break;
+                case 16: item = buf.readItemStack(); value = buf.readLong(); readKeyIdentity(buf); break;
+                case 17:
+                    item = buf.readItemStack(); quantityText = buf.readString(128); lock = buf.readBoolean();
+                    readKeyIdentity(buf);
+                    break;
                 case 18: state = buf.readCompoundTag(); break;
                 case 9:
                     isOre = buf.readBoolean(); int count = buf.readVarInt();
@@ -406,6 +425,18 @@ public final class Mode2ConfigPacket implements IMessage {
      * essentia / mana / FE key; an older client (or the item channel) sends an item stack instead, and that path
      * stays supported. Whatever comes back is normalised to size 1.
      */
+    /** Writes the key's channel plus its own-channel NBT, for the packets that act on one key (2026-10-10). */
+    private void writeKeyIdentity(PacketBuffer buf) {
+        buf.writeString(channelId == null ? "" : channelId);
+        buf.writeCompoundTag(keyNbt == null ? new NBTTagCompound() : keyNbt);
+    }
+
+    /** Reads what {@link #writeKeyIdentity} wrote. {@code readCompoundTag} throws, like the type-18 read. */
+    private void readKeyIdentity(PacketBuffer buf) throws IOException {
+        channelId = buf.readString(64);
+        keyNbt = buf.readCompoundTag();
+    }
+
     private static IAEStack<?> resolveKey(Mode2ConfigPacket msg, String channelId) {
         if (msg.keyNbt != null) {
             CellChannel<?> channel = CellChannelRegistry.byId(channelId);
@@ -417,7 +448,11 @@ public final class Mode2ConfigPacket implements IMessage {
                 }
             }
         }
-        return key(msg.item);
+        // Only the item channel may fall back to the item stack. For any other channel that stack is not a key
+        // of that channel at all, and the channel's normalise() throws ClassCastException -- which is exactly
+        // what happened when a fluid row was clicked before 2026-10-10. Returning null makes the handler drop
+        // the action instead of blowing up mid-packet.
+        return CellChannelRegistry.ITEM.equals(channelId) ? key(msg.item) : null;
     }
 
     /** Which channel each player has selected in the config panel (one short string per online player). */
