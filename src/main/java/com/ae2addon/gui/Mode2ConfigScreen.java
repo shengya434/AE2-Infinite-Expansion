@@ -339,8 +339,9 @@ public final class Mode2ConfigScreen extends GuiContainer {
             Mode2ConfigPacket packet = new Mode2ConfigPacket(27);
             packet.text = searchInput.getText();
             packet.flag = add;
-            // The channel the search ran on. Empty/"all" both mean "whatever the panel shows" -- the server maps
-            // the All view onto the item channel, which is where a registry scan makes sense.
+            // The channel the search ran on. Empty or "all" mean "whatever the panel shows"; on "all" the server
+            // searches EVERY channel the cell speaks and each row names its own channel (sensei, 2026-10-10: it
+            // used to scan the item channel only, which is why a fluid could not be marked infinite as a fluid).
             packet.channelId = panelChannel;
             CellNetwork.send(packet);
         } else if (button.id == 20) {
@@ -638,12 +639,6 @@ public final class Mode2ConfigScreen extends GuiContainer {
         // exactly what used to be missing -- a non-item row click made the server rebuild the key from an item
         // stack and threw ClassCastException inside the channel's normalise().
         return result;
-    }
-
-    /** The channel a registry search really runs on: the "all" view scans the item channel (see the server). */
-    private String searchChannel() {
-        return Mode2ConfigPacket.ALL_CHANNELS.equals(panelChannel)
-                ? com.ae2addon.cell.CellChannelRegistry.ITEM : panelChannel;
     }
 
     private static boolean matchesRule(ItemStack stack, String rule) {

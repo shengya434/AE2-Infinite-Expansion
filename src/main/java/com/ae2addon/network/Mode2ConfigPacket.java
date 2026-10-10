@@ -340,24 +340,33 @@ public final class Mode2ConfigPacket implements IMessage {
 
         if (msg.type == 25) {
             // Batch-infinite tab, search half (2026-10-10): nothing on the cell changes, so this answers with
-            // the search result and returns instead of falling through to the state broadcast below.
-            String searchChannel = searchChannelId(channelId);
-            ChannelCellCore<?> searchCore = CellInventories.open(target.stack, null, searchChannel);
-            if (searchCore == null) return;
-            sendSearchResult(player, searchCore, searchChannel, msg.text);
+            // the search result and returns instead of falling through to the state broadcast below. In the "all"
+            // view this now scans every channel the cell speaks (see searchChannelIds).
+            sendSearchResult(player, target.stack, channelId, msg.text);
             return;
         } else if (msg.type == 27) {
-            // Batch-infinite tab, action half: one bulk whitelist change, one save, one chat line -- and then
-            // the refreshed result. It deliberately falls through to sendState, so the panel rows agree with
-            // what just happened without the player having to refresh by hand.
-            String searchChannel = searchChannelId(channelId);
-            ChannelCellCore<?> searchCore = CellInventories.open(target.stack, null, searchChannel);
-            if (searchCore == null) return;
-            int changed = searchCore.applyInfiniteToSearch(msg.text, MAX_SEARCH_ROWS, msg.flag);
+            // Batch-infinite tab, action half: one bulk whitelist change per channel, one save each, one chat
+            // line -- and then the refreshed result. It deliberately falls through to sendState, so the panel rows
+            // agree with what just happened without the player having to refresh by hand.
+            int changed = 0;
+            StringBuilder perChannel = new StringBuilder();
+            for (String id : searchChannelIds(channelId)) {
+                ChannelCellCore<?> searchCore = CellInventories.open(target.stack, null, id);
+                if (searchCore == null) {
+                    continue;
+                }
+                int n = searchCore.applyInfiniteToSearch(msg.text, MAX_SEARCH_ROWS, msg.flag);
+                changed += n;
+                if (n > 0) {
+                    if (perChannel.length() > 0) perChannel.append('、');
+                    perChannel.append(id).append(' ').append(n);
+                }
+            }
             player.sendMessage(new TextComponentString("§b[ae2addon] "
-                    + (msg.flag ? "批量标无限：" : "批量取消无限：") + changed + " 条已改动（查询「"
-                    + msg.text + "」，单次上限 " + MAX_SEARCH_ROWS + " 条）"));
-            sendSearchResult(player, searchCore, searchChannel, msg.text);
+                    + (msg.flag ? "批量标无限：" : "批量取消无限：") + changed + " 条已改动（按通道 "
+                    + (perChannel.length() == 0 ? "无" : perChannel.toString()) + "；查询「"
+                    + msg.text + "」，每通道单次上限 " + MAX_SEARCH_ROWS + " 条）"));
+            sendSearchResult(player, target.stack, channelId, msg.text);
         } else if (msg.type == 0) inv.setThreshold(msg.value);
         else if (msg.type == 1 || msg.type == 13) {
             if (actionKey == null) return; core.addWhitelistOf(actionKey);
@@ -536,9 +545,27 @@ public final class Mode2ConfigPacket implements IMessage {
         }
     }
 
-    /** Which channel a registry search runs on: "all channels" is a VIEW, while a scan has to name one. */
-    private static String searchChannelId(String channelId) {
-        return ALL_CHANNELS.equals(channelId) ? CellChannelRegistry.ITEM : channelId;
+    /**
+     * The channels a registry search runs on.
+     *
+     * <p><b>Why this is a list</b> (sensei, 2026-10-10): in the "all" view the batch page searched the ITEM
+     * channel only, so nothing but items ever came back -- a fluid could not be marked infinite as a fluid (the
+     * thing that turned up instead was AE2's item-side placeholder for it), and every row claimed to be the item
+     * channel, because that is the id the rows were built with. "All" is a view over every channel the cell
+     * speaks, so the search walks them all, and each row keeps its own channel id and its own channel's key NBT.
+     */
+    private static List<String> searchChannelIds(String channelId) {
+        if (!ALL_CHANNELS.equals(channelId)) {
+            return java.util.Collections.singletonList(channelId);
+        }
+        List<String> ids = new ArrayList<>();
+        for (CellChannel<?> channel : CellChannelRegistry.all()) {
+            ids.add(channel.id());
+        }
+        if (ids.isEmpty()) {
+            ids.add(CellChannelRegistry.ITEM);
+        }
+        return ids;
     }
 
     /**
@@ -548,12 +575,40 @@ public final class Mode2ConfigPacket implements IMessage {
      * {@code ChannelCellCore#panelItem}), so the client draws, scrolls and hovers a search result with exactly
      * the code it already uses -- plus the key's own NBT, which is what an action on the row names.
      *
+     * <p>Every channel's hits go into ONE chunk set (the packet's own {@code channelId} is just the request's view;
+     * each ROW names its channel): the client tracks chunks by index, so two interleaved sets would collide.
+     *
      * <p>At least one chunk is sent even for an empty result: the client treats "chunks pending" as an
      * incomplete transfer and would otherwise sit there until its retry budget ran out.
      */
-    private static void sendSearchResult(EntityPlayerMP player, ChannelCellCore<?> core, String channelId,
-            String query) {
-        List<IAEStack<?>> keys = core.searchRegistry(query, MAX_SEARCH_ROWS);
+    private static void sendSearchResult(EntityPlayerMP player, ItemStack cell, String channelId, String query) {
+        List<PanelEntry> rows = new ArrayList<>();
+        for (String id : searchChannelIds(channelId)) {
+            if (rows.size() >= MAX_SEARCH_ROWS) {
+                break;
+            }
+            ChannelCellCore<?> core = CellInventories.open(cell, null, id);
+            if (core == null) {
+                continue;
+            }
+            rows.addAll(searchRows(core, id, query, MAX_SEARCH_ROWS - rows.size()));
+        }
+        int total = Math.max(1, (rows.size() + MAX_ITEMS_PER_CHUNK - 1) / MAX_ITEMS_PER_CHUNK);
+        for (int index = 0; index < total; index++) {
+            int from = index * MAX_ITEMS_PER_CHUNK;
+            int to = Math.min(rows.size(), from + MAX_ITEMS_PER_CHUNK);
+            Mode2ConfigPacket packet = new Mode2ConfigPacket(26);
+            packet.chunkIndex = index;
+            packet.totalChunks = total;
+            packet.channelId = channelId;
+            packet.entries = new ArrayList<>(rows.subList(from, to));
+            CellNetwork.sendTo(packet, player);
+        }
+    }
+
+    /** The rows of ONE channel's registry search, capped at {@code limit}. */
+    private static List<PanelEntry> searchRows(ChannelCellCore<?> core, String channelId, String query, int limit) {
+        List<IAEStack<?>> keys = core.searchRegistry(query, limit);
         // These three accessors COPY their collection, so they are read once for the whole batch rather than
         // once per row (200 rows x a copy of a 200-entry whitelist is pure waste).
         Set<IAEStack<?>> infinite = core.getUl();
@@ -574,17 +629,7 @@ public final class Mode2ConfigPacket implements IMessage {
                     isInfinite, isInfinite ? ChannelCellCore.INFINITE_BYTES : 0L,
                     override == null ? 0L : override, locked.contains(key), whitelisted));
         }
-        int total = Math.max(1, (rows.size() + MAX_ITEMS_PER_CHUNK - 1) / MAX_ITEMS_PER_CHUNK);
-        for (int index = 0; index < total; index++) {
-            int from = index * MAX_ITEMS_PER_CHUNK;
-            int to = Math.min(rows.size(), from + MAX_ITEMS_PER_CHUNK);
-            Mode2ConfigPacket packet = new Mode2ConfigPacket(26);
-            packet.chunkIndex = index;
-            packet.totalChunks = total;
-            packet.channelId = channelId;
-            packet.entries = new ArrayList<>(rows.subList(from, to));
-            CellNetwork.sendTo(packet, player);
-        }
+        return rows;
     }
 
     private static List<ItemStack> stackList(Set<IAEStack<?>> source) {
