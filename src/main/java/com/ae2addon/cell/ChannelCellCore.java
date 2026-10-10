@@ -1067,6 +1067,30 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         return data.wl.remove(lookupKey(key));
     }
 
+    /**
+     * 取消"手动标的无限"，**两种标记一起清**：白名单 {@code wl}（面板上的绿 W）与无限集 {@code ul}
+     * （面板手动点出来的那种，没有标识）。
+     *
+     * <p>为什么必须两个都清（sensei 2026-10-10：「批量无限页的全部取消无限，对于手动面板记无限不适用
+     * （即无绿 W 标识的无限状态）」）：批量取消以前只调 {@link #removeWhitelistQuiet}，
+     * 而面板手动标无限写的是 {@code ul} ✗ ⇒ 那批键照样无限。两者本来就是分开存的两个集合
+     * （面板标记还会把存量挪进「承诺」），所以取消时得一起清 ✓。
+     *
+     * <p>承诺量按 {@link #togglePanelInfinite} 的口径**排回有限存储** ✓：批量取消不能顺手把玩家记录的数量抹掉。
+     */
+    private boolean removeInfiniteQuiet(T key) {
+        T k = lookupKey(key);
+        boolean changed = data.wl.remove(k);
+        changed |= data.ul.remove(k);
+        if (changed) {
+            BigInteger committed = stocks().ca.remove(k);
+            if (committed != null && committed.signum() > 0) {
+                stocks().s2.merge(k, committed, BigInteger::add);
+            }
+        }
+        return changed;
+    }
+
     public boolean addWhitelist(T key) {
         boolean changed = addWhitelistQuiet(key);
         if (changed) {
@@ -1626,14 +1650,15 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
      * <p>匹配口径与 {@link #searchRegistry} 完全一致（同一个查询串、同一个上限），所以"界面上列出来的那几条"
      * 就是这里真正会去改的那一批。
      *
-     * @param add {@code true} = 全部标无限（加白名单），{@code false} = 全部取消（去白名单）
+     * @param add {@code true} = 全部标无限（加白名单），{@code false} = 全部取消（白名单与无限集一起清，
+     *            见 {@link #removeInfiniteQuiet}：只去白名单会漏掉"面板手动记的无限"）
      * @return 实际改动的条数（本来就已经是目标状态的键不计入，所以没必要落盘时也不会白写一次）
      */
     public int applyInfiniteToSearch(String query, int limit, boolean add) {
         int changed = 0;
         for (IAEStack<?> raw : searchRegistry(query, limit)) {
             T key = castKey(raw);
-            boolean modified = add ? addWhitelistQuiet(key) : removeWhitelistQuiet(key);
+            boolean modified = add ? addWhitelistQuiet(key) : removeInfiniteQuiet(key);
             if (modified) {
                 changed++;
             }
