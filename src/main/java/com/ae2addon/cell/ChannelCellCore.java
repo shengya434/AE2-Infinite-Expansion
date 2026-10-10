@@ -1704,10 +1704,30 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
      * <p>Always writes mode 2's store ({@code s2}): this is the mode 2 config screen's "元件内数量" field, and
      * the whole quantity-lock / whitelist / committed family is a mode 2 concept, so it must not be able to
      * write into mode 1's isolated room.
+     *
+     * <p><b>The value is capped at this channel's own infinite value</b> ({@link #reportedInfinite()}) and an
+     * over-cap request is <b>refused</b> (returns false), never silently clamped -- sensei's decision,
+     * 2026-10-10, option B. Two reasons:
+     * <ol>
+     * <li>AE2's network inventory is a SUMMING list. A row that reports more than the infinite value brings
+     * back exactly the wrap the 2026-10-05 change ({@code INFINITE = Long.MAX_VALUE / 4}) removed: the report
+     * path clamps a BigInteger to {@code Long.MAX_VALUE}, and {@code Long.MAX_VALUE + anything positive} is
+     * negative -- a negative row is simply not shown by the terminal.</li>
+     * <li>Until this change the box accepted {@code 2^128} (2026-10-03 removed a 63-bit clamp for good
+     * reasons), which made a locked row indistinguishable from a genuinely infinite one: the client draws
+     * any size at or above {@link #INFINITE_SIGHT} as "∞". "锁定值绝不大于无限值" keeps the two apart.</li>
+     * </ol>
+     * The ledger stays a BigInteger -- accumulation by real inserts can still run past a long, that part of
+     * the 2026-10-03 design is untouched.
+     *
+     * @return whether the amount was accepted and written.
      */
-    public void setStoredQuantity(T key, BigInteger quantity, boolean lock) {
+    public boolean setStoredQuantity(T key, BigInteger quantity, boolean lock) {
         if (key == null || quantity == null) {
-            return;
+            return false;
+        }
+        if (quantity.compareTo(BigInteger.valueOf(reportedInfinite())) > 0) {
+            return false;
         }
         T k = lookupKey(key);
         data.ul.remove(k);
@@ -1724,6 +1744,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             data.qtyLocked.remove(k);
         }
         saveChanges();
+        return true;
     }
 
     public boolean isQuantityLocked(T key) {
@@ -1944,8 +1965,9 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         setItemThreshold(castKey(key), value);
     }
 
-    public void setStoredQuantityOf(IAEStack<?> key, BigInteger quantity, boolean lock) {
-        setStoredQuantity(castKey(key), quantity, lock);
+    /** @return whether the amount was accepted; false means "above this channel's infinite value". */
+    public boolean setStoredQuantityOf(IAEStack<?> key, BigInteger quantity, boolean lock) {
+        return setStoredQuantity(castKey(key), quantity, lock);
     }
 
     public BigInteger storedAmountOf(IAEStack<?> key) {

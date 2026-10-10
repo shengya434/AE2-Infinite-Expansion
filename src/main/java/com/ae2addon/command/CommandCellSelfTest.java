@@ -1119,13 +1119,18 @@ public class CommandCellSelfTest extends CommandBase {
     }
 
     /**
-     * J group: the "元件内数量" box may hold numbers WIDER than a long.
+     * J group: the "元件内数量" box parses numbers WIDER than a long, but only stores up to the infinite value.
      *
      * <p>The cell keeps quantities as {@code BigInteger}. On 2026-10-03 sensei typed {@code 2^128} into that
      * box and the parser silently rewrote it into 9.22e18, because the parser clamped anything wider than 63
-     * bits. The clamp is gone -- the bound is now a digit count, and an over-limit input is refused with a
-     * message instead of being substituted. These assertions pin both halves: the big value survives
-     * verbatim, and the anti-DoS bound on {@code ^} still refuses absurd input.
+     * bits. That clamp is gone -- the parser's bound is now a digit count, and an over-limit input is refused
+     * with a message instead of being substituted.
+     *
+     * <p>2026-10-10 (sensei, option B): the box itself now refuses anything above this channel's infinite
+     * value ({@code Long.MAX_VALUE / 4}). Once the infinite value became {@code Long.MAX/4} (2026-10-05), a
+     * wider locked amount reported {@code Long.MAX} into AE2's summing inventory -- the exact wrap that change
+     * removed -- and the client drew it as "∞" anyway, i.e. a locked amount was indistinguishable from a real
+     * infinite claim. So J4 pins the REFUSAL, and J5 pins that the cap is what the box accepts.
      */
     private void runBigQuantityGroup(ICommandSender sender) {
         final BigInteger twoPow128 = BigInteger.ONE.shiftLeft(128);
@@ -1164,33 +1169,34 @@ public class CommandCellSelfTest extends CommandBase {
         check(sender, "J3", "防炸护栏仍在：2^99999（约 3 万位数字）被拒绝，而不是硬算",
                 j3refused, "拒绝", String.valueOf(j3refused));
 
-        // J4: a locked 2^128 record -- exact ledger, Long.MAX towards AE2, extraction capped but lossless
+        // J4: an over-cap record is REFUSED, not clamped -- sensei's option B, 2026-10-10.
+        // The box used to accept 2^128 (2026-10-03 removed the 63-bit clamp, for good reasons); since
+        // 2026-10-05 (INFINITE = Long.MAX/4) that reintroduced two problems at once: the row reported
+        // clamp(2^128) = Long.MAX into AE2's SUMMING inventory (Long.MAX + anything positive wraps negative,
+        // and a negative row is invisible), and the client drew a size that big as "∞" -- so a locked amount
+        // looked exactly like a real infinite claim. The cap is the channel's own infinite value.
         UnlimitedCellInventory j4 = newInventory("j4");
         j4.setMode(2);
         j4.setWorkMode(1);
-        j4.setStoredQuantity(key(Items.DIAMOND), twoPow128, true);
+        boolean j4accepted = j4.setStoredQuantity(key(Items.DIAMOND), twoPow128, true);
         BigInteger j4stored = j4.storedAmount(key(Items.DIAMOND));
-        long j4listed = listedSize(j4, key(Items.DIAMOND));
-        long j4take = size(j4.extractItems(stack(Items.DIAMOND, longMax), Actionable.MODULATE, NO_SOURCE));
-        BigInteger j4after = j4.storedAmount(key(Items.DIAMOND));
-        check(sender, "J4", "元件内数量 = 2^128（锁定）：账本精确、列表按 AE2 的 long 口径报 Long.MAX、取 Long.MAX 且账本不变",
-                twoPow128.equals(j4stored) && j4listed == longMax && j4take == longMax
-                        && twoPow128.equals(j4after),
-                twoPow128 + "/" + longMax + "/" + longMax + "/" + twoPow128,
-                j4stored + "/" + j4listed + "/" + j4take + "/" + j4after);
+        boolean j4locked = j4.isQuantityLocked(key(Items.DIAMOND));
+        long j4cap = j4.reportedInfinite();
+        check(sender, "J4", "★ 元件内数量 2^128 超上限（=本通道无限值 Long.MAX/4）被拒绝：未写入、未上锁",
+                !j4accepted && j4stored.signum() == 0 && !j4locked && j4cap == ChannelCellCore.INFINITE,
+                "拒绝/0/false/" + ChannelCellCore.INFINITE,
+                j4accepted + "/" + j4stored + "/" + j4locked + "/" + j4cap);
 
-        // J5: unlocked -- extracting Long.MAX leaves the exact remainder, which is what proves the ledger
-        // really runs past a long instead of saturating at it
+        // J5: the cap itself is accepted, and it really is the extraction ceiling for that key
         UnlimitedCellInventory j5 = newInventory("j5");
         j5.setMode(2);
         j5.setWorkMode(1);
-        j5.setStoredQuantity(key(Items.EMERALD), twoPow128, false);
+        boolean j5accepted = j5.setStoredQuantity(key(Items.EMERALD), BigInteger.valueOf(j4cap), false);
         long j5take = size(j5.extractItems(stack(Items.EMERALD, longMax), Actionable.MODULATE, NO_SOURCE));
         BigInteger j5left = j5.storedAmount(key(Items.EMERALD));
-        BigInteger j5expect = twoPow128.subtract(BigInteger.valueOf(longMax));
-        check(sender, "J5", "元件内数量 = 2^128（未锁定）：取走 Long.MAX 后余数精确（账本真的超过 long）",
-                j5take == longMax && j5expect.equals(j5left),
-                longMax + "/" + j5expect, j5take + "/" + j5left);
+        check(sender, "J5", "元件内数量 = 上限（无限值）可写入；取 Long.MAX 只拿到上限值，账本归 0",
+                j5accepted && j5take == j4cap && j5left.signum() == 0,
+                "接受/" + j4cap + "/0", j5accepted + "/" + j5take + "/" + j5left);
     }
 
     /**
