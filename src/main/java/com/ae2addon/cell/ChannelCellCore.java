@@ -1786,6 +1786,15 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         // Zero-count entries: a key that only carries a per-item threshold must stay listed, otherwise
         // there is no way to edit that threshold again once its count reaches zero.
         for (Map.Entry<IAEStack<?>, Long> entry : data.itemThr.entrySet()) {
+            // itemThr is a SHARED collection (every channel's per-key threshold lives in it), so a key of
+            // another channel must be skipped BEFORE the cast. Without this guard the item channel tried to
+            // normalise a ManaStack into an IAEItemStack and the whole state packet died with
+            // ClassCastException nyonio.ae2.ManaStack -> IAEItemStack -- which is exactly what happened once
+            // the mana channel's rows became clickable (sensei, 2026-10-10: "保存数量和锁定按钮弹不出来，
+            // 输入数量后确认也没有效果" -- the exception killed sendState, so the client never saw the update).
+            if (!isMine(entry.getKey())) {
+                continue;
+            }
             T k = castKey(entry.getKey());
             if (data.wl.contains(k) || data.ul.contains(k) || stocks().s2.containsKey(k)) {
                 continue;
