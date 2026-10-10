@@ -223,7 +223,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
      */
     private void applyTabVisibility() {
         for (GuiButton button : buttonList) {
-            if (button.id >= 12 && button.id <= 16) {
+            if (button.id == 14 || button.id == 15) {
+                // 保存数量 / 锁定 属于**数量编辑框**，所以跟着 `quantityEditing` 走，而不是跟着页签走 ✗。
+                // 以前它们和 12/13/16 一起被 `!batchTab` 打开 ⇒ **一进配置界面就显示** ✓
+                // （sensei 2026-10-10 实测发现的初始 UI bug）；编辑期间由 updateEditingButtons() 同步 ✓。
+                button.visible = !batchTab && !quantityEditing.isEmpty();
+            } else if (button.id >= 12 && button.id <= 16) {
                 button.visible = !batchTab;
             } else if (button.id == 17 || button.id == 18) {
                 button.visible = batchTab;
@@ -277,6 +282,17 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 + I18n.format("gui.ae2addon.mode2.reject_default");
     }
 
+    /**
+     * 左 Ctrl **或** 右 Ctrl。
+     *
+     * <p>Minecraft 自己的 isCtrlKeyDown() **只读左 Ctrl** ✗ ⇒ 按右 Ctrl 的玩家得到的是普通左键，
+     * "元件内数量"编辑框永远不弹 ✓，而右键那条（单物品阈值）照样好用 ⇒ 现象就是"改的其实是阈值"
+     * （sensei 2026-10-10 实测）。
+     */
+    private static boolean ctrlDownAny() {
+        return org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_LCONTROL)
+                || org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_RCONTROL);
+    }
     private void updateEditingButtons() {
         if (buttonList.size() > 5 && uiState == 1) {
             buttonList.get(4).visible = !editing.isEmpty();
@@ -1107,7 +1123,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
                         // Any channel: the packet now carries the key's own channel NBT (2026-10-10), so the
                         // server never has to guess the key from the row's icon. This used to be gated on the
                         // item channel because type 5 dropped that information on the wire.
-                        if (mouseButton == 0 && !isShiftKeyDown() && !isCtrlKeyDown()) {
+                        if (mouseButton == 0 && !isShiftKeyDown() && !ctrlDownAny()) {
                             batchArmed = 0;
                             applyTabVisibility();
                             updateBatchButtons();
@@ -1115,19 +1131,19 @@ public final class Mode2ConfigScreen extends GuiContainer {
                         }
                         return;
                     }
-                    if (rejectTab && mouseButton == 0 && !isShiftKeyDown() && !isCtrlKeyDown())
+                    if (rejectTab && mouseButton == 0 && !isShiftKeyDown() && !ctrlDownAny())
                         CellNetwork.send(withChannel(new Mode2ConfigPacket(7, entry.item.copy()), entry));
                     else if (rejectTab && mouseButton == 1)
                         CellNetwork.send(withChannel(new Mode2ConfigPacket(22, entry.item.copy()), entry));
                     else if (!rejectTab && mouseButton == 1 && isShiftKeyDown())
                         CellNetwork.send(withChannel(new Mode2ConfigPacket(11, entry.item.copy()), entry));
-                    else if (!rejectTab && mouseButton == 1 && isCtrlKeyDown() && entry.whitelisted
+                    else if (!rejectTab && mouseButton == 1 && ctrlDownAny() && entry.whitelisted
                             && entry.item.getItem().getRegistryName() != null) {
                         Mode2ConfigPacket remove = new Mode2ConfigPacket(2);
                         remove.text = entry.item.getItem().getRegistryName().toString();
                         CellNetwork.send(remove);
                     }
-                    else if (!rejectTab && mouseButton == 0 && isCtrlKeyDown()) {
+                    else if (!rejectTab && mouseButton == 0 && ctrlDownAny()) {
                         hideItemThreshold();
                         quantityEditing = entry.item.copy(); quantityLock = entry.quantityLocked;
                         quantityKeyNbt = entry.keyNbt;
