@@ -34,9 +34,24 @@ import net.minecraftforge.fml.common.network.simpleimpl.MessageContext;
 import net.minecraftforge.oredict.OreDictionary;
 import net.minecraftforge.fml.common.Loader;
 
-/** 24-type mode2 wire envelope. Type 13 is reserved for JEI direct add. */
+/**
+ * Mode2 wire envelope.
+ *
+ * <p>Types 0-24 are the original set (13 is reserved for JEI direct add). 25/26/27 belong to the batch-infinite
+ * tab (2026-10-10): the client asks the server to search the whole REGISTRY (25), the server answers in chunks
+ * that reuse the panel row layout (26), and the client asks for a bulk mark/unmark (27). Purely additive --
+ * no existing type changed shape or meaning.
+ */
 public final class Mode2ConfigPacket implements IMessage {
     public static final int MAX_ITEMS_PER_CHUNK = 50;
+    /**
+     * Ceiling on one registry search, and therefore on one batch apply.
+     *
+     * <p>Bounded on purpose: an unbounded answer would mean a query like {@code ""} pushing every registered
+     * key through the wire. 200 is four chunks and covers "every ingot of that mod" style work, and the
+     * client's confirmation names the count it is about to touch, so the ceiling is never invisible.
+     */
+    public static final int MAX_SEARCH_ROWS = 200;
     public int type;
     public long value;
     public int workMode;
@@ -155,7 +170,9 @@ public final class Mode2ConfigPacket implements IMessage {
             case 21:
                 buf.writeVarInt(chunkIndex); buf.writeVarInt(totalChunks); writeKeys(buf, on); writeKeys(buf, off);
                 break;
-            case 4:
+            // 26 shares 4's row layout on purpose: the client draws a registry search result with exactly the
+            // code it draws panel rows with (see PanelEntry).
+            case 4: case 26:
                 buf.writeVarInt(chunkIndex); buf.writeVarInt(totalChunks); buf.writeString(channelId);
                 buf.writeVarInt(entries.size());
                 for (PanelEntry entry : entries) {
@@ -175,6 +192,10 @@ public final class Mode2ConfigPacket implements IMessage {
                 }
                 break;
             case 24: buf.writeString(channelId); break;
+            // 25: "search the registry for this text"; 27: "mark/unmark everything that search finds". Both
+            // name their channel, because a registry scan is always per channel.
+            case 25: buf.writeString(text); buf.writeString(channelId); break;
+            case 27: buf.writeString(text); buf.writeBoolean(flag); buf.writeString(channelId); break;
             case 3: case 23: break;
             default: throw new IllegalArgumentException("Unsupported mode2 packet type " + type);
         }
@@ -205,7 +226,7 @@ public final class Mode2ConfigPacket implements IMessage {
                 case 21:
                     chunkIndex = buf.readVarInt(); totalChunks = buf.readVarInt(); checkChunk(this);
                     on = readKeys(buf); off = readKeys(buf); break;
-                case 4:
+                case 4: case 26:
                     chunkIndex = buf.readVarInt(); totalChunks = buf.readVarInt();
                     channelId = buf.readString(64);
                     int size = buf.readVarInt();
@@ -233,6 +254,8 @@ public final class Mode2ConfigPacket implements IMessage {
                     }
                     break;
                 case 24: channelId = buf.readString(64); break;
+                case 25: text = buf.readString(256); channelId = buf.readString(64); break;
+                case 27: text = buf.readString(256); flag = buf.readBoolean(); channelId = buf.readString(64); break;
                 case 3: case 23: break;
                 default: throw new IOException("Unsupported mode2 packet type " + type);
             }
@@ -296,7 +319,27 @@ public final class Mode2ConfigPacket implements IMessage {
         if (core == null) core = inv;
         IAEStack<?> actionKey = resolveKey(msg, channelId);
 
-        if (msg.type == 0) inv.setThreshold(msg.value);
+        if (msg.type == 25) {
+            // Batch-infinite tab, search half (2026-10-10): nothing on the cell changes, so this answers with
+            // the search result and returns instead of falling through to the state broadcast below.
+            String searchChannel = searchChannelId(channelId);
+            ChannelCellCore<?> searchCore = CellInventories.open(target.stack, null, searchChannel);
+            if (searchCore == null) return;
+            sendSearchResult(player, searchCore, searchChannel, msg.text);
+            return;
+        } else if (msg.type == 27) {
+            // Batch-infinite tab, action half: one bulk whitelist change, one save, one chat line -- and then
+            // the refreshed result. It deliberately falls through to sendState, so the panel rows agree with
+            // what just happened without the player having to refresh by hand.
+            String searchChannel = searchChannelId(channelId);
+            ChannelCellCore<?> searchCore = CellInventories.open(target.stack, null, searchChannel);
+            if (searchCore == null) return;
+            int changed = searchCore.applyInfiniteToSearch(msg.text, MAX_SEARCH_ROWS, msg.flag);
+            player.sendMessage(new TextComponentString("§b[ae2addon] "
+                    + (msg.flag ? "批量标无限：" : "批量取消无限：") + changed + " 条已改动（查询「"
+                    + msg.text + "」，单次上限 " + MAX_SEARCH_ROWS + " 条）"));
+            sendSearchResult(player, searchCore, searchChannel, msg.text);
+        } else if (msg.type == 0) inv.setThreshold(msg.value);
         else if (msg.type == 1 || msg.type == 13) {
             if (actionKey == null) return; core.addWhitelistOf(actionKey);
         } else if (msg.type == 2) {
@@ -455,6 +498,57 @@ public final class Mode2ConfigPacket implements IMessage {
             out.add(new PanelEntry(channelId, keyTag, core.displayNameOf(row.key),
                     row.key.asItemStackRepresentation(), row.amount, row.isInfinite,
                     row.bytes, row.itemThreshold, row.quantityLocked, core.isWhitelisted(row.key)));
+        }
+    }
+
+    /** Which channel a registry search runs on: "all channels" is a VIEW, while a scan has to name one. */
+    private static String searchChannelId(String channelId) {
+        return ALL_CHANNELS.equals(channelId) ? CellChannelRegistry.ITEM : channelId;
+    }
+
+    /**
+     * Answers one registry search (type 25) as chunks of type 26.
+     *
+     * <p>Rows carry the SAME fields a panel row carries (see {@link #appendRows} and
+     * {@code ChannelCellCore#panelItem}), so the client draws, scrolls and hovers a search result with exactly
+     * the code it already uses -- plus the key's own NBT, which is what an action on the row names.
+     *
+     * <p>At least one chunk is sent even for an empty result: the client treats "chunks pending" as an
+     * incomplete transfer and would otherwise sit there until its retry budget ran out.
+     */
+    private static void sendSearchResult(EntityPlayerMP player, ChannelCellCore<?> core, String channelId,
+            String query) {
+        List<IAEStack<?>> keys = core.searchRegistry(query, MAX_SEARCH_ROWS);
+        // These three accessors COPY their collection, so they are read once for the whole batch rather than
+        // once per row (200 rows x a copy of a 200-entry whitelist is pure waste).
+        Set<IAEStack<?>> infinite = core.getUl();
+        Set<IAEStack<?>> locked = core.quantityLockedKeys();
+        Map<IAEStack<?>, Long> thresholds = core.itemThresholds();
+        List<PanelEntry> rows = new ArrayList<>();
+        for (IAEStack<?> key : keys) {
+            NBTTagCompound keyTag = new NBTTagCompound();
+            key.writeToNBT(keyTag);
+            boolean whitelisted = core.isWhitelisted(key);
+            // The spec's definition, like the panel's: infinite means "in the whitelist or in the infinite set".
+            boolean isInfinite = whitelisted || infinite.contains(key);
+            // Same derivations the panel uses: an infinite row reports the infinite value and the infinite byte
+            // figure, a finite row its stored amount and zero bytes; threshold stays the per-key override.
+            Long override = thresholds.get(key);
+            rows.add(new PanelEntry(channelId, keyTag, core.displayNameOf(key), key.asItemStackRepresentation(),
+                    isInfinite ? BigInteger.valueOf(ChannelCellCore.INFINITE) : core.storedAmountOf(key),
+                    isInfinite, isInfinite ? ChannelCellCore.INFINITE_BYTES : 0L,
+                    override == null ? 0L : override, locked.contains(key), whitelisted));
+        }
+        int total = Math.max(1, (rows.size() + MAX_ITEMS_PER_CHUNK - 1) / MAX_ITEMS_PER_CHUNK);
+        for (int index = 0; index < total; index++) {
+            int from = index * MAX_ITEMS_PER_CHUNK;
+            int to = Math.min(rows.size(), from + MAX_ITEMS_PER_CHUNK);
+            Mode2ConfigPacket packet = new Mode2ConfigPacket(26);
+            packet.chunkIndex = index;
+            packet.totalChunks = total;
+            packet.channelId = channelId;
+            packet.entries = new ArrayList<>(rows.subList(from, to));
+            CellNetwork.sendTo(packet, player);
         }
     }
 

@@ -12,6 +12,7 @@ import java.util.function.Consumer;
 
 import com.ae2addon.AE2Addon;
 import com.ae2addon.data.CellWorldData;
+import com.ae2addon.util.PinyinIndex;
 
 import appeng.api.AEApi;
 import appeng.api.config.Actionable;
@@ -1051,8 +1052,23 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         saveChanges();
     }
 
+    /**
+     * The non-saving core of {@link #addWhitelist} / {@link #removeWhitelist}.
+     *
+     * <p>Split out 2026-10-10 for the batch tab, which changes hundreds of keys at once and must persist them
+     * ONCE (see {@link #applyInfiniteToSearch}). Behaviour is otherwise unchanged: same normalisation, same
+     * {@code data.wl} set, same "did anything change" answer.
+     */
+    private boolean addWhitelistQuiet(T key) {
+        return data.wl.add(lookupKey(key));
+    }
+
+    private boolean removeWhitelistQuiet(T key) {
+        return data.wl.remove(lookupKey(key));
+    }
+
     public boolean addWhitelist(T key) {
-        boolean changed = data.wl.add(lookupKey(key));
+        boolean changed = addWhitelistQuiet(key);
         if (changed) {
             saveChanges();
         }
@@ -1060,7 +1076,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     }
 
     public boolean removeWhitelist(T key) {
-        boolean changed = data.wl.remove(lookupKey(key));
+        boolean changed = removeWhitelistQuiet(key);
         if (changed) {
             saveChanges();
         }
@@ -1548,6 +1564,84 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
     /** How many canonical keys this channel's registry yields (for the self-test's report). */
     public int registryKeyCount() {
         return cellChannel.allKeys().size();
+    }
+
+    /**
+     * The search index's id for a key, or {@code null} when even the channel cannot name it.
+     *
+     * <p>This is the third argument of {@link PinyinIndex#matches} -- the same string the panel's own filter
+     * passes for an item ({@code minecraft:stone}). It is asked of the CHANNEL because only the channel knows
+     * how to name its keys. A bridge mod's key must never be able to take the whole search down with it, hence
+     * the catch (the same defensive shape {@code ItemCellChannel} uses for {@code getSubItems}).
+     */
+    private String searchIdOf(T key) {
+        try {
+            String id = cellChannel.registryId(key);
+            return id == null || id.isEmpty() ? null : id;
+        } catch (Throwable brokenBridge) {
+            return null;
+        }
+    }
+
+    /**
+     * 「批量无限」页签的模糊搜索：在整个注册表上匹配，返回最多 {@code limit} 个键。
+     *
+     * <p><b>为什么要有这个方法</b>（2026-10-10，sensei 的需求）：面板原来的搜索框只过滤「已经存进元件的条目」
+     * （客户端在 {@code filtered} 上过一遍 {@link PinyinIndex}），所以没存过的键根本搜不到。新页签要的是
+     * 「在三千多个物品里找 iron_ingot」，那就只能由服务端拿 {@link #allRegistryKeys()} 自己扫一遍。
+     *
+     * <p>匹配口径与面板一致：{@link PinyinIndex#matches}(查询串, 显示名, 注册表 id)，所以全拼（shitou）、
+     * 首字母（st）、中文名和 {@code minecraft:stone} 都能命中。
+     *
+     * <p><b>只读</b>：不动任何状态，也不落盘；匹配满 {@code limit} 条就立刻停手，所以"匹配很多的查询"比
+     * "匹配很少的查询"更便宜。
+     *
+     * @param query 查询串，空 / null = 不过滤（返回注册表的前 {@code limit} 个键）
+     * @param limit 最多返回多少条（&lt;= 0 时返回空表）
+     */
+    public List<IAEStack<?>> searchRegistry(String query, int limit) {
+        List<IAEStack<?>> found = new ArrayList<>();
+        if (limit <= 0) {
+            return found;
+        }
+        String q = query == null ? "" : query.trim();
+        for (T key : allRegistryKeys()) {
+            if (found.size() >= limit) {
+                break;
+            }
+            if (q.isEmpty() || PinyinIndex.matches(q, cellChannel.displayNameUntyped(key), searchIdOf(key))) {
+                found.add(key);
+            }
+        }
+        return found;
+    }
+
+    /**
+     * 把「批量无限」页签搜到的键一次性全部标无限（或取消），返回真正改动的条数。
+     *
+     * <p><b>为什么不能直接循环调 {@link #addWhitelist}</b>（2026-10-10，sensei 的需求）：那两个方法每改一个键就
+     * 调一次 {@link #saveChanges()}，一批几百条 = 几百次世界存档写入 + 几百次网格播报。这里改用不落盘的内部
+     * 变体把整批改完，最后只落盘一次。
+     *
+     * <p>匹配口径与 {@link #searchRegistry} 完全一致（同一个查询串、同一个上限），所以"界面上列出来的那几条"
+     * 就是这里真正会去改的那一批。
+     *
+     * @param add {@code true} = 全部标无限（加白名单），{@code false} = 全部取消（去白名单）
+     * @return 实际改动的条数（本来就已经是目标状态的键不计入，所以没必要落盘时也不会白写一次）
+     */
+    public int applyInfiniteToSearch(String query, int limit, boolean add) {
+        int changed = 0;
+        for (IAEStack<?> raw : searchRegistry(query, limit)) {
+            T key = castKey(raw);
+            boolean modified = add ? addWhitelistQuiet(key) : removeWhitelistQuiet(key);
+            if (modified) {
+                changed++;
+            }
+        }
+        if (changed > 0) {
+            saveChanges();
+        }
+        return changed;
     }
 
     // ------------------------------------------------------------------

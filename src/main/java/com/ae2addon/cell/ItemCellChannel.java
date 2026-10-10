@@ -66,6 +66,21 @@ public final class ItemCellChannel implements CellChannel<IAEItemStack> {
         return id == null ? null : id.getNamespace();
     }
 
+    /**
+     * {@code minecraft:stone}-style id for the registry search index (2026-10-10). The item channel is where
+     * this matters most: a big pack registers thousands of keys, and most of them are only findable by their
+     * registry path -- their display name is Chinese and nothing else carries the English id.
+     */
+    @Override
+    public String registryId(IAEItemStack key) {
+        ItemStack def = key.getDefinition();
+        if (def == null || def.isEmpty()) {
+            return null;
+        }
+        net.minecraft.util.ResourceLocation id = def.getItem().getRegistryName();
+        return id == null ? null : id.toString();
+    }
+
     @Override
     public boolean hasExtraData(IAEItemStack key) {
         ItemStack def = key.getDefinition();

@@ -78,6 +78,24 @@ public final class FluidCellChannel implements CellChannel<IAEFluidStack> {
         return colon < 0 ? "minecraft" : name.substring(0, colon);
     }
 
+    /**
+     * Fluid name as the registry search index's id (2026-10-10), with vanilla's bare names normalised to
+     * {@code minecraft:} -- the same rule {@link #namespace} uses for mod rules, so "water",
+     * "minecraft:water" and "minecraft" all work in the registry search.
+     */
+    @Override
+    public String registryId(IAEFluidStack key) {
+        Fluid fluid = key.getFluid();
+        if (fluid == null) {
+            return null;
+        }
+        String name = fluid.getName();
+        if (name == null || name.isEmpty()) {
+            return null;
+        }
+        return name.indexOf(':') < 0 ? "minecraft:" + name : name;
+    }
+
     @Override
     public boolean hasExtraData(IAEFluidStack key) {
         FluidStack def = key.getFluidStack();

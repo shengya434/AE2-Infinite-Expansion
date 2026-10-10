@@ -67,6 +67,19 @@ public interface CellChannel<T extends IAEStack<T>> {
     String namespace(T key);
 
     /**
+     * The key's registry id as the SEARCH INDEX sees it ({@code "minecraft:stone"} for an item).
+     *
+     * <p>Added 2026-10-10 for the config panel's batch-infinite tab, which searches the whole registry instead
+     * of the keys already stored in the cell. Without a real id a player could only find a key by its display
+     * name or by pinyin, so typing the registry path of an item whose name is Chinese ("iron_ingot" -&gt; 铁锭)
+     * found nothing at all. The default is the namespace, which at least keeps a whole mod searchable;
+     * channels whose keys have a real id (items, fluids) override it.
+     */
+    default String registryId(T key) {
+        return namespace(key);
+    }
+
+    /**
      * Whether the key carries extra data (an NBT variant). Such keys never take the rule path -- 1.20 recorded
      * that they would otherwise be swallowed by the "accept without recording" branch and vanish.
      */

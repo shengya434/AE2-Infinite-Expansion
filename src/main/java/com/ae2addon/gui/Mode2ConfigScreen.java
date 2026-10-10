@@ -31,6 +31,13 @@ import org.lwjgl.input.Mouse;
 public final class Mode2ConfigScreen extends GuiContainer {
     private static final ResourceLocation PANEL = new ResourceLocation("ae2addon", "textures/gui/cell_panel.png");
     private static final int PANEL_X = 10, PANEL_Y = 72, PANEL_W = 236, ROW_H = 14;
+    /**
+     * The three tab labels in the header row (y+36). They share 144..246 with each other, so the third one
+     * (2026-10-10) forced a re-layout: 存储 / 拒收 / 批量无限 in the Chinese font is 18 + 18 + 36 px.
+     */
+    private static final int TAB_ITEMS_X = 144, TAB_REJECT_X = 172, TAB_BATCH_X = 198;
+    /** How long typing has to pause before the registry search is sent (it scans thousands of keys). */
+    private static final long SEARCH_DEBOUNCE_MS = 350L;
     /** Category strip geometry: chips live between the two arrow gaps (see buildChips). */
     private static final int CATEGORY_Y = 75;
     private static final int CATEGORY_HIT_TOP = 73, CATEGORY_HIT_BOTTOM = 87;
@@ -86,6 +93,24 @@ public final class Mode2ConfigScreen extends GuiContainer {
     private int workMode = 1;
     private long currentThreshold = UnlimitedCellInventory.DEFAULT_THRESHOLD;
     private boolean rejectTab;
+    /**
+     * The third tab (2026-10-10, sensei's request): search the whole REGISTRY of the current channel and mark
+     * what the search finds infinite in one go. Mutually exclusive with {@link #rejectTab}; both false = the
+     * storage tab. Its list does NOT come from {@link #all} (that is the cell's own rows) but from
+     * {@link #searchResults}, which the server fills in.
+     */
+    private boolean batchTab;
+    /** Rows of the last completed registry search (packet type 26). */
+    private final List<Mode2ConfigPacket.PanelEntry> searchResults = new ArrayList<>();
+    private final Map<Integer, List<Mode2ConfigPacket.PanelEntry>> pendingSearch = new TreeMap<>();
+    private final ChunkRetry searchRetry = new ChunkRetry();
+    private int expectedSearchChunks;
+    private boolean searchComplete;
+    /** The query the last search was SENT for -- not the current text (see the debounce in updateScreen). */
+    private String searchSent = "";
+    private long searchDueAt;
+    /** 0 = nothing armed, 1 = 「全部标无限」 awaiting confirmation, 2 = 「全部取消无限」 awaiting confirmation. */
+    private int batchArmed;
     private boolean rejectDefault;
     private int rejectOnCount, rejectOffCount;
     private int scrollOffset;
@@ -173,8 +198,78 @@ public final class Mode2ConfigScreen extends GuiContainer {
         defaultButton.y = y + 35;
         defaultButton.width = 126;
         buttonList.add(defaultButton);
+        // Batch tab (2026-10-10): two action buttons on the (otherwise unused) lower row, and the confirm pair
+        // on the rule-input row -- which this tab does not draw at all (see drawScreen).
+        buttonList.add(new GuiButton(17, x + 10, y + 170, 113, 16,
+                I18n.format("gui.ae2addon.mode2.batch_add")));
+        buttonList.add(new GuiButton(18, x + 129, y + 170, 113, 16,
+                I18n.format("gui.ae2addon.mode2.batch_remove")));
+        buttonList.add(new GuiButton(19, x + 10, y + 151, 113, 16,
+                I18n.format("gui.ae2addon.mode2.batch_confirm_btn")));
+        buttonList.add(new GuiButton(20, x + 129, y + 151, 113, 16,
+                I18n.format("gui.ae2addon.mode2.batch_cancel_btn")));
         updateDefaultButton();
         updateEditingButtons();
+        applyTabVisibility();
+        updateBatchButtons();
+    }
+
+    /**
+     * Which controls each tab shows.
+     *
+     * <p>The batch tab has no rule / quantity editing (those are storage-tab concepts) and owns its own four
+     * buttons instead. Visibility is set by id rather than by rebuilding the list, so the index-based lookups
+     * in {@link #updateEditingButtons()} keep pointing at the same buttons.
+     */
+    private void applyTabVisibility() {
+        for (GuiButton button : buttonList) {
+            if (button.id >= 12 && button.id <= 16) {
+                button.visible = !batchTab;
+            } else if (button.id == 17 || button.id == 18) {
+                button.visible = batchTab;
+            } else if (button.id == 19 || button.id == 20) {
+                button.visible = batchTab && batchArmed != 0;
+            }
+        }
+    }
+
+    /** Relabels the two action buttons for the armed state, so "clicked once" is visible before it costs anything. */
+    private void updateBatchButtons() {
+        for (GuiButton button : buttonList) {
+            if (button.id == 17) {
+                button.displayString = I18n.format(batchArmed == 1 ? "gui.ae2addon.mode2.batch_add_armed"
+                        : "gui.ae2addon.mode2.batch_add");
+            } else if (button.id == 18) {
+                button.displayString = I18n.format(batchArmed == 2 ? "gui.ae2addon.mode2.batch_remove_armed"
+                        : "gui.ae2addon.mode2.batch_remove");
+            }
+        }
+    }
+
+    /**
+     * Switches tabs: 0 = the cell's storage rows, 1 = the reject rows, 2 = the registry search.
+     *
+     * <p>Entering the batch tab drops the rule/quantity editor (it belongs to the storage tab and would draw
+     * over the confirm buttons) and asks the server for the current query right away, without waiting for the
+     * debounce.
+     */
+    private void setTab(int tab) {
+        boolean wasBatch = batchTab;
+        rejectTab = tab == 1;
+        batchTab = tab == 2;
+        scrollOffset = 0;
+        batchArmed = 0;
+        if (batchTab && !wasBatch) {
+            hideItemThreshold();
+            quantityEditing = ItemStack.EMPTY;
+            quantityInput.setFocused(false);
+        }
+        applyTabVisibility();
+        updateBatchButtons();
+        applyFilters();
+        if (batchTab) {
+            requestSearch();
+        }
     }
 
     private void updateDefaultButton() {
@@ -227,6 +322,70 @@ public final class Mode2ConfigScreen extends GuiContainer {
             ruleInstant = !ruleInstant;
             updateRuleInstantButton();
             CellNetwork.send(new Mode2ConfigPacket(10, ruleInstant));
+        } else if (button.id == 17 || button.id == 18) {
+            // ARM, never fire. Marking hundreds of keys infinite is not something a stray click may do: the same
+            // "you have to mean it" spirit as the format button's DELETE box in ModeSelectScreen.
+            int target = button.id - 16;
+            batchArmed = batchArmed == target ? 0 : target;
+            applyTabVisibility();
+            updateBatchButtons();
+        } else if (button.id == 19) {
+            // The confirmation button: the ONLY click that sends the bulk action (type 27).
+            if (batchArmed == 0) return;
+            boolean add = batchArmed == 1;
+            batchArmed = 0;
+            applyTabVisibility();
+            updateBatchButtons();
+            Mode2ConfigPacket packet = new Mode2ConfigPacket(27);
+            packet.text = searchInput.getText();
+            packet.flag = add;
+            // The channel the search ran on. Empty/"all" both mean "whatever the panel shows" -- the server maps
+            // the All view onto the item channel, which is where a registry scan makes sense.
+            packet.channelId = panelChannel;
+            CellNetwork.send(packet);
+        } else if (button.id == 20) {
+            batchArmed = 0;
+            applyTabVisibility();
+            updateBatchButtons();
+        }
+    }
+
+    /** Asks the server for the current query's registry rows right now, skipping the typing debounce. */
+    private void requestSearch() {
+        searchDueAt = 0L;
+        sendSearch(searchInput.getText());
+    }
+
+    private void sendSearch(String query) {
+        searchSent = query;
+        searchComplete = false;
+        pendingSearch.clear();
+        expectedSearchChunks = 0;
+        searchRetry.start();
+        Mode2ConfigPacket packet = new Mode2ConfigPacket(25);
+        packet.text = query;
+        packet.channelId = panelChannel;
+        CellNetwork.send(packet);
+    }
+
+    /**
+     * The typing debounce for the registry search.
+     *
+     * <p>A registry search is a SERVER-side scan of every key in the channel (thousands of display names through
+     * {@code PinyinIndex}), so one request per keystroke is not acceptable: the query goes out once typing has
+     * paused. Anything already sent is left alone; only a changed query arms the timer.
+     */
+    private void tickBatchSearch() {
+        String text = searchInput.getText();
+        if (text.equals(searchSent)) {
+            searchDueAt = 0L;
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (searchDueAt == 0L) {
+            searchDueAt = now + SEARCH_DEBOUNCE_MS;
+        } else if (now >= searchDueAt) {
+            sendSearch(text);
         }
     }
 
@@ -235,6 +394,9 @@ public final class Mode2ConfigScreen extends GuiContainer {
         if (blacklistComplete) { pendingBlacklist.clear(); expectedBlacklist = 0; blacklistComplete = false; }
         panelRetry.manualRefresh(); blacklistRetry.manualRefresh(); rejectList.manualRefresh();
         CellNetwork.send(new Mode2ConfigPacket(3));
+        if (batchTab) {
+            requestSearch();
+        }
     }
 
     private void saveThreshold() {
@@ -327,6 +489,31 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 panelComplete = true;
                 applyFilters();
             }
+        } else if (packet.type == 26) {
+            // Registry search chunks (batch tab). Same accumulation rules as the panel's chunks: a chunk set
+            // belongs to ONE search, and a fresh set is not a continuation of the previous one.
+            if (expectedSearchChunks == 0 || expectedSearchChunks != packet.totalChunks) {
+                pendingSearch.clear();
+                expectedSearchChunks = packet.totalChunks;
+                searchComplete = false;
+                searchRetry.start();
+            }
+            if (expectedSearchChunks != packet.totalChunks || packet.chunkIndex < 0
+                    || packet.chunkIndex >= expectedSearchChunks) return;
+            if (searchComplete) pendingSearch.put(packet.chunkIndex, packet.entries);
+            else if (pendingSearch.putIfAbsent(packet.chunkIndex, packet.entries) == null) searchRetry.progress();
+            if (pendingSearch.size() == expectedSearchChunks) {
+                searchResults.clear();
+                for (int i = 0; i < expectedSearchChunks; i++) searchResults.addAll(pendingSearch.get(i));
+                // Keep complete chunks: a trailing packet from a retry must not start a false partial list.
+                searchComplete = true;
+                scrollOffset = 0;
+                // The result set just changed, so a pending confirmation no longer names anything.
+                batchArmed = 0;
+                applyTabVisibility();
+                updateBatchButtons();
+                applyFilters();
+            }
         } else if (packet.type == 21) {
             rejectList.handleChunk(packet.on, packet.off, packet.chunkIndex, packet.totalChunks);
             rejectItems.clear(); rejectItems.addAll(rejectList.on()); rejectItems.addAll(rejectList.off());
@@ -373,7 +560,13 @@ public final class Mode2ConfigScreen extends GuiContainer {
         String query = searchInput.getText();
         lastSearch = query;
         List<Mode2ConfigPacket.PanelEntry> source = new ArrayList<>(all);
-        if (rejectTab) {
+        if (batchTab) {
+            // This tab's list IS the server's registry search: it already matched the query against the display
+            // name and the registry id of every key in the channel. Re-filtering here would only DROP rows --
+            // a non-item row's client-side icon/label does not carry the id the server matched on.
+            source.clear();
+            source.addAll(searchResults);
+        } else if (rejectTab) {
             source.clear();
             // The reject page lists what you can MARK. It used to list only the two explicit reject sets, so an
             // item that was merely STORED had nothing to click -- "in the reject page there is no match for a
@@ -405,6 +598,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
             }
         }
         for (Mode2ConfigPacket.PanelEntry entry : source) {
+            if (batchTab) {
+                // The category strip / rule filters belong to the storage tab; the server already did the only
+                // filtering this tab has.
+                filtered.add(entry);
+                continue;
+            }
             ItemStack stack = entry.item;
             if (!rejectTab && "blacklist".equals(activeRule) && !containsStack(blacklist, stack)) continue;
             if (!rejectTab && activeRule != null && !"blacklist".equals(activeRule)
@@ -418,6 +617,35 @@ public final class Mode2ConfigScreen extends GuiContainer {
         }
         scrollOffset = Math.min(scrollOffset, Math.max(0, filtered.size() - 4));
     }
+    /**
+     * What the batch tab says where the category strip normally sits: the size of the last result, how far an
+     * unfinished transfer has got, or -- while a confirmation is armed -- exactly what it is about to touch.
+     */
+    private String batchStatusLine() {
+        if (batchArmed != 0) {
+            return I18n.format(batchArmed == 1 ? "gui.ae2addon.mode2.batch_confirm_add"
+                    : "gui.ae2addon.mode2.batch_confirm_remove", filtered.size());
+        }
+        if (expectedSearchChunks > 0 && !searchComplete) {
+            return I18n.format("gui.ae2addon.p3.partial", pendingSearch.size(), expectedSearchChunks);
+        }
+        if (!searchComplete) {
+            return I18n.format("gui.ae2addon.mode2.batch_searching");
+        }
+        String result = I18n.format("gui.ae2addon.mode2.batch_result", filtered.size(),
+                Mode2ConfigPacket.MAX_SEARCH_ROWS);
+        // The row-click limitation is permanent for every channel but the item one (see mouseClicked), so it is
+        // stated where the count is, instead of leaving a dead click unexplained.
+        return searchChannel().equals(com.ae2addon.cell.CellChannelRegistry.ITEM) ? result
+                : result + I18n.format("gui.ae2addon.mode2.batch_row_item_only");
+    }
+
+    /** The channel a registry search really runs on: the "all" view scans the item channel (see the server). */
+    private String searchChannel() {
+        return Mode2ConfigPacket.ALL_CHANNELS.equals(panelChannel)
+                ? com.ae2addon.cell.CellChannelRegistry.ITEM : panelChannel;
+    }
+
     private static boolean matchesRule(ItemStack stack, String rule) {
         if (rule.startsWith("mod:")) return stack.getItem().getRegistryName() != null
                 && rule.substring(4).equals(stack.getItem().getRegistryName().getNamespace());
@@ -510,6 +738,15 @@ public final class Mode2ConfigScreen extends GuiContainer {
         if (panelRetry.retryDue(expectedChunks > 0 && !panelComplete)) CellNetwork.send(new Mode2ConfigPacket(3));
         if (blacklistRetry.retryDue(expectedBlacklist > 0 && !blacklistComplete)) CellNetwork.send(new Mode2ConfigPacket(11));
         if (rejectList.retryDue()) CellNetwork.send(new Mode2ConfigPacket(23));
+        if (uiState == 1 && batchTab) tickBatchSearch();
+        // Retry re-sends the SAME query without resetting the budget (never call start() here: that would make
+        // the retry counter immortal, exactly like the panel/blacklist retries above).
+        if (searchRetry.retryDue(expectedSearchChunks > 0 && !searchComplete)) {
+            Mode2ConfigPacket retry = new Mode2ConfigPacket(25);
+            retry.text = searchSent;
+            retry.channelId = panelChannel;
+            CellNetwork.send(retry);
+        }
     }
 
     @Override protected void drawGuiContainerBackgroundLayer(float partialTicks, int mouseX, int mouseY) {
@@ -540,33 +777,50 @@ public final class Mode2ConfigScreen extends GuiContainer {
         }
         fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.title"), guiLeft + 10, guiTop + 4, 0xFFFFFF);
         drawChannelSelector();
-        fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_items"), guiLeft + 144, guiTop + 36,
-                rejectTab ? 0x888888 : 0xFFFFFF);
-        fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_reject"), guiLeft + 193, guiTop + 36,
+        fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_items"), guiLeft + TAB_ITEMS_X, guiTop + 36,
+                !rejectTab && !batchTab ? 0xFFFFFF : 0x888888);
+        fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_reject"), guiLeft + TAB_REJECT_X, guiTop + 36,
                 rejectTab ? 0xFFFFFF : 0x888888);
-        String hint = rejectTab ? I18n.format("gui.ae2addon.mode2.hint_reject")
+        fontRenderer.drawString(I18n.format("gui.ae2addon.mode2.tab_batch"), guiLeft + TAB_BATCH_X, guiTop + 36,
+                batchTab ? 0xFFFFFF : 0x888888);
+        String hint = batchTab ? I18n.format("gui.ae2addon.mode2.hint_batch")
+                : rejectTab ? I18n.format("gui.ae2addon.mode2.hint_reject")
                 : I18n.format("gui.ae2addon.mode2.hint_bar");
         // A rule filter names itself here instead of stealing width from the category strip: its chip can be
         // scrolled out of view, and the strip needs every pixel to show as many categories as possible.
-        if (!rejectTab && activeRule != null && !"item".equals(activeRule)) {
+        if (!batchTab && !rejectTab && activeRule != null && !"item".equals(activeRule)) {
             hint = I18n.format("gui.ae2addon.mode2.filter_active", activeRule);
         }
         fontRenderer.drawString(fontRenderer.trimStringToWidth(hint, 235), guiLeft + 10, guiTop + 61, 0xBBBBBB);
-        for (Chip chip : buildChips()) {
-            if (!chipVisible(chip)) {
-                continue; // clipped chips are reached with the arrows or the wheel
+        if (batchTab) {
+            // The category strip is the storage tab's (ore/mod rules, blacklist). This tab borrows its space to
+            // say what the last search found -- and, while a confirmation is armed, what it is about to touch.
+            fontRenderer.drawString(fontRenderer.trimStringToWidth(batchStatusLine(), 235), guiLeft + 10,
+                    guiTop + CATEGORY_Y, batchArmed != 0 ? 0xFF5555 : 0xBBBBBB);
+        } else {
+            for (Chip chip : buildChips()) {
+                if (!chipVisible(chip)) {
+                    continue; // clipped chips are reached with the arrows or the wheel
+                }
+                boolean active = chip.id.equals(activeRule == null ? "item" : activeRule);
+                fontRenderer.drawString(chip.label, chip.x, guiTop + CATEGORY_Y, active ? 0xFFFFFF : chip.color);
             }
-            boolean active = chip.id.equals(activeRule == null ? "item" : activeRule);
-            fontRenderer.drawString(chip.label, chip.x, guiTop + CATEGORY_Y, active ? 0xFFFFFF : chip.color);
+            // Arrow zones at both ends of the strip: the only sign that there are more categories than fit.
+            if (canScrollCategoryLeft()) {
+                fontRenderer.drawString("←", guiLeft + 10, guiTop + CATEGORY_Y, 0xFFFF77);
+            }
+            if (canScrollCategoryRight()) {
+                fontRenderer.drawString("→", guiLeft + CATEGORY_RIGHT + 1, guiTop + CATEGORY_Y, 0xFFFF77);
+            }
         }
-        // Arrow zones at both ends of the strip: the only sign that there are more categories than fit.
-        if (canScrollCategoryLeft()) {
-            fontRenderer.drawString("←", guiLeft + 10, guiTop + CATEGORY_Y, 0xFFFF77);
+        if (batchTab) {
+            if (searchRetry.exhausted(expectedSearchChunks > 0 && !searchComplete)) fontRenderer.drawString(
+                    I18n.format("gui.ae2addon.p3.retry_stopped", I18n.format("gui.ae2addon.mode2.tab_batch")),
+                    guiLeft + 12, guiTop + 98, 0xFF5555);
+            else if (searchComplete && filtered.isEmpty()) fontRenderer.drawString(
+                    I18n.format("gui.ae2addon.mode2.no_match"), guiLeft + 12, guiTop + 100, 0xAAAAAA);
         }
-        if (canScrollCategoryRight()) {
-            fontRenderer.drawString("→", guiLeft + CATEGORY_RIGHT + 1, guiTop + CATEGORY_Y, 0xFFFF77);
-        }
-        if (panelRetry.exhausted(expectedChunks > 0 && !panelComplete)) fontRenderer.drawString(
+        else if (panelRetry.exhausted(expectedChunks > 0 && !panelComplete)) fontRenderer.drawString(
                 I18n.format("gui.ae2addon.p3.retry_stopped", I18n.format("gui.ae2addon.p3.list_panel")),
                 guiLeft + 12, guiTop + 98, 0xFF5555);
         else if (blacklistRetry.exhausted(expectedBlacklist > 0 && !blacklistComplete)) fontRenderer.drawString(
@@ -608,7 +862,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
         searchInput.drawTextBox();
         if (!editing.isEmpty()) itemThresholdInput.drawTextBox();
         else if (!quantityEditing.isEmpty()) quantityInput.drawTextBox();
-        else ruleInput.drawTextBox();
+        else if (!batchTab) ruleInput.drawTextBox();
         if (mouseX >= guiLeft + 10 && mouseX < guiLeft + 246 && mouseY >= guiTop + 88
                 && mouseY < guiTop + 150) {
             int row = (mouseY - guiTop - 88) / ROW_H + scrollOffset;
@@ -635,12 +889,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 drawHoveringText(tooltip, mouseX, mouseY);
             }
         }
-        if (mouseX >= guiLeft + 205 && mouseX < guiLeft + 246
+        if (!batchTab && mouseX >= guiLeft + 205 && mouseX < guiLeft + 246
                 && mouseY >= guiTop + 170 && mouseY < guiTop + 186)
             drawHoveringText(I18n.format("gui.ae2addon.p3.rule_all_tip"), mouseX, mouseY);
         // The arrow zones need to explain themselves: there is no other sign that more categories exist.
         int categoryRelY = mouseY - guiTop;
-        if (categoryRelY >= CATEGORY_HIT_TOP && categoryRelY < CATEGORY_HIT_BOTTOM) {
+        if (!batchTab && categoryRelY >= CATEGORY_HIT_TOP && categoryRelY < CATEGORY_HIT_BOTTOM) {
             int categoryRelX = mouseX - guiLeft;
             boolean onLeftArrow = categoryRelX >= 10 && categoryRelX < CATEGORY_LEFT && canScrollCategoryLeft();
             boolean onRightArrow = categoryRelX >= CATEGORY_RIGHT && categoryRelX < 246
@@ -712,6 +966,12 @@ public final class Mode2ConfigScreen extends GuiContainer {
         panelComplete = false;
         applyFilters();
         CellNetwork.send(Mode2ConfigPacket.panelChannel(panelChannel));
+        if (batchTab) {
+            // A registry search is per channel, so the new channel's rows have to be fetched again.
+            searchResults.clear();
+            applyFilters();
+            requestSearch();
+        }
     }
 
     /** Display name for a channel id (the panel is Chinese-facing; the id is the fallback). */
@@ -770,10 +1030,11 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 cyclePanelChannel(x >= 236 ? 1 : -1);
                 return;
             }
-            if (mouseButton == 0 && y >= 36 && y < 47 && x >= 144 && x < 246) {
-                rejectTab = x >= 193; scrollOffset = 0; applyFilters(); return;
+            if (mouseButton == 0 && y >= 36 && y < 47 && x >= TAB_ITEMS_X && x < 246) {
+                setTab(x < TAB_REJECT_X ? 0 : (x < TAB_BATCH_X ? 1 : 2));
+                return;
             }
-            if (y >= CATEGORY_HIT_TOP && y < CATEGORY_HIT_BOTTOM) {
+            if (!batchTab && y >= CATEGORY_HIT_TOP && y < CATEGORY_HIT_BOTTOM) {
                 // Arrow gaps first: they are drawn exactly when something is scrolled out of the strip.
                 if (x >= 10 && x < CATEGORY_LEFT && canScrollCategoryLeft()) {
                     categoryScroll = Math.max(0, categoryScroll - CATEGORY_STEP * 3);
@@ -814,6 +1075,32 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 int row = (y - 88) / ROW_H + scrollOffset;
                 if (row >= 0 && row < filtered.size()) {
                     Mode2ConfigPacket.PanelEntry entry = filtered.get(row);
+                    if (batchTab) {
+                        // One key at a time: the SAME action the storage tab's Shift+left-click sends
+                        // (type 5 = toggle this key's infinity). Plain left click on purpose -- a search result
+                        // row has no icon-click conventions to honour, and this tab's bulk action is the
+                        // button's job, not a row's.
+                        //
+                        // NOTE for the record: the task said "reuse the type 7 path". In THIS codebase type 7 is
+                        // the reject toggle (see the server handler and ModeSelectScreen), while toggling a
+                        // key's infinity is type 5 -- so type 5 is what "same as the item page" actually means.
+                        //
+                        // Item rows only, and that is not a preference: types 1/5/7/11/13/17/22 carry an
+                        // ItemStack and NOTHING else (see toBytes -- withChannel()'s channelId/keyNbt are simply
+                        // not written), so a fluid/gas/essentia key cannot be named on that wire. The server
+                        // resolves what arrives as the row's channel's key type, and a foreign key throws
+                        // (FluidCellChannel's normalise bridge does `checkcast IAEFluidStack`). The bulk button
+                        // works on every channel because type 27 carries the channel id and the server names
+                        // the keys itself.
+                        if (mouseButton == 0 && !isShiftKeyDown() && !isCtrlKeyDown()
+                                && com.ae2addon.cell.CellChannelRegistry.ITEM.equals(entry.channelId)) {
+                            batchArmed = 0;
+                            applyTabVisibility();
+                            updateBatchButtons();
+                            CellNetwork.send(withChannel(new Mode2ConfigPacket(5, entry.item.copy()), entry));
+                        }
+                        return;
+                    }
                     if (rejectTab && mouseButton == 0 && !isShiftKeyDown() && !isCtrlKeyDown())
                         CellNetwork.send(withChannel(new Mode2ConfigPacket(7, entry.item.copy()), entry));
                     else if (rejectTab && mouseButton == 1)
