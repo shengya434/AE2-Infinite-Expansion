@@ -10,7 +10,12 @@ import com.ae2addon.cell.ChannelCellCore;
 import appeng.util.ReadableNumberConverter;
 
 /**
- * Renders an "infinite" amount as an infinity symbol instead of a number.
+ * Renders an "infinite" amount as the ASCII tag {@code Inf} instead of a number.
+ *
+ * <p><b>Why ASCII and not the infinity symbol</b> (sensei's measurement, 2026-10-10): the client's default
+ * font has no glyph for U+221E -- the hook demonstrably fired and returned the symbol, yet the row showed
+ * nothing readable where the number used to be. {@code Inf} is pure ASCII and draws in every font and every
+ * pack, so the display keeps saying what the number means without depending on a glyph being present.
  *
  * <p><b>Why this exists</b> (sensei, 2026-10-05, copying how the 1.20.1/1.21.1 fork does it): the amount our
  * cells report for an infinite row has to live inside AE2's summing inventory, so it is a real number --
@@ -22,11 +27,11 @@ import appeng.util.ReadableNumberConverter;
  * {@code 9.2E}-style text the terminal, the tooltip and the ME chest draw. Both forms are covered
  * ({@code toSlimReadableForm} and {@code toWideReadableForm}); anything at or above
  * {@link ChannelCellCore#INFINITE_SIGHT} (half the infinite value, so a row nudged down by a physical movement
- * still reads as infinite) comes out as {@code ∞}.
+ * still reads as infinite) comes out as {@code Inf}.
  *
  * <p>Client only: the config lists this class under {@code client}, so a dedicated server never loads it.
  * Third-party terminals (Thaumic Energistics, Mekanism Energistics...) draw their own way and will keep showing
- * the number; AE2's own terminal - which is what sensei uses for the item channel - shows the symbol.
+ * the number; AE2's own terminal - which is what sensei uses for the item channel - shows the tag.
  */
 @Mixin(value = ReadableNumberConverter.class, remap = false)
 public abstract class MixinReadableNumberConverter {
@@ -34,7 +39,7 @@ public abstract class MixinReadableNumberConverter {
     @Inject(method = {"toSlimReadableForm", "toWideReadableForm"}, at = @At("HEAD"), cancellable = true)
     private void ae2addon$showInfinity(long size, CallbackInfoReturnable<String> cir) {
         if (size >= ChannelCellCore.INFINITE_SIGHT) {
-            cir.setReturnValue("\u221e");
+            cir.setReturnValue("Inf");
         }
     }
 }

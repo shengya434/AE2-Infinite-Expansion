@@ -11,12 +11,16 @@ import com.ae2addon.cell.ChannelCellCore;
 import appeng.fluids.client.gui.GuiFluidTerminal;
 
 /**
- * Makes AE2's own <b>fluid terminal</b> tooltip say {@code ∞} for an infinite amount (sensei, 2026-10-05:
+ * Makes AE2's own <b>fluid terminal</b> tooltip say {@code Inf} for an infinite amount (sensei, 2026-10-05:
  * "最起码把 ae2 原版自己的流体终端也包括进去吧").
+ *
+ * <p>{@code Inf} and not the infinity symbol: the client font cannot draw U+221E, so the symbol came out as
+ * nothing (sensei's measurement, 2026-10-10). ASCII draws everywhere -- same reasoning as
+ * {@link MixinReadableNumberConverter}.
  *
  * <p>What was already covered: the fluid terminal's row COUNTS go through
  * {@code FluidStackSizeRenderer} -> {@code ReadableNumberConverter}, which
- * {@link MixinReadableNumberConverter} patches, so rows already read {@code ∞}. The hover tooltip is a separate
+ * {@link MixinReadableNumberConverter} patches, so rows already read {@code Inf}. The hover tooltip is a separate
  * path: {@code GuiFluidTerminal#renderHoveredToolTip} formats its numbers with a plain
  * {@code java.text.NumberFormat} -- and with {@code format(double)}, not the {@code format(long)} variant
  * {@link MixinAEBaseMEGui} redirects, so it needed its own hook.
@@ -32,7 +36,7 @@ public abstract class MixinGuiFluidTerminal {
             target = "Ljava/text/NumberFormat;format(D)Ljava/lang/String;"))
     private String ae2addon$showInfinityInTooltip(NumberFormat format, double size) {
         if (size >= ChannelCellCore.INFINITE_SIGHT) {
-            return "\u221e";
+            return "Inf";
         }
         return format.format(size);
     }

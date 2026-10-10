@@ -11,7 +11,11 @@ import com.ae2addon.cell.ChannelCellCore;
 import appeng.client.gui.AEBaseMEGui;
 
 /**
- * Makes the ME terminal's item TOOLTIP say {@code ∞} for an infinite amount.
+ * Makes the ME terminal's item TOOLTIP say {@code Inf} for an infinite amount.
+ *
+ * <p>{@code Inf} and not the infinity symbol: the client font cannot draw U+221E, so the symbol came out as
+ * nothing (sensei's measurement, 2026-10-10). ASCII draws everywhere -- same reasoning as
+ * {@link MixinReadableNumberConverter}.
  *
  * <p><b>Why a second display hook</b> (sensei, 2026-10-05: "终端内『存储物品』的 tooltip 似乎没改"):
  * {@code MixinReadableNumberConverter} covers the counts AE2 draws through its
@@ -33,7 +37,7 @@ public abstract class MixinAEBaseMEGui {
             target = "Ljava/text/NumberFormat;format(J)Ljava/lang/String;"))
     private String ae2addon$showInfinityInTooltip(NumberFormat format, long size) {
         if (size >= ChannelCellCore.INFINITE_SIGHT) {
-            return "\u221e";
+            return "Inf";
         }
         return format.format(size);
     }
