@@ -235,7 +235,9 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         protected void renderWidget(GuiGraphics g, int mx, int my, float partial) {
             var m = menuSupplier.get();
             boolean noExpand = m != null && m.noExpandForm;
-            paint(g, noExpand ? "无拓展单元" : "含拓展单元", false);
+            paint(g, Component.translatable(noExpand
+                    ? "gui.ae2addon.cpu.form_variant.no_expand"
+                    : "gui.ae2addon.cpu.form_variant.with_expand"), false);
         }
     }
 
@@ -258,12 +260,12 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         protected void renderWidget(GuiGraphics g, int mx, int my, float partial) {
             var m = menuSupplier.get();
             int selected = m == null ? -1 : m.buildFacing;
-            String label = switch (selected) {
-                case 0 -> "朝向：南";
-                case 1 -> "朝向：西";
-                case 2 -> "朝向：北";
-                case 3 -> "朝向：东";
-                default -> "朝向：自动";
+            Component label = switch (selected) {
+                case 0 -> Component.translatable("gui.ae2addon.cpu.facing.south");
+                case 1 -> Component.translatable("gui.ae2addon.cpu.facing.west");
+                case 2 -> Component.translatable("gui.ae2addon.cpu.facing.north");
+                case 3 -> Component.translatable("gui.ae2addon.cpu.facing.east");
+                default -> Component.translatable("gui.ae2addon.cpu.facing.auto");
             };
             paint(g, label, false);
         }
@@ -285,16 +287,16 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             return m != null && m.halted;
         }
 
-        void paint(GuiGraphics g, String text, boolean red) {
+        /** 自绘按钮的文案（本地化组件；编码在语言文件里，代码不拼颜色码） */
+        void paint(GuiGraphics g, Component text, boolean red) {
             int bg = red ? 0xFF8B1A1A : 0xFF3A3A3A;
             int border = red ? 0xFFFF4040 : 0xFF9A9A9A;
             g.fill(getX(), getY(), getX() + getWidth(), getY() + getHeight(), bg);
             g.renderOutline(getX(), getY(), getWidth(), getHeight(), border);
             var font = net.minecraft.client.Minecraft.getInstance().font;
-            var label = Component.literal(text);
-            int tx = getX() + (getWidth() - font.width(label)) / 2;
+            int tx = getX() + (getWidth() - font.width(text)) / 2;
             int ty = getY() + (getHeight() - 8) / 2;
-            g.drawString(font, label, tx, ty, red ? 0xFFFFD0D0 : 0xFFE0E0E0, false);
+            g.drawString(font, text, tx, ty, red ? 0xFFFFD0D0 : 0xFFE0E0E0, false);
         }
 
         @Override
@@ -330,7 +332,9 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         @Override
         protected void renderWidget(GuiGraphics g, int mx, int my, float partial) {
             boolean halted = haltedNow();
-            paint(g, halted ? "删除" : "急停所有线程", halted);
+            paint(g, Component.translatable(halted
+                    ? "gui.ae2addon.cpu.btn.delete"
+                    : "gui.ae2addon.cpu.btn.halt"), halted);
         }
     }
 
@@ -353,7 +357,7 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
 
         @Override
         protected void renderWidget(GuiGraphics g, int mx, int my, float partial) {
-            paint(g, "恢复", false);
+            paint(g, Component.translatable("gui.ae2addon.cpu.btn.restore"), false);
         }
     }
 
@@ -388,25 +392,27 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
         protected void renderWidget(GuiGraphics g, int mx, int my, float partial) {
             var m = menuSupplier.get();
             if (m == null) {
-                paint(g, "一键成型", false);
+                paint(g, Component.translatable("gui.ae2addon.cpu.btn.build"), false);
                 return;
             }
-            String text;
+            Component text;
             boolean red = false;
             if (m.formed && !"BUILDING".equals(m.buildState)) {
-                text = "已成型，无需摆放";
+                text = Component.translatable("gui.ae2addon.cpu.build.formed");
             } else if ("BUILDING".equals(m.buildState)) {
-                text = "放置中 " + m.buildPlaced + "/" + m.buildTotal;
+                text = Component.translatable("gui.ae2addon.cpu.build.placing",
+                        m.buildPlaced, m.buildTotal);
             } else if ("DONE".equals(m.buildState)) {
-                text = "已摆放完成 " + m.buildPlaced + "/" + m.buildTotal;
+                text = Component.translatable("gui.ae2addon.cpu.build.done",
+                        m.buildPlaced, m.buildTotal);
             } else if ("BLOCKED".equals(m.buildState)) {
-                text = "放置被阻挡";
+                text = Component.translatable("gui.ae2addon.cpu.build.blocked");
                 red = true;
             } else if ("MISSING".equals(m.buildState)) {
-                text = "缺少材料";
+                text = Component.translatable("gui.ae2addon.cpu.build.missing");
                 red = true;
             } else {
-                text = "一键成型";
+                text = Component.translatable("gui.ae2addon.cpu.btn.build");
             }
             paint(g, text, red);
         }
@@ -464,12 +470,13 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
             var m = menuSupplier.get();
             long now = nowMs();
             if (m == null) {
-                paint(g, "一键回收", false);
+                paint(g, Component.translatable("gui.ae2addon.cpu.btn.recycle"), false);
                 return;
             }
             if (m.recycling) {
                 doneShown = false;
-                paint(g, "回收中 " + m.recycleDone + "/" + m.recycleTotal, false);
+                paint(g, Component.translatable("gui.ae2addon.cpu.recycle.running",
+                        m.recycleDone, m.recycleTotal), false);
                 return;
             }
             // 刚回收完：显示一次结果（3 秒）
@@ -479,16 +486,17 @@ public class IntegratedCPUScreen extends CraftingCPUScreen<IntegratedCPUMenu> {
                     doneShown = true;
                 }
                 if (now < doneUntil) {
-                    paint(g, "已回收 " + m.recycleDone, false);
+                    paint(g, Component.translatable("gui.ae2addon.cpu.recycle.done",
+                            m.recycleDone), false);
                     return;
                 }
             }
             if (confirmUntil > 0 && now <= confirmUntil) {
-                paint(g, "确定回收", true);   // 红字 = 待确认
+                paint(g, Component.translatable("gui.ae2addon.cpu.recycle.confirm"), true);
                 return;
             }
             confirmUntil = 0;                 // 超时/未点击：回到常态
-            paint(g, "一键回收", false);
+            paint(g, Component.translatable("gui.ae2addon.cpu.btn.recycle"), false);
         }
     }
 
