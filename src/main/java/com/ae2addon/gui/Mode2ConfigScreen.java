@@ -293,12 +293,27 @@ public final class Mode2ConfigScreen extends GuiContainer {
         return org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_LCONTROL)
                 || org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_RCONTROL);
     }
+    /**
+     * 让"单物品阈值"与"元件内数量"两套编辑按钮只在各自编辑框活着时出现。
+     *
+     * <p><b>为什么改成按 id 找</b>（sensei 2026-10-10：「那两个按钮在我设置数量的时候会消失，之后只要我不退出配置页面就不会再出现」）：
+     * 原来用**下标** uttonList.get(8)/get(9) ✗，而列表开头还有 1/2/3 号"选模式"按钮 ⇒ 下标 8/9 实际落在
+     * **13 号与 14 号（保存数量）** ✗ ⇒ ① **锁定(15) 没人管** ✗；② 一进数量编辑，14 号随
+     * quantityEditing 变空被藏掉，而且再也不会自己回来 ✓ —— 完全是他看到的现象 ✓。
+     *
+     * <p>教训：uttonList 的下标会随按钮数量漂移（批量页签刚加了 17–20 号 ✗），
+     * **凡是有 id 语义的地方就按 id 找** ✓（updateBatchButtons() 一直是对的 ✓）。
+     */
     private void updateEditingButtons() {
-        if (buttonList.size() > 5 && uiState == 1) {
-            buttonList.get(4).visible = !editing.isEmpty();
-            buttonList.get(5).visible = !editing.isEmpty();
-            buttonList.get(8).visible = !quantityEditing.isEmpty();
-            buttonList.get(9).visible = !quantityEditing.isEmpty();
+        if (uiState != 1) {
+            return;
+        }
+        for (GuiButton button : buttonList) {
+            if (button.id == 9 || button.id == 10) {
+                button.visible = !editing.isEmpty();
+            } else if (button.id == 14 || button.id == 15) {
+                button.visible = !quantityEditing.isEmpty();
+            }
         }
     }
 
