@@ -104,7 +104,8 @@ public class QianJiTerminalScreen extends AbstractContainerScreen<QianJiTerminal
     protected void init() {
         super.init();
         // 搜索框放在最上面一行（终端没有翻页按钮，整条都可以给它）
-        searchBox = new EditBox(font, leftPos + 8, topPos + 18, W - 16, 16, Component.literal("搜索样板"));
+        searchBox = new EditBox(font, leftPos + 8, topPos + 18, W - 16, 16,
+                Component.translatable("gui.ae2addon.qianji.search.placeholder"));
         searchBox.setMaxLength(64);
         addRenderableWidget(searchBox);
         setFocused(searchBox);
@@ -411,13 +412,15 @@ public class QianJiTerminalScreen extends AbstractContainerScreen<QianJiTerminal
         super.render(g, mx, my, partialTick);
 
         // 标题在**搜索栏上方**（sensei 2026-09-21 要求）
-        String title = "§7千机·样板终端";
-        g.drawString(font, Component.literal(title),
+        Component title = Component.translatable("gui.ae2addon.qianji_terminal.title_plain");
+        g.drawString(font, title,
                 leftPos + W / 2 - font.width(title) / 2, topPos + 4, 0xFFFFFF, false);
 
         // 两个槽（菜单坐标：空白 y=40、编码 y=78）+ 中间灰色向下箭头
-        g.drawString(font, Component.literal("§7空白样板"), leftPos + 100, topPos + 44, 0xAAAAAA, false);
-        g.drawString(font, Component.literal("§7编码样板"), leftPos + 100, topPos + 82, 0xAAAAAA, false);
+        g.drawString(font, Component.translatable("gui.ae2addon.qianji_terminal.slot.blank"),
+                leftPos + 100, topPos + 44, 0xAAAAAA, false);
+        g.drawString(font, Component.translatable("gui.ae2addon.qianji_terminal.slot.encoded"),
+                leftPos + 100, topPos + 82, 0xAAAAAA, false);
         drawDownArrow(g, leftPos + 88, topPos + 58, 0xFF8A8A8A);
 
         // 空白样板槽 = 网络里空白样板的"映射"（2026-09-22 v282，sensei 要求）：
@@ -427,18 +430,24 @@ public class QianJiTerminalScreen extends AbstractContainerScreen<QianJiTerminal
 
         // 升级卡 / 量子缠绕奇点那一条（只有 AE2WTLib 形态的宿主才有，2026-09-21 v274）
         if (menu.hasExtras()) {
-            g.drawString(font, Component.literal("§7升级卡 / 量子缠绕奇点§8（量子桥：远处也能连网）"),
+            g.drawString(font, Component.translatable("gui.ae2addon.qianji_terminal.extras_label"),
                     leftPos + 4, topPos + QianJiTerminalMenu.EXTRA_LABEL_Y, 0xFFFFFF, false);
         }
 
         // 列表上方的状态行（跟着列表一起挪到"网络空白样板"下面）
-        String status = (term.isEmpty()
-                ? "§7全网样板 §e" + total + " §7张"
-                : "§7搜索 §f" + term + " §7→ 命中 §e" + total + " §7张")
-                + (entries.isEmpty() ? " §8(空)" : " §8(已载入 " + entries.size() + ")")
-                + " §8· 左键取出 / 右键放入该千机 · 悬停看详情"
-                + (focusTicks > 0 ? " §e◀ 已定位到刚放入的样板" : "");
-        g.drawString(font, Component.literal(status), leftPos + 8, topPos + 112, 0xFFFFFF, false);
+        Component status = (term.isEmpty()
+                ? Component.translatable("gui.ae2addon.qianji_terminal.status.all", total)
+                : Component.translatable("gui.ae2addon.qianji_terminal.status.search", term, total))
+                .copy()
+                .append(entries.isEmpty()
+                        ? Component.translatable("gui.ae2addon.qianji_terminal.status.empty")
+                        : Component.translatable("gui.ae2addon.qianji_terminal.status.loaded",
+                                entries.size()))
+                .append(Component.translatable("gui.ae2addon.qianji_terminal.status.hint"))
+                .append(focusTicks > 0
+                        ? Component.translatable("gui.ae2addon.qianji_terminal.status.focused")
+                        : Component.empty());
+        g.drawString(font, status, leftPos + 8, topPos + 112, 0xFFFFFF, false);
 
         renderList(g, mx, my);
 
@@ -482,7 +491,7 @@ public class QianJiTerminalScreen extends AbstractContainerScreen<QianJiTerminal
                     x0 + 4, rowY + 1, 0xFFFFFF, false);
         }
         if (shown == 0) {
-            g.drawString(font, Component.literal("§8（这台网络上的千机里还没有样板）"),
+            g.drawString(font, Component.translatable("gui.ae2addon.qianji_terminal.list_empty"),
                     x0 + 4, y0 + 4, 0xFFFFFF, false);
         }
 
@@ -512,7 +521,8 @@ public class QianJiTerminalScreen extends AbstractContainerScreen<QianJiTerminal
         final int y = topPos + slot.y;
         if (blankCount <= 0) {
             // 网络里没有：只画一个淡淡的提示，别装成"有东西"
-            g.drawString(font, Component.literal("§8空"), x + 4, y + 4, 0xFFFFFF, false);
+            g.drawString(font, Component.translatable("gui.ae2addon.qianji_terminal.slot.empty"),
+                    x + 4, y + 4, 0xFFFFFF, false);
             return;
         }
         final int shown = (int) Math.min(blankCount, 64);
@@ -553,18 +563,20 @@ public class QianJiTerminalScreen extends AbstractContainerScreen<QianJiTerminal
     /** 空白样板槽的 tooltip：精确数量 + 三个操作提示（v283） */
     private void renderBlankSlotTooltip(GuiGraphics g, int mx, int my) {
         var lines = new ArrayList<Component>();
-        lines.add(Component.literal("§7网络里的空白样板：§e" + String.format(java.util.Locale.ROOT, "%,d", blankCount)));
-        lines.add(Component.literal("§8放入 = 存进 ME 网络（槽里不留）"));
-        lines.add(Component.literal("§8左键 = 从网络取 64 个到手上"));
-        lines.add(Component.literal("§8Shift+左键 = 从网络取 64 个进背包"));
+        lines.add(Component.translatable("gui.ae2addon.qianji_terminal.blank_stock",
+                String.format(java.util.Locale.ROOT, "%,d", blankCount)));
+        lines.add(Component.translatable("gui.ae2addon.qianji_terminal.tip.insert"));
+        lines.add(Component.translatable("gui.ae2addon.qianji_terminal.tip.left_click"));
+        lines.add(Component.translatable("gui.ae2addon.qianji_terminal.tip.shift_click"));
         g.renderComponentTooltip(font, lines, mx, my);
     }
 
     /** 悬停某行的 tooltip = 该样板的完整描述（与物品 tooltip 同源）+ 第一行定位 */
     private void renderRowTooltip(GuiGraphics g, int mx, int my, QianJiTerminalPagePacket.Entry entry) {
         var lines = new ArrayList<Component>();
-        lines.add(Component.literal("§8[" + entry.pos().getX() + ", " + entry.pos().getY() + ", "
-                + entry.pos().getZ() + "] 第 " + (entry.slot() / 54 + 1) + " 页 · 槽 " + entry.slot()));
+        lines.add(Component.translatable("gui.ae2addon.qianji_terminal.tooltip_pos",
+                entry.pos().getX(), entry.pos().getY(), entry.pos().getZ(),
+                entry.slot() / 54 + 1, entry.slot()));
         if (entry.tooltip() != null && !entry.tooltip().isEmpty()) {
             for (String line : entry.tooltip().split("\n")) {
                 if (!line.isEmpty()) lines.add(Component.literal(line));

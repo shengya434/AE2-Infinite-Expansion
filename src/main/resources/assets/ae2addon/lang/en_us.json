@@ -327,5 +327,22 @@
   "gui.ae2addon.qianji.search.hit_range": "§7Hits §e%s §7(§8%s-%s§8)",
   "gui.ae2addon.qianji.search.hint_scroll": " §8· scroll wheel or drag the bar",
   "gui.ae2addon.qianji.search.hint_click": " §8· click to jump",
-  "gui.ae2addon.qianji.search.tooltip_pos": "§8[page %s · slot %s]"
+  "gui.ae2addon.qianji.search.tooltip_pos": "§8[page %s · slot %s]",
+  "gui.ae2addon.qianji_terminal.title_plain": "§7QianJi · Pattern Terminal",
+  "gui.ae2addon.qianji_terminal.slot.blank": "§7Blank Pattern",
+  "gui.ae2addon.qianji_terminal.slot.encoded": "§7Encoded Pattern",
+  "gui.ae2addon.qianji_terminal.extras_label": "§7Upgrade Card / Quantum Entangled Singularity§8 (quantum bridge: links at range)",
+  "gui.ae2addon.qianji_terminal.status.all": "§7Network patterns §e%s",
+  "gui.ae2addon.qianji_terminal.status.search": "§7Search §f%s §7→ §e%s §7hits",
+  "gui.ae2addon.qianji_terminal.status.empty": " §8(empty)",
+  "gui.ae2addon.qianji_terminal.status.loaded": " §8(loaded %s)",
+  "gui.ae2addon.qianji_terminal.status.hint": " §8· left click to take out / right click to insert into that QianJi machine · hover for details",
+  "gui.ae2addon.qianji_terminal.status.focused": " §e◀ located the pattern just inserted",
+  "gui.ae2addon.qianji_terminal.list_empty": "§8(no patterns in this network's QianJi machines yet)",
+  "gui.ae2addon.qianji_terminal.slot.empty": "§8Empty",
+  "gui.ae2addon.qianji_terminal.blank_stock": "§7Blank patterns in network: §e%s",
+  "gui.ae2addon.qianji_terminal.tip.insert": "§8Insert = store into the ME network (not kept in the slot)",
+  "gui.ae2addon.qianji_terminal.tip.left_click": "§8Left click = take 64 from the network into your hand",
+  "gui.ae2addon.qianji_terminal.tip.shift_click": "§8Shift+left click = take 64 from the network into your inventory",
+  "gui.ae2addon.qianji_terminal.tooltip_pos": "§8[%s, %s, %s] page %s · slot %s"
 }

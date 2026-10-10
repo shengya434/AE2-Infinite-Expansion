@@ -327,5 +327,22 @@
   "gui.ae2addon.qianji.search.hit_range": "§7命中 §e%s §7条 §8(%s-%s)",
   "gui.ae2addon.qianji.search.hint_scroll": " §8· 滚轮或拖滑条",
   "gui.ae2addon.qianji.search.hint_click": " §8· 点击跳页",
-  "gui.ae2addon.qianji.search.tooltip_pos": "§8[第 %s 页 · 槽 %s]"
+  "gui.ae2addon.qianji.search.tooltip_pos": "§8[第 %s 页 · 槽 %s]",
+  "gui.ae2addon.qianji_terminal.title_plain": "§7千机·样板终端",
+  "gui.ae2addon.qianji_terminal.slot.blank": "§7空白样板",
+  "gui.ae2addon.qianji_terminal.slot.encoded": "§7编码样板",
+  "gui.ae2addon.qianji_terminal.extras_label": "§7升级卡 / 量子缠绕奇点§8（量子桥：远处也能连网）",
+  "gui.ae2addon.qianji_terminal.status.all": "§7全网样板 §e%s §7张",
+  "gui.ae2addon.qianji_terminal.status.search": "§7搜索 §f%s §7→ 命中 §e%s §7张",
+  "gui.ae2addon.qianji_terminal.status.empty": " §8(空)",
+  "gui.ae2addon.qianji_terminal.status.loaded": " §8(已载入 %s)",
+  "gui.ae2addon.qianji_terminal.status.hint": " §8· 左键取出 / 右键放入该千机 · 悬停看详情",
+  "gui.ae2addon.qianji_terminal.status.focused": " §e◀ 已定位到刚放入的样板",
+  "gui.ae2addon.qianji_terminal.list_empty": "§8（这台网络上的千机里还没有样板）",
+  "gui.ae2addon.qianji_terminal.slot.empty": "§8空",
+  "gui.ae2addon.qianji_terminal.blank_stock": "§7网络里的空白样板：§e%s",
+  "gui.ae2addon.qianji_terminal.tip.insert": "§8放入 = 存进 ME 网络（槽里不留）",
+  "gui.ae2addon.qianji_terminal.tip.left_click": "§8左键 = 从网络取 64 个到手上",
+  "gui.ae2addon.qianji_terminal.tip.shift_click": "§8Shift+左键 = 从网络取 64 个进背包",
+  "gui.ae2addon.qianji_terminal.tooltip_pos": "§8[%s, %s, %s] 第 %s 页 · 槽 %s"
 }
