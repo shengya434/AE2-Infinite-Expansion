@@ -1146,19 +1146,38 @@ public final class Mode2ConfigScreen extends GuiContainer {
                         }
                         return;
                     }
-                    if (rejectTab && mouseButton == 0 && !isShiftKeyDown() && !ctrlDownAny())
+                    // ===== 2026-10-10 根因修复：这里原来是**没有花括号**的 else-if 链 =====
+                    // 链尾那一枝写成
+                    //     else if (右键阈值条件)
+                    //         editingKeyNbt = entry.keyNbt;
+                    //     showItemThreshold(entry.item.copy(), entry.threshold);   // <-- 缩进骗人
+                    //     return;
+                    // Java 里没有花括号时只有第一句属于 if，所以 showItemThreshold 与 return 其实是
+                    // **无条件执行**的后续语句：任何一次行点击（普通左键、Ctrl+左键、Shift+左键、拒收页左键…）
+                    // 走完自己的分支后都会掉进 showItemThreshold，而它第一句就是 quantityEditing = EMPTY，
+                    // 把刚打开的数量编辑框当场抹掉 —— 这就是「普通左键=单物品阈值」「Ctrl+左键还是阈值」
+                    // 「保存数量/锁定按钮一闪就没」四个现象的同一个根因。
+                    // 修法：每一枝都补上花括号并各自 return，链尾留一个吞掉剩余点击的 return。
+                    if (rejectTab && mouseButton == 0 && !isShiftKeyDown() && !ctrlDownAny()) {
                         CellNetwork.send(withChannel(new Mode2ConfigPacket(7, entry.item.copy()), entry));
-                    else if (rejectTab && mouseButton == 1)
+                        return;
+                    }
+                    if (rejectTab && mouseButton == 1) {
                         CellNetwork.send(withChannel(new Mode2ConfigPacket(22, entry.item.copy()), entry));
-                    else if (!rejectTab && mouseButton == 1 && isShiftKeyDown())
+                        return;
+                    }
+                    if (!rejectTab && mouseButton == 1 && isShiftKeyDown()) {
                         CellNetwork.send(withChannel(new Mode2ConfigPacket(11, entry.item.copy()), entry));
-                    else if (!rejectTab && mouseButton == 1 && ctrlDownAny() && entry.whitelisted
+                        return;
+                    }
+                    if (!rejectTab && mouseButton == 1 && ctrlDownAny() && entry.whitelisted
                             && entry.item.getItem().getRegistryName() != null) {
                         Mode2ConfigPacket remove = new Mode2ConfigPacket(2);
                         remove.text = entry.item.getItem().getRegistryName().toString();
                         CellNetwork.send(remove);
+                        return;
                     }
-                    else if (!rejectTab && mouseButton == 0 && ctrlDownAny()) {
+                    if (!rejectTab && mouseButton == 0 && ctrlDownAny()) {
                         hideItemThreshold();
                         quantityEditing = entry.item.copy(); quantityLock = entry.quantityLocked;
                         quantityKeyNbt = entry.keyNbt;
@@ -1167,12 +1186,19 @@ public final class Mode2ConfigScreen extends GuiContainer {
                         for (GuiButton button : buttonList) if (button.id == 15)
                             button.displayString = I18n.format(quantityLock ? "gui.ae2addon.p3.lock"
                                     : "gui.ae2addon.p3.unlock");
+                        return;
                     }
-                    else if (!rejectTab && mouseButton == 0 && isShiftKeyDown())
+                    if (!rejectTab && mouseButton == 0 && isShiftKeyDown()) {
                         CellNetwork.send(withChannel(new Mode2ConfigPacket(5, entry.item.copy()), entry));
-                    else if (false /* 临时对照实验：按 sensei 2026-10-10 要求暂时禁用右键单物品阈值，用来判断数量编辑是不是真的坏了 */ && !rejectTab && mouseButton == 1 && !isShiftKeyDown())
+                        return;
+                    }
+                    if (!rejectTab && mouseButton == 1 && !isShiftKeyDown()) {
+                        // 右键单物品阈值（对照实验已结束，恢复启用）
                         editingKeyNbt = entry.keyNbt;
-                showItemThreshold(entry.item.copy(), entry.threshold);
+                        showItemThreshold(entry.item.copy(), entry.threshold);
+                        return;
+                    }
+                    // 其余点击（例如普通左键）故意什么都不做：防误触，原设计如此。
                     return;
                 }
             }
