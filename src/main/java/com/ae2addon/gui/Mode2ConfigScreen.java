@@ -470,6 +470,35 @@ public final class Mode2ConfigScreen extends GuiContainer {
         return rowChannelId == null || rowChannelId.isEmpty() ? panelChannel : rowChannelId;
     }
 
+    /**
+     * Draws {@code text} at a fraction of the normal font, trimmed so it never passes {@code maxWidth} SCREEN
+     * pixels. The trim happens in unscaled units ({@code maxWidth / scale}), which is the whole point: a smaller
+     * font fits more characters into the same space instead of just looking smaller.
+     */
+    private void drawScaledToWidth(String text, int x, int y, float scale, int maxWidth, int color) {
+        net.minecraft.client.renderer.GlStateManager.pushMatrix();
+        net.minecraft.client.renderer.GlStateManager.translate(x, y, 0F);
+        net.minecraft.client.renderer.GlStateManager.scale(scale, scale, 1F);
+        fontRenderer.drawString(fontRenderer.trimStringToWidth(text, (int) (maxWidth / scale)), 0, 0, color);
+        net.minecraft.client.renderer.GlStateManager.popMatrix();
+    }
+
+    /**
+     * What an infinite row shows for its amount: plain {@code ∞}, or {@code ∞(n)} carrying the committed amount
+     * when the cell reports one (sensei, 2026-10-10: "无限物品的承诺额度改以 ∞（n）形式呈现").
+     *
+     * <p>The {@code "(threshold)"} marker the server adds means the number is just the row's threshold and
+     * nothing was ever committed, so it is NOT shown as an amount -- {@code ∞(1000)} there would claim a
+     * commitment that does not exist.
+     */
+    private String infiniteLabel(Mode2ConfigPacket.PanelEntry entry) {
+        String committed = committedAmounts.get(itemId(entry.item));
+        if (committed == null || committed.contains("(threshold)")) {
+            return "§b∞";
+        }
+        return "§b∞(§f" + committed + "§b)";
+    }
+
     private void showItemThreshold(ItemStack item, long threshold) {
         quantityEditing = ItemStack.EMPTY;
         editing = item;
@@ -855,7 +884,10 @@ public final class Mode2ConfigScreen extends GuiContainer {
         if (!batchTab && !rejectTab && activeRule != null && !"item".equals(activeRule)) {
             hint = I18n.format("gui.ae2addon.mode2.filter_active", activeRule);
         }
-        fontRenderer.drawString(fontRenderer.trimStringToWidth(hint, 235), guiLeft + 10, guiTop + 61, 0xBBBBBB);
+        // 75% scale (sensei, 2026-10-10: "快捷键提示字体缩小点，都显示不完啦"): the bar carries four gestures
+        // and at full size the last one was trimmed off. The trim width is divided by the scale, so the smaller
+        // font really does fit more text into the same 235 screen pixels.
+        drawScaledToWidth(hint, guiLeft + 10, guiTop + 61, 0.75F, 235, 0xBBBBBB);
         if (batchTab) {
             // The category strip is the storage tab's (ore/mod rules, blacklist). This tab borrows its space to
             // say what the last search found -- and, while a confirmation is armed, what it is about to touch.
@@ -916,11 +948,23 @@ public final class Mode2ConfigScreen extends GuiContainer {
             fontRenderer.drawString(name, guiLeft + 13, y, 0xDDDDDD);
             String status = rejectTab ? (containsStack(rejectList.on(), entry.item)
                     ? I18n.format("gui.ae2addon.mode2.reject_mark") : I18n.format("gui.ae2addon.mode2.reject_allow_mark"))
-                    : (entry.infinite ? "§b∞" : shortAmount(entry.amount))
+                    : (entry.infinite ? infiniteLabel(entry) : shortAmount(entry.amount))
                     + (entry.quantityLocked ? " §eL" : "")
                     + (containsStack(blacklist, entry.item) ? " §cX" : "")
                     + (entry.whitelisted ? " §aW" : "");
-            fontRenderer.drawString(status, guiLeft + 149, y, 0xFFFFFF);
+            int statusX = guiLeft + 149;
+            fontRenderer.drawString(status, statusX, y, 0xFFFFFF);
+            // The per-item threshold lives in the ROW now, right after the amount (sensei, 2026-10-10:
+            // "单物品阈值数量移动到表格中物品存储数量的右侧，不以 tooltip 形式呈现"). Only rows that carry an
+            // override show it -- the global threshold applies everywhere else and would just be noise. Greyer
+            // than the amount, brighter while that row's editor is open, and it may not run past the row's edge.
+            if (entry.threshold > 0) {
+                String thr = "§8T" + entry.threshold;
+                int thrX = statusX + fontRenderer.getStringWidth(status) + 4;
+                int thrWidth = fontRenderer.getStringWidth(thr);
+                boolean open = !editing.isEmpty() && itemId(editing).equals(itemId(entry.item));
+                fontRenderer.drawString(thr, Math.min(thrX, guiLeft + 246 - thrWidth), y, open ? 0xFFFF77 : 0x999999);
+            }
         }
         if (workMode == 1) thresholdInput.drawTextBox();
         searchInput.drawTextBox();
@@ -942,13 +986,13 @@ public final class Mode2ConfigScreen extends GuiContainer {
                 tooltip.add(entry.infinite ? I18n.format("gui.ae2addon.mode2.infinite")
                         : I18n.format("gui.ae2addon.mode2.amount", entry.amount.toString()));
                 if (entry.infinite) tooltip.add(I18n.format("gui.ae2addon.p3.bytes", entry.bytes));
-                tooltip.add(I18n.format("gui.ae2addon.mode2.item_thr_title") + ": " + entry.threshold);
+                // The per-item threshold and the committed amount are drawn IN the row now (sensei, 2026-10-10),
+                // so they are no longer repeated here. The exact (unrounded) amount stays, because the row
+                // shows it in short form.
                 if (entry.quantityLocked) tooltip.add(I18n.format("gui.ae2addon.mode2.qty_lock_on"));
                 if (containsStack(blacklist, entry.item)) tooltip.add(I18n.format("gui.ae2addon.mode2.blacklisted"));
                 if (!rejectTab && entry.whitelisted)
                     tooltip.add(I18n.format("gui.ae2addon.p3.remove_whitelist_tip"));
-                if (entry.infinite && committedAmounts.containsKey(itemId(entry.item)))
-                    tooltip.add(I18n.format("gui.ae2addon.p3.committed", committedAmounts.get(itemId(entry.item))));
                 if (rejectTab) tooltip.add(I18n.format("gui.ae2addon.mode2.reject_tip"));
                 drawHoveringText(tooltip, mouseX, mouseY);
             }
