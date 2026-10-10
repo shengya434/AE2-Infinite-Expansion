@@ -944,8 +944,17 @@ public final class Mode2ConfigScreen extends GuiContainer {
             String name = entry.item.isEmpty() || !com.ae2addon.cell.CellChannelRegistry.ITEM.equals(entry.channelId)
                     ? (entry.label == null || entry.label.isEmpty() ? entry.channelId : entry.label)
                     : entry.item.getDisplayName();
-            if (fontRenderer.getStringWidth(name) > 102) name = fontRenderer.trimStringToWidth(name, 99) + "…";
-            fontRenderer.drawString(name, guiLeft + 13, y, 0xDDDDDD);
+            // In the 全部 view a row names its own channel too (sensei, 2026-10-10: "石头（物品）"): that list
+            // mixes every channel, and without the suffix a fluid's name and an item's name are told apart only
+            // by what the amount column happens to look like. The base name is trimmed FIRST so the suffix
+            // survives; the channel word keeps its own colour inside the parentheses.
+            String suffix = Mode2ConfigPacket.ALL_CHANNELS.equals(panelChannel)
+                    ? "§7（" + channelDisplayName(entry.channelId) + "§7）" : "";
+            if (fontRenderer.getStringWidth(name) + fontRenderer.getStringWidth(suffix) > 102) {
+                name = fontRenderer.trimStringToWidth(name,
+                        Math.max(20, 102 - fontRenderer.getStringWidth(suffix) - 6)) + "…";
+            }
+            fontRenderer.drawString(name + suffix, guiLeft + 13, y, 0xDDDDDD);
             String status = rejectTab ? (containsStack(rejectList.on(), entry.item)
                     ? I18n.format("gui.ae2addon.mode2.reject_mark") : I18n.format("gui.ae2addon.mode2.reject_allow_mark"))
                     : (entry.infinite ? infiniteLabel(entry) : shortAmount(entry.amount))
