@@ -675,9 +675,11 @@ public final class ChannelAnnouncer {
                 out.add(sized(entry.getKey(), 0L));
             }
         }
+        int retracted = 0;
         for (Map.Entry<IAEStack<?>, Long> entry : was.entrySet()) {
             if (!now.containsKey(entry.getKey()) && entry.getValue() != 0L) {
                 out.add(sized(entry.getKey(), -entry.getValue()));
+                retracted++;
             }
         }
         try {
@@ -686,8 +688,41 @@ public final class ChannelAnnouncer {
             AE2Addon.LOG.warn("[ae2addon] 全量播报失败：{}", failed.toString());
             return;
         }
+        logFullPass(channel, now.size(), was.size(), retracted, out.size());
         was.clear();
         was.putAll(now);
+    }
+
+    // ------------------------------------------------------------------
+    // TEMPORARY DIAGNOSTICS (2026-10-10) -- sensei's "终端里魔力在插入/取出元件时反而增加，
+    // 而且驱动器里没元件也还在" report. Read-only: nothing here changes behaviour, and the caps
+    // below keep it to a handful of lines. DELETE THIS BLOCK once the cause is pinned.
+    // ------------------------------------------------------------------
+
+    private static final int MAX_PASS_LOGS = 40;
+    private static int passLogs = 0;
+    private static final int MAX_STALE_LOGS = 20;
+    private static int staleLogs = 0;
+
+    /** One line per full pass: what we computed, and whether anything was RETRACTED. */
+    private static void logFullPass(IStorageChannel<?> channel, int now, int was, int retracted, int out) {
+        if (passLogs >= MAX_PASS_LOGS) {
+            return;
+        }
+        passLogs++;
+        AE2Addon.LOG.info("[ae2addon][dbg] 全量播报 channel={} now={} was={} 撤回={} 发出={}",
+                channel == null ? "null" : channel.getClass().getSimpleName(), now, was, retracted, out);
+    }
+
+    /** A cell we still believe is bound no longer answers for this provider: the binding is stale. */
+    private static void logStaleBinding(ItemStack stack) {
+        if (staleLogs >= MAX_STALE_LOGS) {
+            return;
+        }
+        staleLogs++;
+        AE2Addon.LOG.info("[ae2addon][dbg] 绑定已失效（该 provider 下已问不到这个元件）: {}",
+                stack == null || stack.isEmpty() ? "empty"
+                        : (stack.getItem().getRegistryName() == null ? "?" : stack.getItem().getRegistryName()));
     }
 
     /** The remembered announcement sizes for one (provider, channel). Caller holds the lock. */
@@ -726,6 +761,7 @@ public final class ChannelAnnouncer {
                 ICellInventoryHandler<?> handler = AEApi.instance().registries().cell()
                         .getCellInventory(stack, provider, (IStorageChannel) channel);
                 if (handler == null) {
+                    logStaleBinding(stack);
                     continue;
                 }
                 appeng.api.storage.data.IItemList list = channel.createList();

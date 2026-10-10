@@ -442,6 +442,16 @@ public final class Mode2ConfigScreen extends GuiContainer {
 
     /** The key NBT of the row whose threshold is being edited (null = an item row from an older path). */
     private net.minecraft.nbt.NBTTagCompound editingKeyNbt;
+
+    /**
+     * The channel of the ROW whose threshold box is open -- not the panel's selection.
+     *
+     * <p>Since the panel gained a 全部 view, {@code panelChannel} can be the pseudo id {@code "all"}, which
+     * {@code CellChannelRegistry.byId()} cannot resolve, so the server's {@code resolveKey} returned null and
+     * dropped the action: the threshold box looked dead on that view and worked on any single channel
+     * (sensei's A/B log, 2026-10-10: {@code channel=all key=null（会被丢弃）}). Every row knows its own channel.
+     */
+    private String editingChannelId;
     /**
      * The key of the row whose "元件内数量" is being edited, in its own channel's NBT.
      *
@@ -451,6 +461,14 @@ public final class Mode2ConfigScreen extends GuiContainer {
      * kept working. That is exactly why the number looked like it had gone into the threshold instead.
      */
     private net.minecraft.nbt.NBTTagCompound quantityKeyNbt;
+
+    /** Same reasoning as {@link #editingChannelId}: the quantity box acts on the ROW's channel. */
+    private String quantityChannelId;
+
+    /** The row's own channel when it has one, else the panel's selection (see {@link #editingChannelId}). */
+    private String rowChannelOrPanel(String rowChannelId) {
+        return rowChannelId == null || rowChannelId.isEmpty() ? panelChannel : rowChannelId;
+    }
 
     private void showItemThreshold(ItemStack item, long threshold) {
         quantityEditing = ItemStack.EMPTY;
@@ -473,8 +491,11 @@ public final class Mode2ConfigScreen extends GuiContainer {
             long value = raw.isEmpty() ? 0 : ThresholdExpression.parse(raw);
             if (value < 0) throw new NumberFormatException();
             Mode2ConfigPacket packet = Mode2ConfigPacket.itemThreshold(editing.copy(), value);
-        packet.channelId = panelChannel;
+        packet.channelId = rowChannelOrPanel(editingChannelId);
         packet.keyNbt = editingKeyNbt;
+        // TEMPORARY DIAGNOSTIC (2026-10-10): what the client actually sends when sensei saves a threshold.
+        com.ae2addon.AE2Addon.LOG.info("[ae2addon][dbg] 单物品阈值发出 value={} channel={} keyNbt={}",
+                value, packet.channelId, editingKeyNbt == null ? "null" : "有");
         CellNetwork.send(packet);
             hideItemThreshold();
         } catch (NumberFormatException ex) { itemThresholdInput.setText(""); }
@@ -486,7 +507,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
         // Carry the row's OWN key, exactly like saveItemThreshold does. Without these two fields the server can
         // only rebuild the key from the item stack, which is no key at all on a fluid / gas / mana / flux row --
         // the action was silently dropped there (see quantityKeyNbt).
-        packet.channelId = panelChannel;
+        packet.channelId = rowChannelOrPanel(quantityChannelId);
         packet.keyNbt = quantityKeyNbt;
         CellNetwork.send(packet);
         quantityEditing = ItemStack.EMPTY;
@@ -1181,6 +1202,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
                         hideItemThreshold();
                         quantityEditing = entry.item.copy(); quantityLock = entry.quantityLocked;
                         quantityKeyNbt = entry.keyNbt;
+                        quantityChannelId = entry.channelId;
                         quantityInput.setText(entry.amount.toString()); quantityInput.setFocused(true);
                         updateEditingButtons();
                         for (GuiButton button : buttonList) if (button.id == 15)
@@ -1195,6 +1217,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
                     if (!rejectTab && mouseButton == 1 && !isShiftKeyDown()) {
                         // 右键单物品阈值（对照实验已结束，恢复启用）
                         editingKeyNbt = entry.keyNbt;
+                        editingChannelId = entry.channelId;
                         showItemThreshold(entry.item.copy(), entry.threshold);
                         return;
                     }

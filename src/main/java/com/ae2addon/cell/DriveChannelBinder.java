@@ -115,6 +115,7 @@ public final class DriveChannelBinder {
                 }
                 list.add(watchers.create(handler, stack, cellHandler, slots.provider(), slots.priority()));
                 added++;
+                logBind(channel, stack, list.size());
                 // Remember that this cell is bound on this channel. The keys are NOT computed here on purpose:
                 // binding happens during a grid rebuild, which usually runs while the cell is still in mode 1,
                 // and switching modes does not rebuild the drive -- so a key list captured now would be empty
@@ -130,5 +131,27 @@ public final class DriveChannelBinder {
             }
         }
         return added;
+    }
+
+    // ------------------------------------------------------------------
+    // TEMPORARY DIAGNOSTIC (2026-10-10) -- sensei's "终端里魔力在插入/取出元件时反而增加，
+    // 而且驱动器里没元件也还在" report. Read-only, capped, delete once the cause is pinned.
+    // The interesting number is the LIST SIZE: if the same cell ends up registered twice for one
+    // channel, the network sums it twice and the row reads 2x.
+    // ------------------------------------------------------------------
+
+    private static final int MAX_BIND_LOGS = 40;
+    private static int bindLogs = 0;
+
+    private static void logBind(IStorageChannel<?> channel, ItemStack stack, int listSize) {
+        if (bindLogs >= MAX_BIND_LOGS) {
+            return;
+        }
+        bindLogs++;
+        com.ae2addon.AE2Addon.LOG.info("[ae2addon][dbg] 绑定通道 channel={} item={} 该通道处理表长度={}",
+                channel == null ? "null" : channel.getClass().getSimpleName(),
+                stack == null || stack.isEmpty() ? "empty"
+                        : (stack.getItem().getRegistryName() == null ? "?" : stack.getItem().getRegistryName()),
+                listSize);
     }
 }
