@@ -8,6 +8,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 
@@ -109,12 +110,13 @@ public class QianJiScreen extends AbstractContainerScreen<QianJiMenu> {
 
         // 搜索入口：顶行最左边那块空位（◀ 在 cx-52，左边空着）
         searchBtn = addRenderableWidget(Button.builder(
-                Component.literal("搜"),
+                Component.translatable("gui.ae2addon.qianji.btn.search"),
                 btn -> toggleSearch()
         ).bounds(leftPos + 6, topPos + 5, 20, 16).build());
 
         // 输入框：占顶行整条（搜索展开时把 ◀/▶/搜 三个按钮藏起来，避免重叠）
-        searchBox = new EditBox(font, leftPos + 8, topPos + 4, 120, 16, Component.literal("搜索样板"));
+        searchBox = new EditBox(font, leftPos + 8, topPos + 4, 120, 16,
+                Component.translatable("gui.ae2addon.qianji.search.placeholder"));
         searchBox.setMaxLength(64);
         addRenderableWidget(searchBox);
 
@@ -170,10 +172,10 @@ public class QianJiScreen extends AbstractContainerScreen<QianJiMenu> {
         draggingScrollbar = false;
         if (term.isEmpty()) {
             hits = List.of();
-            searchStatus = "§e先输入关键词";
+            searchStatus = I18n.get("gui.ae2addon.qianji.search.need_keyword");
             return;
         }
-        searchStatus = "§7搜索中…";
+        searchStatus = I18n.get("gui.ae2addon.qianji.search.searching");
         AE2Addon.NETWORK.sendToServer(new QianJiSearchRequestPacket(term));
     }
 
@@ -190,7 +192,7 @@ public class QianJiScreen extends AbstractContainerScreen<QianJiMenu> {
         this.searchTerm = term;
         this.hits = result == null ? List.of() : result;
         this.searchStatus = this.hits.isEmpty()
-                ? "§c没有命中的样板 §8（试试产物名 / 机器名 / 注册名）"
+                ? I18n.get("gui.ae2addon.qianji.search.no_hit")
                 : "";
         this.scrollRow = 0;
         if (!this.hits.isEmpty()) {
@@ -379,21 +381,28 @@ public class QianJiScreen extends AbstractContainerScreen<QianJiMenu> {
         if (!searchOpen) {
             int page = menu.getCurrentPage();
             int maxPage = (PATTERN_SLOTS + PAGE_SIZE - 1) / PAGE_SIZE - 1;
-            String pageText = (hits.isEmpty() ? "" : "§a" + hits.size() + "命中 §8| ")
-                    + "§7" + (page + 1) + " / " + (maxPage + 1);
-            g.drawString(font, Component.literal(pageText),
+            Component pageText = Component.empty()
+                    .append(hits.isEmpty()
+                            ? Component.empty()
+                            : Component.translatable("gui.ae2addon.qianji.search.hit_count",
+                                    hits.size()))
+                    .append("§7" + (page + 1) + " / " + (maxPage + 1));
+            g.drawString(font, pageText,
                     leftPos + W / 2 - font.width(pageText) / 2, topPos + 7, 0xFFFFFF, false);
 
-            g.drawString(font, Component.literal("§7催化剂"),
+            g.drawString(font, Component.translatable("gui.ae2addon.qianji.label.catalyst"),
                     leftPos + 28, topPos + 22, 0x888888, false);
 
             boolean cpuOnline = menu.isIntegratedCpuOnline();
-            g.drawString(font, Component.literal(cpuOnline ? "§7集成CPU：§a在线" : "§7集成CPU：§c未在线"),
+            g.drawString(font, Component.translatable(cpuOnline
+                            ? "gui.ae2addon.qianji.cpu.online"
+                            : "gui.ae2addon.qianji.cpu.offline"),
                     leftPos + 84, topPos + 22, 0xFFFFFF, false);
-            g.drawString(font, Component.literal("§7当前并行数：" + menu.parallelText()),
+            g.drawString(font, Component.translatable("gui.ae2addon.qianji.label.parallel")
+                            .append(menu.parallelText()),
                     leftPos + 84, topPos + 32, 0xFFFFFF, false);
 
-            g.drawString(font, Component.literal("§7样板"),
+            g.drawString(font, Component.translatable("gui.ae2addon.qianji.label.patterns"),
                     leftPos + 8, topPos + 42, 0x555555, false);
         }
 
@@ -438,13 +447,15 @@ public class QianJiScreen extends AbstractContainerScreen<QianJiMenu> {
         g.fill(x0, y0, x1, y1, 0xF0101010);
         outline(g, x0, y0, PANEL_W, PANEL_H, 0xFF9AA0A6);
 
-        g.drawString(font, "§7搜索 §8(输入/产物/机器 · Enter 搜索 · Esc 收起)",
+        g.drawString(font, Component.translatable("gui.ae2addon.qianji.search.hint"),
                 x0 + 4, y0 + 3, 0xFFFFFF, false);
 
         int listTop = topPos + LIST_TOP;
         if (hits.isEmpty()) {
             g.drawString(font,
-                    searchStatus.isEmpty() ? "§8在这台千机的 1280 个槽里搜样板" : searchStatus,
+                    searchStatus.isEmpty()
+                            ? Component.translatable("gui.ae2addon.qianji.search.hint_idle")
+                            : Component.literal(searchStatus),
                     x0 + 4, listTop + 2, 0xFFFFFF, false);
         } else {
             int shown = Math.min(hits.size() - scrollRow, MAX_ROWS);
@@ -457,19 +468,27 @@ public class QianJiScreen extends AbstractContainerScreen<QianJiMenu> {
                 if (idx == hoverRow) {
                     g.fill(x0 + 2, rowY - 1, listRight + 6, rowY + ROW_H - 1, 0x40FFFFFF);
                 }
-                String line = "§8[" + (hit.slot() / PAGE_SIZE + 1) + "页 槽" + hit.slot() + "] §f" + hit.label();
-                g.drawString(font, font.plainSubstrByWidth(line, listRight - (x0 + 4)),
+                Component line = Component.translatable("gui.ae2addon.qianji.search.row",
+                                hit.slot() / PAGE_SIZE + 1, hit.slot())
+                        .append("§f" + hit.label());                g.drawString(font, font.plainSubstrByWidth(line.getString(), listRight - (x0 + 4)),
                         x0 + 4, rowY, 0xFFFFFF, false);
             }
             renderScrollbar(g, mx, my);
         }
 
-        String bottom = hits.isEmpty()
-                ? "§8点结果跳页 · 命中槽画绿框"
-                : "§7命中 §e" + hits.size() + " §7条 §8(" + (scrollRow + 1) + "-"
-                  + Math.min(hits.size(), scrollRow + MAX_ROWS) + ")"
-                  + (maxScroll() > 0 ? " §8· 滚轮或拖滑条" : "")
-                  + " §8· 点击跳页";
+        Component bottom;
+        if (hits.isEmpty()) {
+            bottom = Component.translatable("gui.ae2addon.qianji.search.hint_jump");
+        } else {
+            bottom = Component.empty()
+                    .append(Component.translatable("gui.ae2addon.qianji.search.hit_range",
+                            hits.size(), scrollRow + 1,
+                            Math.min(hits.size(), scrollRow + MAX_ROWS)))
+                    .append(maxScroll() > 0
+                            ? Component.translatable("gui.ae2addon.qianji.search.hint_scroll")
+                            : Component.empty())
+                    .append(Component.translatable("gui.ae2addon.qianji.search.hint_click"));
+        }
         g.drawString(font, bottom, x0 + 4, y1 - 11, 0xFFFFFF, false);
 
         if (searchBox != null) {
@@ -500,7 +519,8 @@ public class QianJiScreen extends AbstractContainerScreen<QianJiMenu> {
      */
     private void renderHitTooltip(GuiGraphics g, int mx, int my, QianJiSearchResultPacket.Hit hit) {
         var lines = new ArrayList<Component>();
-        lines.add(Component.literal("§8[第 " + (hit.slot() / PAGE_SIZE + 1) + " 页 · 槽 " + hit.slot() + "]"));
+        lines.add(Component.translatable("gui.ae2addon.qianji.search.tooltip_pos",
+                hit.slot() / PAGE_SIZE + 1, hit.slot()));
         if (hit.tooltip() != null && !hit.tooltip().isEmpty()) {
             for (String line : hit.tooltip().split("\n")) {
                 if (!line.isEmpty()) lines.add(Component.literal(line));
