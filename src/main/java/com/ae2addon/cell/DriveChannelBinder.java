@@ -80,6 +80,11 @@ public final class DriveChannelBinder {
         }
         List order = new ArrayList(channels);
         int added = 0;
+        // The cells this drive holds right now, collected once: after the loop they are handed to
+        // ChannelAnnouncer.retain(), which drops the bindings of cells that are GONE and queues a full pass so
+        // the amounts we announced for them are taken back. Copies, because the slot's stack object is mutated
+        // in place when a cell is pulled out (see ChannelAnnouncer.queue).
+        List<ItemStack> live = new ArrayList<>();
         final int slotCount = slots.count();
         for (int slot = 0; slot < slotCount; slot++) {
             ItemStack stack = slots.stackAt(slot);
@@ -90,6 +95,7 @@ public final class DriveChannelBinder {
             if (!(cellHandler instanceof UnlimitedCellHandler)) {
                 continue;
             }
+            live.add(stack.copy());
             // Reproduce AE2's own choice: the first channel in this order that answers. The drive already
             // registered that one -- adding it again would list the cell twice in that channel.
             IStorageChannel alreadyBound = null;
@@ -115,7 +121,6 @@ public final class DriveChannelBinder {
                 }
                 list.add(watchers.create(handler, stack, cellHandler, slots.provider(), slots.priority()));
                 added++;
-                logBind(channel, stack, list.size());
                 // Remember that this cell is bound on this channel. The keys are NOT computed here on purpose:
                 // binding happens during a grid rebuild, which usually runs while the cell is still in mode 1,
                 // and switching modes does not rebuild the drive -- so a key list captured now would be empty
@@ -130,28 +135,11 @@ public final class DriveChannelBinder {
                 ChannelAnnouncer.queue(slots.provider(), channel, stack);
             }
         }
-        return added;
-    }
-
-    // ------------------------------------------------------------------
-    // TEMPORARY DIAGNOSTIC (2026-10-10) -- sensei's "终端里魔力在插入/取出元件时反而增加，
-    // 而且驱动器里没元件也还在" report. Read-only, capped, delete once the cause is pinned.
-    // The interesting number is the LIST SIZE: if the same cell ends up registered twice for one
-    // channel, the network sums it twice and the row reads 2x.
-    // ------------------------------------------------------------------
-
-    private static final int MAX_BIND_LOGS = 40;
-    private static int bindLogs = 0;
-
-    private static void logBind(IStorageChannel<?> channel, ItemStack stack, int listSize) {
-        if (bindLogs >= MAX_BIND_LOGS) {
-            return;
+        // Reconcile: a cell that is no longer in this drive must not stay bound (2026-10-10). Runs after the
+        // add pass so a cell that is present is not dropped before it was ever bound.
+        for (Object element : order) {
+            ChannelAnnouncer.retain(slots.provider(), (IStorageChannel<?>) element, live);
         }
-        bindLogs++;
-        com.ae2addon.AE2Addon.LOG.info("[ae2addon][dbg] 绑定通道 channel={} item={} 该通道处理表长度={}",
-                channel == null ? "null" : channel.getClass().getSimpleName(),
-                stack == null || stack.isEmpty() ? "empty"
-                        : (stack.getItem().getRegistryName() == null ? "?" : stack.getItem().getRegistryName()),
-                listSize);
+        return added;
     }
 }
