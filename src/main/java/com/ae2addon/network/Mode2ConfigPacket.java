@@ -401,10 +401,9 @@ public final class Mode2ConfigPacket implements IMessage {
         } else if (msg.type == 14) inv.wipeAllData();
         else if (msg.type == 15) inv.setRuleMode(UnlimitedCellInventory.ruleKey(msg.isOre, msg.text), msg.ruleMode);
         else if (msg.type == 16) {
-            // TEMPORARY DIAGNOSTIC (2026-10-10): sensei reports the single-item threshold "does not change".
-            // This line tells us whether the packet arrives with a resolvable key, or is dropped right here.
-            com.ae2addon.AE2Addon.LOG.info("[ae2addon][dbg] 单物品阈值收到 value={} channel={} key={}",
-                    msg.value, channelId, actionKey == null ? "null（会被丢弃）" : String.valueOf(actionKey));
+            // A threshold action whose key cannot be resolved is DROPPED on purpose instead of guessed at (see
+            // resolveKey). The 2026-10-10 bug was on the sending side: the client put the panel's SELECTION
+            // ("all") in channelId instead of the row's own channel, so nothing resolved and the box looked dead.
             if (actionKey == null) return;
             core.setItemThresholdOf(actionKey, msg.value);
         } else if (msg.type == 17) {

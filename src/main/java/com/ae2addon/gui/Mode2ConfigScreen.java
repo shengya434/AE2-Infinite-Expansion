@@ -522,9 +522,6 @@ public final class Mode2ConfigScreen extends GuiContainer {
             Mode2ConfigPacket packet = Mode2ConfigPacket.itemThreshold(editing.copy(), value);
         packet.channelId = rowChannelOrPanel(editingChannelId);
         packet.keyNbt = editingKeyNbt;
-        // TEMPORARY DIAGNOSTIC (2026-10-10): what the client actually sends when sensei saves a threshold.
-        com.ae2addon.AE2Addon.LOG.info("[ae2addon][dbg] 单物品阈值发出 value={} channel={} keyNbt={}",
-                value, packet.channelId, editingKeyNbt == null ? "null" : "有");
         CellNetwork.send(packet);
             hideItemThreshold();
         } catch (NumberFormatException ex) { itemThresholdInput.setText(""); }
