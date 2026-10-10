@@ -25,11 +25,11 @@ public final class QuantityExpression {
      * typed exactly that into the quantity box). The box is allowed to mean what it says; only "absurdly
      * expensive to compute or store" is refused, and then with a message rather than a substitution.
      *
-     * <p>2026-10-10 (sensei, option B): the parser is still unbounded, but the value the box may STORE is not
-     * -- {@code ChannelCellCore.setStoredQuantity} refuses anything above that channel's infinite value
-     * ({@code Long.MAX_VALUE / 4}). The limit belongs there, not here: the parser has no idea which channel or
-     * which cell the number is meant for, and the "the box means what it says, refuse instead of substitute"
-     * rule from 2026-10-03 is kept -- an over-limit input is refused with a chat message, never rewritten.
+     * <p>2026-10-10 (sensei): the parser stays unbounded, and so does the UNLOCKED box (拓展 -- {@code 2^128}
+     * is legal). Only a LOCKED amount is bounded, at that channel's infinite value, and the limit lives in
+     * {@code ChannelCellCore.setStoredQuantity}, not here: the parser has no idea which channel or which cell
+     * the number is for. The 2026-10-03 rule is kept either way -- an over-limit input is refused with a chat
+     * message, never rewritten into something else.
      */
     private static final long MAX_RESULT_DIGITS = 1000L;
 

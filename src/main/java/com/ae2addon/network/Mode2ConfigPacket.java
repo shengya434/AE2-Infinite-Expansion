@@ -405,14 +405,15 @@ public final class Mode2ConfigPacket implements IMessage {
                 // box silently mean 9.22e18 instead. Only the parser's digit bound applies, and a refusal is
                 // reported instead of substituted.
                 BigInteger amount = QuantityExpression.parse(msg.quantityText);
-                // 2026-10-10 (sensei, option B): the box is capped at this channel's infinite value and an
-                // over-cap request is REFUSED with a message, not clamped. Two reasons: a row reporting more
-                // than the infinite value would wrap AE2's summing inventory negative again (see
-                // setStoredQuantity), and a locked amount above the infinite value draws as "∞" on the client,
-                // i.e. it becomes indistinguishable from a real infinite claim.
+                // 2026-10-10 (sensei): the box has two jobs and only ONE of them is bounded.
+                //  - LOCKED = "从 1 至无限之间取一值" -- above the channel's infinite value it is meaningless
+                //    (and since 2026-10-05 it would draw as "∞" anyway), so it is REFUSED with a message,
+                //    never silently clamped (2026-10-03's rule).
+                //  - UNLOCKED = 拓展 the cell's capacity -- deliberately unbounded, 2^128 stays legal; only
+                //    what the cell REPORTS is topped off at infinite-1 (see ChannelCellCore.reportMap).
                 long cap = core.reportedInfinite();
-                if (amount.compareTo(BigInteger.valueOf(cap)) > 0) {
-                    player.sendMessage(new TextComponentString("§c[ae2addon] 元件内数量上限 = " + cap
+                if (msg.lock && amount.compareTo(BigInteger.valueOf(cap)) > 0) {
+                    player.sendMessage(new TextComponentString("§c[ae2addon] 锁定量上限 = " + cap
                             + "（本通道的无限值），已拒绝：" + amount));
                 } else if (!core.setStoredQuantityOf(actionKey, amount, msg.lock)) {
                     player.sendMessage(new TextComponentString("§c[ae2addon] 元件内数量写入失败：" + amount));

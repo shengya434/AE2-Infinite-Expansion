@@ -1126,11 +1126,12 @@ public class CommandCellSelfTest extends CommandBase {
      * bits. That clamp is gone -- the parser's bound is now a digit count, and an over-limit input is refused
      * with a message instead of being substituted.
      *
-     * <p>2026-10-10 (sensei, option B): the box itself now refuses anything above this channel's infinite
-     * value ({@code Long.MAX_VALUE / 4}). Once the infinite value became {@code Long.MAX/4} (2026-10-05), a
-     * wider locked amount reported {@code Long.MAX} into AE2's summing inventory -- the exact wrap that change
-     * removed -- and the client drew it as "∞" anyway, i.e. a locked amount was indistinguishable from a real
-     * infinite claim. So J4 pins the REFUSAL, and J5 pins that the cap is what the box accepts.
+     * <p>2026-10-10 (sensei): the box has TWO jobs and only the lock is bounded. LOCKED means "从 1 至无限之间
+     * 取一值" -- above the channel's infinite value it is meaningless, and since 2026-10-05 a locked amount
+     * that big would draw as "∞" anyway, i.e. it would be indistinguishable from a real infinite claim. So an
+     * over-cap LOCK is refused (J5). UNLOCKED is 拓展, deliberately unbounded -- {@code 2^128} stays legal
+     * (J4) -- and only what the cell REPORTS is topped off at {@code infinite - 1}, so AE2's summing inventory
+     * can never wrap (also J4). J6 pins that the cap itself is a legal lock and that a lock really does pin.
      */
     private void runBigQuantityGroup(ICommandSender sender) {
         final BigInteger twoPow128 = BigInteger.ONE.shiftLeft(128);
@@ -1169,34 +1170,46 @@ public class CommandCellSelfTest extends CommandBase {
         check(sender, "J3", "防炸护栏仍在：2^99999（约 3 万位数字）被拒绝，而不是硬算",
                 j3refused, "拒绝", String.valueOf(j3refused));
 
-        // J4: an over-cap record is REFUSED, not clamped -- sensei's option B, 2026-10-10.
-        // The box used to accept 2^128 (2026-10-03 removed the 63-bit clamp, for good reasons); since
-        // 2026-10-05 (INFINITE = Long.MAX/4) that reintroduced two problems at once: the row reported
-        // clamp(2^128) = Long.MAX into AE2's SUMMING inventory (Long.MAX + anything positive wraps negative,
-        // and a negative row is invisible), and the client drew a size that big as "∞" -- so a locked amount
-        // looked exactly like a real infinite claim. The cap is the channel's own infinite value.
+        // J4: UNLOCKED 2^128 is still legal (that is 拓展, the box's other job) -- and the cell must not
+        // REPORT more than the infinite value, or AE2's summing inventory wraps negative (2026-10-05's whole
+        // point). The ledger stays exact; only the reported figure is topped off, at infinite-1.
         UnlimitedCellInventory j4 = newInventory("j4");
         j4.setMode(2);
         j4.setWorkMode(1);
-        boolean j4accepted = j4.setStoredQuantity(key(Items.DIAMOND), twoPow128, true);
-        BigInteger j4stored = j4.storedAmount(key(Items.DIAMOND));
-        boolean j4locked = j4.isQuantityLocked(key(Items.DIAMOND));
         long j4cap = j4.reportedInfinite();
-        check(sender, "J4", "★ 元件内数量 2^128 超上限（=本通道无限值 Long.MAX/4）被拒绝：未写入、未上锁",
-                !j4accepted && j4stored.signum() == 0 && !j4locked && j4cap == ChannelCellCore.INFINITE,
-                "拒绝/0/false/" + ChannelCellCore.INFINITE,
-                j4accepted + "/" + j4stored + "/" + j4locked + "/" + j4cap);
+        boolean j4accepted = j4.setStoredQuantity(key(Items.DIAMOND), twoPow128, false);
+        BigInteger j4stored = j4.storedAmount(key(Items.DIAMOND));
+        long j4listed = listedSize(j4, key(Items.DIAMOND));
+        check(sender, "J4", "★ 未锁定 2^128 仍可写（拓展保留）；对外上报顶格 = 无限值−1（不是 Long.MAX）",
+                j4accepted && twoPow128.equals(j4stored) && j4listed == j4cap - 1 && j4cap == ChannelCellCore.INFINITE,
+                "接受/" + twoPow128 + "/" + (ChannelCellCore.INFINITE - 1),
+                j4accepted + "/" + j4stored + "/" + j4listed);
 
-        // J5: the cap itself is accepted, and it really is the extraction ceiling for that key
+        // J5: a LOCKED amount above the infinite value is REFUSED -- "从 1 至无限之间取一值", so 2^128 has no
+        // meaning as a lock, and it would draw as "∞" anyway. Refused, not clamped (2026-10-03's rule).
         UnlimitedCellInventory j5 = newInventory("j5");
         j5.setMode(2);
         j5.setWorkMode(1);
-        boolean j5accepted = j5.setStoredQuantity(key(Items.EMERALD), BigInteger.valueOf(j4cap), false);
-        long j5take = size(j5.extractItems(stack(Items.EMERALD, longMax), Actionable.MODULATE, NO_SOURCE));
-        BigInteger j5left = j5.storedAmount(key(Items.EMERALD));
-        check(sender, "J5", "元件内数量 = 上限（无限值）可写入；取 Long.MAX 只拿到上限值，账本归 0",
-                j5accepted && j5take == j4cap && j5left.signum() == 0,
-                "接受/" + j4cap + "/0", j5accepted + "/" + j5take + "/" + j5left);
+        boolean j5accepted = j5.setStoredQuantity(key(Items.EMERALD), twoPow128, true);
+        BigInteger j5stored = j5.storedAmount(key(Items.EMERALD));
+        boolean j5locked = j5.isQuantityLocked(key(Items.EMERALD));
+        check(sender, "J5", "★ 锁定量 2^128 超上限（=本通道无限值 Long.MAX/4）被拒绝：未写入、未上锁",
+                !j5accepted && j5stored.signum() == 0 && !j5locked,
+                "拒绝/0/false", j5accepted + "/" + j5stored + "/" + j5locked);
+
+        // J6: the cap itself is a legal lock, and a lock really pins: taking Long.MAX hands out the cap and
+        // leaves the record untouched.
+        UnlimitedCellInventory j6 = newInventory("j6");
+        j6.setMode(2);
+        j6.setWorkMode(1);
+        boolean j6accepted = j6.setStoredQuantity(key(Items.GOLD_INGOT), BigInteger.valueOf(j6.reportedInfinite()), true);
+        long j6take = size(j6.extractItems(stack(Items.GOLD_INGOT, longMax), Actionable.MODULATE, NO_SOURCE));
+        BigInteger j6after = j6.storedAmount(key(Items.GOLD_INGOT));
+        check(sender, "J6", "锁定量 = 上限（无限值）可写；取 Long.MAX 只拿到上限值，账本不变（锁定钉住）",
+                j6accepted && j6take == j6.reportedInfinite()
+                        && BigInteger.valueOf(j6.reportedInfinite()).equals(j6after),
+                "接受/" + j6.reportedInfinite() + "/" + j6.reportedInfinite(),
+                j6accepted + "/" + j6take + "/" + j6after);
     }
 
     /**

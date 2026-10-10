@@ -908,6 +908,13 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
      *
      * <p>So the decision is made with {@code findPrecise} -- the very identity {@code ItemList.add} uses to
      * find its record -- instead of a Set lookup, which can disagree with it and let the add through.
+     *
+     * <p><b>Since 2026-10-10 a single row also never REPORTS more than the infinite value</b>: anything at or
+     * above it is topped off at {@code infinite - 1}. The stored ledger is untouched and stays exact (the
+     * panel's 拓展 field really can hold {@code 2^128}), but the network only ever sees a sum-safe figure:
+     * four claims of {@code infinite} are the most a {@code long} holds, so nothing can wrap. One below the
+     * infinite value on purpose -- reporting exactly {@code infinite} would trip the
+     * {@code existing.getStackSize() >= infinite} skip below and hide a real finite row.
      */
     private <S extends IAEStack<S>> void reportMap(IItemList<S> out, Map<IAEStack<?>, BigInteger> map) {
         long infinite = cellChannel.reportedInfinite();
@@ -915,6 +922,9 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             long size = clamp(entry.getValue());
             if (size <= 0) {
                 continue;
+            }
+            if (size >= infinite) {
+                size = infinite - 1;
             }
             S key = castKey(entry.getKey());
             S existing = out.findPrecise(key);
@@ -1705,20 +1715,19 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
      * the whole quantity-lock / whitelist / committed family is a mode 2 concept, so it must not be able to
      * write into mode 1's isolated room.
      *
-     * <p><b>The value is capped at this channel's own infinite value</b> ({@link #reportedInfinite()}) and an
-     * over-cap request is <b>refused</b> (returns false), never silently clamped -- sensei's decision,
-     * 2026-10-10, option B. Two reasons:
-     * <ol>
-     * <li>AE2's network inventory is a SUMMING list. A row that reports more than the infinite value brings
-     * back exactly the wrap the 2026-10-05 change ({@code INFINITE = Long.MAX_VALUE / 4}) removed: the report
-     * path clamps a BigInteger to {@code Long.MAX_VALUE}, and {@code Long.MAX_VALUE + anything positive} is
-     * negative -- a negative row is simply not shown by the terminal.</li>
-     * <li>Until this change the box accepted {@code 2^128} (2026-10-03 removed a 63-bit clamp for good
-     * reasons), which made a locked row indistinguishable from a genuinely infinite one: the client draws
-     * any size at or above {@link #INFINITE_SIGHT} as "∞". "锁定值绝不大于无限值" keeps the two apart.</li>
-     * </ol>
-     * The ledger stays a BigInteger -- accumulation by real inserts can still run past a long, that part of
-     * the 2026-10-03 design is untouched.
+     * <p><b>A LOCKED amount is capped at this channel's own infinite value</b> ({@link #reportedInfinite()})
+     * and an over-cap lock is <b>refused</b> (returns false), never silently clamped -- sensei's decision,
+     * 2026-10-10. His definition of the lock is exactly that: "从 1 至无限之间取一值，设为锁定量", i.e. the
+     * pinned amount lives between 1 and the infinite value, so a lock above it is meaningless. Until this
+     * change the box accepted {@code 2^128} there, and since the infinite value became {@code Long.MAX/4}
+     * (2026-10-05) that made a locked row indistinguishable from a genuinely infinite one: the client draws
+     * any size at or above {@link #INFINITE_SIGHT} as "∞".
+     *
+     * <p><b>An UNLOCKED amount is NOT capped</b> -- that is the box's other job, 拓展 (extending the cell's
+     * capacity), and 2026-10-03 deliberately kept {@code 2^128} legal there. The ledger stays a BigInteger and
+     * is exact. What is bounded is only what the cell REPORTS to AE2: {@link #reportMap} tops any single row
+     * off at {@code infinite - 1}, because the network inventory is a summing list and a row reporting
+     * {@code Long.MAX_VALUE} wraps the sum negative (a negative row is invisible in the terminal).
      *
      * @return whether the amount was accepted and written.
      */
@@ -1726,7 +1735,7 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
         if (key == null || quantity == null) {
             return false;
         }
-        if (quantity.compareTo(BigInteger.valueOf(reportedInfinite())) > 0) {
+        if (lock && quantity.compareTo(BigInteger.valueOf(reportedInfinite())) > 0) {
             return false;
         }
         T k = lookupKey(key);
