@@ -411,6 +411,15 @@ public final class Mode2ConfigScreen extends GuiContainer {
 
     /** The key NBT of the row whose threshold is being edited (null = an item row from an older path). */
     private net.minecraft.nbt.NBTTagCompound editingKeyNbt;
+    /**
+     * The key of the row whose "元件内数量" is being edited, in its own channel's NBT.
+     *
+     * <p>Why the quantity path needs its own copy (sensei, 2026-10-10: 「还是不行，改完后变的单物品阈值」):
+     * it sent the packet with the channel but WITHOUT the key, so on any non-item channel the server could not
+     * resolve the key and dropped the action -- while the single-item-threshold path, which does carry its key,
+     * kept working. That is exactly why the number looked like it had gone into the threshold instead.
+     */
+    private net.minecraft.nbt.NBTTagCompound quantityKeyNbt;
 
     private void showItemThreshold(ItemStack item, long threshold) {
         quantityEditing = ItemStack.EMPTY;
@@ -441,8 +450,16 @@ public final class Mode2ConfigScreen extends GuiContainer {
     }
     private void saveQuantity() {
         if (quantityEditing.isEmpty()) return;
-        CellNetwork.send(withChannel(Mode2ConfigPacket.quantity(quantityEditing.copy(), quantityInput.getText(), quantityLock)));
+        Mode2ConfigPacket packet = Mode2ConfigPacket.quantity(quantityEditing.copy(),
+                quantityInput.getText(), quantityLock);
+        // Carry the row's OWN key, exactly like saveItemThreshold does. Without these two fields the server can
+        // only rebuild the key from the item stack, which is no key at all on a fluid / gas / mana / flux row --
+        // the action was silently dropped there (see quantityKeyNbt).
+        packet.channelId = panelChannel;
+        packet.keyNbt = quantityKeyNbt;
+        CellNetwork.send(packet);
         quantityEditing = ItemStack.EMPTY;
+        quantityKeyNbt = null;
         quantityInput.setFocused(false);
         updateEditingButtons();
     }
@@ -1113,6 +1130,7 @@ public final class Mode2ConfigScreen extends GuiContainer {
                     else if (!rejectTab && mouseButton == 0 && isCtrlKeyDown()) {
                         hideItemThreshold();
                         quantityEditing = entry.item.copy(); quantityLock = entry.quantityLocked;
+                        quantityKeyNbt = entry.keyNbt;
                         quantityInput.setText(entry.amount.toString()); quantityInput.setFocused(true);
                         updateEditingButtons();
                         for (GuiButton button : buttonList) if (button.id == 15)
