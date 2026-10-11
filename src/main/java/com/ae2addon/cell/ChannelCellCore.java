@@ -1624,8 +1624,14 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
      * （客户端在 {@code filtered} 上过一遍 {@link PinyinIndex}），所以没存过的键根本搜不到。新页签要的是
      * 「在三千多个物品里找 iron_ingot」，那就只能由服务端拿 {@link #allRegistryKeys()} 自己扫一遍。
      *
-     * <p>匹配口径与面板一致：{@link PinyinIndex#matches}(查询串, 显示名, 注册表 id)，所以全拼（shitou）、
-     * 首字母（st）、中文名和 {@code minecraft:stone} 都能命中。
+     * <p>匹配口径与面板**共用同一个**谓词 {@link com.ae2addon.util.SearchMatch#matches}（2026-10-11 起）：
+     * 注册 id / 显示名 / 拼音（全拼 shitou、首字母 st、中文名）之外，还认 **矿词**（{@code ingot}、
+     * {@code dustRedstone}，也接受 {@code ore:} 前缀）与 **modid / mod 名**（{@code mod:thermal} 是显式形式，
+     * 裸词也能命中有空格的名字，如 {@code immersive engineering}）。
+     * 两边共用一份规则是故意的：以前各写一套，一旦漂移就会出现"面板列出来的行，批量操作却不认"。
+     * <p>⚠ 非物品键（流体/气体/源质/魔力/能量）**不喂物品形态** —— 它们的 {@code asItemStackRepresentation()}
+     * 是个**桶**，拿它匹配矿词/modid 会让所有流体行都命中 {@code minecraft:*}；它们的 modid 由
+     * {@link CellChannel#registryId} 兜住（默认就是 namespace）。
      *
      * <p><b>只读</b>：不动任何状态，也不落盘；匹配满 {@code limit} 条就立刻停手，所以"匹配很多的查询"比
      * "匹配很少的查询"更便宜。
@@ -1643,7 +1649,12 @@ public class ChannelCellCore<T extends IAEStack<T>> implements ICellInventory<T>
             if (found.size() >= limit) {
                 break;
             }
-            if (q.isEmpty() || PinyinIndex.matches(q, cellChannel.displayNameUntyped(key), searchIdOf(key))) {
+            if (q.isEmpty() || com.ae2addon.util.SearchMatch.matches(q,
+                    cellChannel.displayNameUntyped(key), searchIdOf(key),
+                    // ⚠ 只有**真物品键**才喂物品形态：非物品键的 asItemStackRepresentation() 是个**桶**，
+                    //    拿它去匹配矿词/modid 会让所有流体行都命中 minecraft:*（2026-10-11）
+                    key instanceof appeng.api.storage.data.IAEItemStack ? key::asItemStackRepresentation : null,
+                    null)) {
                 found.add(key);
             }
         }

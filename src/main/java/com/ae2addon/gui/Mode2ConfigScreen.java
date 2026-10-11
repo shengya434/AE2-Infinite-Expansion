@@ -12,6 +12,7 @@ import com.ae2addon.network.CellNetwork;
 import com.ae2addon.network.Mode2ConfigPacket;
 import com.ae2addon.network.RequestCellScreenPacket;
 import com.ae2addon.util.PinyinIndex;
+import com.ae2addon.util.SearchMatch;
 import com.ae2addon.cell.UnlimitedCellInventory;
 
 import net.minecraft.client.gui.GuiButton;
@@ -709,7 +710,11 @@ public final class Mode2ConfigScreen extends GuiContainer {
             // A non-item row has no item to search on: use the label the server sent instead of asking an
             // empty stack for its name (which would answer "Air" and match silly queries).
             String searchName = stack.isEmpty() ? (entry.label == null ? "" : entry.label) : stack.getDisplayName();
-            if (PinyinIndex.matches(query, searchName, id)) filtered.add(entry);
+            // ⚠ 只有物品通道的行才把物品形态交给匹配器：非物品行的 entry.item 是"桶"这种表示栈，
+            //    拿它匹配矿词/modid 会让所有流体行都命中 minecraft:*（它的 modid/矿词改由 keyNbt 兜底）。
+            //    匹配口径与服务端 searchRegistry 共用 SearchMatch，见那个类的注释。
+            boolean itemRow = com.ae2addon.cell.CellChannelRegistry.ITEM.equals(entry.channelId);
+            if (SearchMatch.matches(query, searchName, id, itemRow ? stack : null, entry.keyNbt)) filtered.add(entry);
         }
         scrollOffset = Math.min(scrollOffset, Math.max(0, filtered.size() - 4));
     }
@@ -1307,7 +1312,13 @@ public final class Mode2ConfigScreen extends GuiContainer {
     @Override public void handleMouseInput() throws IOException {
         super.handleMouseInput();
         if (uiState != 1) return;
-        int wheel = Mouse.getDWheel();
+        // ⚠ 必须用 getEventDWheel()（单个鼠标事件的值），**不能用 getDWheel()**（2026-10-11 修）：
+        //   LWJGL2 里 `getDWheel()` 读的是**按帧累加**的 dwheel 字段，而且**读一次就清零**
+        //   （字节码：`int r = dwheel; dwheel = 0; return r;`），而本方法在 MC 的事件循环里
+        //   **每个鼠标事件都会被调用一次** ⇒ 一帧内第一个事件把整帧滚动量一次读走（只滚 1 行），
+        //   其余事件读到 0。表现就是"滚轮滚好几下列表才动一下"，且**整合包越大 FPS 越低越明显**
+        //   （游戏本身不卡，纯粹是滚动量被吞）。AE2 自己用的也是 getEventDWheel()。
+        int wheel = Mouse.getEventDWheel();
         if (wheel == 0) return;
         // Same cursor maths vanilla uses, so "over the category strip" means what the player sees. Chips now
         // scroll with a plain wheel (Shift+wheel still works too) and the strip draws arrows whenever there is

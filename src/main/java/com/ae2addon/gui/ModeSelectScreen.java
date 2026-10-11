@@ -162,7 +162,9 @@ public final class ModeSelectScreen extends GuiContainer {
 
     @Override public void handleMouseInput() throws IOException {
         super.handleMouseInput();
-        int wheel = Mouse.getDWheel();
+        // ⚠ 用 getEventDWheel()：getDWheel() 是按帧累加且**读一次即清零**的（见 Mode2ConfigScreen 里的详注），
+        //    在"每事件调一次"的本方法里会把一帧的滚动量吞成一次 ⇒ 大整合包（低 FPS）里滚轮要滚好几下才动。
+        int wheel = Mouse.getEventDWheel();
         if (wheel != 0) rejectScroll = Math.max(0, Math.min(Math.max(0, visibleRejects.size() - 3),
                 rejectScroll + (wheel < 0 ? 1 : -1)));
     }
