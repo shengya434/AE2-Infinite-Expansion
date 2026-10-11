@@ -481,8 +481,9 @@ public class IntegratedCPUBE extends CraftingBlockEntity implements Formable {
     }
 
     // ── 一键回收（2026-09-25 sensei）────────────────────────────────────────
-    // 除控制器以外，把结构里所有方块拆掉并把物品还回玩家背包/网络。
-    // 分批（每 tick 一批）执行，避免 2200+ 次 setBlock 卡住服务端。
+    // 除控制器以外，把结构里所有方块拆掉并把物品还回去：**① AE 网络 → ② 玩家背包 → ③ 掉在原地**。
+    // 分批（每 tick 一批 256 块）执行，避免 2200+ 次 setBlock 卡住服务端；
+    // 批内再**按方块种类汇总**，每种只做一次网络 insert（大网里 insert = 全存储扫描，逐块 insert 会拖死服务端）。
 
     /** 回收任务：待拆位置 + 进度（NBT 不持久化，中途退出世界就作废，结构还在原样） */
     private record RecycleJob(List<BlockPos> queue, int cursor, int total) {}
@@ -574,38 +575,96 @@ public class IntegratedCPUBE extends CraftingBlockEntity implements Formable {
         }
         var serverLevel = (net.minecraft.server.level.ServerLevel) level;
         int end = Math.min(job.cursor() + RECYCLE_PER_TICK, job.total());
+
+        // ① 先把这一批按**方块种类**汇总，同时记下要拆的位置
+        //    ⚠ 为什么要汇总：网络 insert 在大网里是一次全存储扫描。逐块 insert（每 tick 最多 256 次）
+        //    会把服务端拖死 —— 与"回收路径每次只处理一份"同一族教训（见 AE2AddonConfig 的注释）。
+        var toRemove = new ArrayList<BlockPos>();
+        var tally = new java.util.LinkedHashMap<Block, int[]>();
+        var firstPos = new java.util.HashMap<Block, BlockPos>();
         for (int i = job.cursor(); i < end; i++) {
             BlockPos pos = job.queue().get(i);
             BlockState state = serverLevel.getBlockState(pos);
             if (state.isAir() || pos.equals(worldPosition)) {
                 continue;   // 已经是空气 / 控制器自己（双保险，绝不动控制器）
             }
-            giveBack(serverLevel, pos, state);
+            toRemove.add(pos);
+            Block block = state.getBlock();
+            if (new net.minecraft.world.item.ItemStack(block).isEmpty()) {
+                continue;   // 没有物品形态的方块（如空气一律已排除）：直接拆掉，不给东西
+            }
+            tally.computeIfAbsent(block, k -> new int[1])[0]++;
+            firstPos.putIfAbsent(block, pos);
+        }
+
+        // ② 还东西：**优先入网**（每种类一次）→ 背包 → 掉在原地
+        for (var e : tally.entrySet()) {
+            giveBack(serverLevel, firstPos.get(e.getKey()), e.getKey(), e.getValue()[0]);
+        }
+
+        // ③ 拆方块（false = 不产生原版掉落，物品已由 ② 处理）
+        for (BlockPos pos : toRemove) {
             serverLevel.removeBlock(pos, false);
         }
+
         recycleJob = end >= job.total() ? null : new RecycleJob(job.queue(), end, job.total());
         if (recycleJob == null) {
             lastRecycleFinished = true;   // 跑完 → 界面显示一次"已回收 N"
         }
         return recycleJob != null;
     }
-    /** 把一块还原成物品塞回玩家背包；塞不下就掉在原地（不丢东西） */
+
+    /**
+     * 把若干块还回去：**① AE 网络 → ② 玩家背包 → ③ 掉在原地**（三级兜底，绝不吞东西）。
+     * <p>
+     * 2026-10-11（sensei）：原来只进玩家背包、塞不下就掉在原地 —— 含拓展的 2247 块结构一回收，
+     * 背包会瞬间爆掉、剩下的撒满整个结构范围。现在入网优先。
+     * 前提是控制器不拆（{@code tickRecycle} 里跳过 {@code worldPosition}）⇒ 网格节点一直在，
+     * 整个回收过程都能入网。
+     */
     private void giveBack(net.minecraft.server.level.ServerLevel serverLevel, BlockPos pos,
-                          BlockState state) {
-        try {
-            var stack = new net.minecraft.world.item.ItemStack(state.getBlock());
-            if (stack.isEmpty()) {
-                return;
+                          Block block, int count) {
+        if (count <= 0) {
+            return;
+        }
+        long remaining = count;
+
+        // ① 入网（网络离线/满了会少插甚至插不进，剩下的继续往下兜底）
+        var storage = networkStorage();
+        if (storage != null) {
+            try {
+                var key = appeng.api.stacks.AEItemKey.of(new net.minecraft.world.item.ItemStack(block));
+                if (key != null) {
+                    long inserted = storage.insert(key, remaining,
+                            appeng.api.config.Actionable.MODULATE, actionSource());
+                    remaining -= Math.max(0L, inserted);
+                }
+            } catch (RuntimeException ignored) {
+                // 网络异常 → 当作没入网，走背包兜底
             }
-            var p = recycleReturnPlayer;
-            if (p != null && p.isAlive()
-                    && p.getInventory().add(stack)) {
-                return;
+        }
+
+        // ② 玩家背包（原版 Inventory#add 会**就地改小**传入的栈，据此算真正塞进去多少，
+        //    不会因为"只塞进去一部分却返回 false"而重复发物品）
+        var p = recycleReturnPlayer;
+        while (remaining > 0 && p != null && p.isAlive()) {
+            int n = (int) Math.min(64L, remaining);
+            var chunk = new net.minecraft.world.item.ItemStack(block, n);
+            p.getInventory().add(chunk);
+            long moved = n - chunk.getCount();
+            remaining -= Math.max(0L, moved);
+            if (moved <= 0) {
+                break;   // 一点都塞不进去 → 剩下的掉在原地
             }
+        }
+
+        // ③ 掉在原地（不丢东西）
+        while (remaining > 0) {
+            int n = (int) Math.min(64L, remaining);
             net.minecraft.world.Containers.dropItemStack(serverLevel,
-                    pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5, stack);
-        } catch (RuntimeException ignored) {
-            // 单块失败不影响其余（比如没有对应物品的方块：直接消失，不阻塞回收）
+                    pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5,
+                    new net.minecraft.world.item.ItemStack(block, n));
+            remaining -= n;
         }
     }
 

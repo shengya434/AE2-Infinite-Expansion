@@ -153,7 +153,7 @@ public class IntegratedCPUMenu extends CraftingCPUMenu {
             var p = getPlayer();
             if (p != null) {
                 p.sendSystemMessage(Component.literal(n > 0
-                        ? "§b[集成CPU] 开始回收：" + n + " 块结构方块将退回（控制器保留）"
+                        ? "§b[集成CPU] 开始回收：" + n + " 块结构方块将退回网络（装不下才进背包/掉落，控制器保留）"
                         : "§e[集成CPU] 没有可回收的结构方块（或正在摆放/回收中）"));
             }
         }
