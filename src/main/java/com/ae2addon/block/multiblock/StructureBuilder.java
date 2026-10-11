@@ -307,9 +307,15 @@ public final class StructureBuilder {
                 right.getStepZ() * (place.x() - core.getX()) + body.getStepZ() * (place.z() - core.getZ()));
     }
 
-    /** 把缺口清单写成一句人话（聊天栏提示用，最多列 6 种） */
+    /**
+     * 把缺口清单写成一句人话（聊天栏提示用，最多列 6 种）。
+     * <p>
+     * 2026-10-11（sensei）：文案里**点明是"网络里"缺** —— 料源只有控制器的 ME 网络、
+     * **不看玩家背包**（见 {@link #plan} 的 storage 参数与 {@link #extractOne}），
+     * 不写清的话，背包里明明有货的玩家会以为算错了。
+     */
     public static Component describeShortage(Map<Block, Long> missing) {
-        var sb = new StringBuilder("§c缺少结构材料：");
+        var sb = new StringBuilder("§c缺少结构材料（网络里）：");
         int n = 0;
         for (var e : missing.entrySet()) {
             if (n++ >= 6) {
