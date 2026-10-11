@@ -15,6 +15,7 @@ import com.ae2addon.compat.NaturesAuraCompat;
 import com.ae2addon.compat.ProductiveBeesCompat;
 import com.ae2addon.compat.SmithingCompat;
 import com.ae2addon.compat.ThermalCompat;
+import com.ae2addon.compat.ForeignRecipeCompat;
 import com.ae2addon.compat.UselessModCompat;
 import com.ae2addon.util.RecipeByproducts;
 import net.minecraft.resources.ResourceLocation;
@@ -91,6 +92,7 @@ public final class QianJiRecipeModel {
                 if (data == null || data.primary().isEmpty() || data.inputs().isEmpty()) continue;
                 boolean covered = true;
                 for (var slot : data.inputs()) {
+                    if (slot.catalyst()) continue;
                     boolean hit = false;
                     for (var option : slot.options()) {
                         if (inputKeys.contains(coarseKey(option.what()))) { hit = true; break; }
@@ -118,7 +120,10 @@ public final class QianJiRecipeModel {
             net.minecraft.core.RegistryAccess access) {
         if (cachedManager.get() == manager) return cachedByOutput;
         var map = new java.util.HashMap<String, List<Recipe<?>>>();
+        var seenForeign = new java.util.HashSet<String>();
         for (var recipe : manager.getRecipes()) {
+            String duplicateKey = ForeignRecipeCompat.duplicateKey(recipe);
+            if (duplicateKey != null && !seenForeign.add(duplicateKey)) continue;
             for (var key : allOutputKeys(recipe, access)) {
                 if (key == null) continue;
                 map.computeIfAbsent(coarseKey(key), k -> new ArrayList<>()).add(recipe);
@@ -147,6 +152,14 @@ public final class QianJiRecipeModel {
     /** 一条配方的全部产出键（物品 + 流体；标准 API + GT） */
     private static List<appeng.api.stacks.AEKey> allOutputKeys(
             Recipe<?> recipe, net.minecraft.core.RegistryAccess access) {
+        if (ForeignRecipeCompat.isExcludedByDesign(recipe)) return List.of();
+        if (ForeignRecipeCompat.isHandled(recipe)) {
+            var keys = new ArrayList<appeng.api.stacks.AEKey>();
+            for (var stat : ForeignRecipeCompat.outputs(recipe)) {
+                if (stat.stack() != null && stat.stack().what() != null) keys.add(stat.stack().what());
+            }
+            return keys;
+        }
         // 千机自用配方：产出键直接来自数据（物品/流体/化学品通吃），不必走下面那一长串兼容探测
         if (recipe instanceof QianJiRecipe own) {
             var keys = new ArrayList<appeng.api.stacks.AEKey>();
@@ -289,8 +302,12 @@ public final class QianJiRecipeModel {
     /** 世界里的「可处理配方」（有产出即可；供 JEI 页与指令列举） */
     public static List<Recipe<?>> candidates(Level level) {
         var out = new ArrayList<Recipe<?>>();
+        var seenForeign = new java.util.HashSet<String>();
         for (var recipe : level.getRecipeManager().getRecipes()) {
             if (recipe == null) continue;
+            if (ForeignRecipeCompat.isExcludedByDesign(recipe)) continue;
+            String duplicateKey = ForeignRecipeCompat.duplicateKey(recipe);
+            if (duplicateKey != null && !seenForeign.add(duplicateKey)) continue;
             // 爆炸配方有自己的一页，不属千机页
             if (recipe instanceof com.ae2addon.recipe.ExplosionRecipe) continue;
             // 千机自用配方：产物可能全是流体/化学品（getResultItem 只能是 EMPTY）或超大数量，
@@ -484,6 +501,7 @@ public final class QianJiRecipeModel {
     @Nullable
     public static QianJiPatternData fromRecipe(Recipe<?> recipe, net.minecraft.core.RegistryAccess access) {
         if (recipe == null) return null;
+        if (ForeignRecipeCompat.isExcludedByDesign(recipe)) return null;
         // 爆炸配方不产出千机样板（执行者是爆炸，见 fromRecipeAll 的说明）
         if (recipe instanceof com.ae2addon.recipe.ExplosionRecipe) return null;
         // 千机自用配方：数据已经是样板数据（见上面 fromRecipeAll 的说明）
@@ -551,6 +569,22 @@ public final class QianJiRecipeModel {
                 } else {
                     chanced.add(new QianJiPatternData.Chanced(stack,
                             stat.chance() > 0f ? stat.chance() : -1f));
+                }
+            }
+        } else if (ForeignRecipeCompat.isHandled(recipe)) {
+            var compatSlots = ForeignRecipeCompat.inputSlots(recipe);
+            for (int i = 0; i < compatSlots.size(); i++) {
+                var slot = compatSlots.get(i);
+                inputs.add(new QianJiPatternData.Slot(slot,
+                        ForeignRecipeCompat.isCatalystSlot(recipe, i, slot)));
+            }
+            for (var stat : ForeignRecipeCompat.outputs(recipe)) {
+                var stack = stat.stack();
+                if (stack == null || stack.what() == null || stack.amount() <= 0) continue;
+                if (stat.chance() >= 1f || stat.chance() <= 0f) {
+                    primary.add(new QianJiPatternData.Out(stack));
+                } else {
+                    chanced.add(new QianJiPatternData.Chanced(stack, stat.chance()));
                 }
             }
         } else if (ThermalCompat.isThermalRecipe(recipe)) {
@@ -818,14 +852,16 @@ public final class QianJiRecipeModel {
                     }
                 }
             }
-            // AdvancedAE 反应室（2026-09-17 补）：inputs / output 字段本身就是 AE2 的 GenericStack
-            // （物品 + 流体 + 气体都用 AEKey）→ 直接搬；物品产物标准 API 也能拿到，
-            // 所以只有**非物品产物**在这里补，免得重复
+            // AdvancedAE 反应室（2026-09-17 补；2026-10-11 适配 1.3.x 新形状）：
+            // 输入现在走公开访问器 getInputs(): List<IngredientStack$Item>（旧字段 inputs 已不存在，
+            // 实机 scan 里 advanced_ae:reaction 20 条全「无输入」就是这个原因）；
+            // 产物标准 API 能拿到物品那一份（getResultItem 内部读的就是 output 字段），
+            // 所以这里只补**非物品产物**，免得重复
             if (AeAddonRecipeCompat.isAdvancedReaction(recipe)) {
-                for (var stack : AeAddonRecipeCompat.advancedInputs(recipe)) {
-                    inputs.add(new QianJiPatternData.Slot(List.of(stack)));
+                for (var slot : AeAddonRecipeCompat.advancedInputSlots(recipe)) {
+                    inputs.add(new QianJiPatternData.Slot(slot));
                 }
-                // 流体输入（fluid 字段，2026-09-17 自查补：AdvancedAE 配方基本都带流体）
+                // 流体输入（getFluid() → IngredientStack$Fluid；2026-09-17 自查补：AdvancedAE 配方基本都带流体）
                 var advFluid = AeAddonRecipeCompat.advancedFluidInput(recipe);
                 if (!advFluid.isEmpty()) inputs.add(new QianJiPatternData.Slot(advFluid));
                 var advOut = AeAddonRecipeCompat.advancedOutput(recipe);
@@ -989,6 +1025,13 @@ public final class QianJiRecipeModel {
     /** 产出物品集合（标准 + GT + MEK，含流体/化学物） */
     private static Set<Object> outputsOf(Recipe<?> recipe, Level level) {
         var items = new HashSet<Object>();
+        if (ForeignRecipeCompat.isExcludedByDesign(recipe)) return items;
+        if (ForeignRecipeCompat.isHandled(recipe)) {
+            for (var stat : ForeignRecipeCompat.outputs(recipe)) {
+                if (stat.stack() != null && stat.stack().what() != null) items.add(stat.stack().what());
+            }
+            return items;
+        }
         ItemStack standard = recipe.getResultItem(level.registryAccess());
         if (!standard.isEmpty()) items.add(standard.getItem());
         // Ars Nouveau 的灌注室/附魔装置 getResultItem 恒为 EMPTY（字节码实证）→ 从字段补真产物，

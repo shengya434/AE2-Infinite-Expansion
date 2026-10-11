@@ -24,6 +24,7 @@ import com.ae2addon.compat.EMCCompat;
 import com.ae2addon.compat.GregTechCompat;
 import com.ae2addon.compat.ProductiveBeesCompat;
 import com.ae2addon.compat.ThermalCompat;
+import com.ae2addon.compat.ForeignRecipeCompat;
 import com.ae2addon.gui.QianJiMenu;
 import com.ae2addon.init.ModBlockEntities;
 import com.ae2addon.item.CatalystItem;
@@ -309,8 +310,15 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      */
     private static Set<Item> outputItemsOf(Recipe<?> recipe, Level level) {
         var items = new java.util.LinkedHashSet<Item>();
-        var standard = recipe.getResultItem(level.registryAccess());
-        if (!standard.isEmpty()) items.add(standard.getItem());
+        if (ForeignRecipeCompat.isExcludedByDesign(recipe)) return items;
+        if (!ForeignRecipeCompat.isHandled(recipe)) {
+            try {
+                var standard = recipe.getResultItem(level.registryAccess());
+                if (!standard.isEmpty()) items.add(standard.getItem());
+            } catch (Throwable error) {
+                AE2Addon.LOGGER.warn("QianJi: standard result failed for {}: {}", recipe, error.toString());
+            }
+        }
         for (var chanced : GregTechCompat.itemOutputs(recipe)) {
             if (!chanced.stack().isEmpty()) items.add(chanced.stack().getItem());
         }
@@ -347,6 +355,12 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
                     if (stat != null && stat.stack() != null && stat.stack().what() instanceof AEItemKey k) {
                         items.add(k.getItem());
                     }
+                }
+            }
+            if (ForeignRecipeCompat.isHandled(recipe)) {
+                for (var stat : ForeignRecipeCompat.outputs(recipe)) {
+                    if (stat != null && stat.stack() != null && stat.stack().what() instanceof AEItemKey k)
+                        items.add(k.getItem());
                 }
             }
         } catch (Throwable t) {
@@ -409,6 +423,9 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             }
             if (ProductiveBeesCompat.isProductiveBeesRecipe(recipe)) {
                 slots.addAll(ProductiveBeesCompat.inputSlots(recipe));
+            }
+            if (ForeignRecipeCompat.isHandled(recipe)) {
+                slots.addAll(ForeignRecipeCompat.inputSlots(recipe));
             }
         } catch (Throwable t) {
             AE2Addon.LOGGER.warn("QianJi: compat inputSlots failed for {}: {}", recipe, t.toString());
@@ -475,6 +492,12 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
             }
         } catch (Throwable ignored) {
             // 同上
+        }
+        try {
+            if (ForeignRecipeCompat.isHandled(recipe)
+                    && ForeignRecipeCompat.isCatalystSlot(recipe, slotIndex, options)) return true;
+        } catch (Throwable ignored) {
+            // 读取失败时保守按消耗输入处理。
         }
         return false;
     }

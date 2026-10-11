@@ -205,6 +205,9 @@ public class QianJiPatternCommand {
         if (com.ae2addon.compat.ProductiveBeesCompat.isProductiveBeesRecipe(recipe)) {
             return "已适配 Productive Bees 但读不出（ProductiveBeesCompat 返回空 → 反射没打通，用 /qianji probe 看）";
         }
+        if (com.ae2addon.compat.ForeignRecipeCompat.isHandled(recipe)) {
+            return "已适配外来机器配方但读不出（检查 qianji-compat 反射警告和 /qianji probe）";
+        }
         boolean hasIngredient = false;
         for (var ingredient : recipe.getIngredients()) {
             for (ItemStack stack : ingredient.getItems()) {
@@ -212,7 +215,12 @@ public class QianJiPatternCommand {
             }
             if (hasIngredient) break;
         }
-        ItemStack out = recipe.getResultItem(level.registryAccess());
+        ItemStack out;
+        try {
+            out = recipe.getResultItem(level.registryAccess());
+        } catch (Throwable error) {
+            return "标准 getResultItem 抛异常：" + error.getClass().getSimpleName();
+        }
         if (out.isEmpty()) {
             return hasIngredient ? "标准 getResultItem 为空"
                     // 2026-09-20 修正：原本文案是「疑似引用了已卸载 mod 的物品，属废配方」——**这句是错的**，
@@ -251,12 +259,16 @@ public class QianJiPatternCommand {
         /** 类型 → 样例（最多 3 条「id ← 原因」，我能直接去 jar 里查这些 id） */
         var samples = new java.util.HashMap<String, java.util.List<String>>();
         int all = 0;
+        var foreignDuplicates = new java.util.HashSet<String>();
+        int duplicateCount = 0;
 
         for (var recipe : level.getRecipeManager().getRecipes()) {
             if (recipe == null) continue;
             ResourceLocation id = recipe.getId();
             if (id == null || !modid.equals(id.getNamespace())) continue;
             all++;
+            String duplicateKey = com.ae2addon.compat.ForeignRecipeCompat.duplicateKey(recipe);
+            if (duplicateKey != null && !foreignDuplicates.add(duplicateKey)) duplicateCount++;
             String type = String.valueOf(recipe.getType());
             int[] row = rows.computeIfAbsent(type, k -> new int[6]);
             row[0]++;
@@ -265,7 +277,8 @@ public class QianJiPatternCommand {
             // 2026-09-20：这些**不是「配方」**——Thermal 的 *_catalyst / *_fuel / *_boost 只是机器参数与能量燃料，
             // 按设计排除、不计入失败。否则报告永远挂着一堆红字，反而看不出真正没适配的类型。
             if (com.ae2addon.compat.ThermalCompat.isExcludedByDesign(recipe)
-                    || com.ae2addon.compat.ProductiveBeesCompat.isExcludedByDesign(recipe)) {
+                    || com.ae2addon.compat.ProductiveBeesCompat.isExcludedByDesign(recipe)
+                    || com.ae2addon.compat.ForeignRecipeCompat.isExcludedByDesign(recipe)) {
                 row[5]++;
                 continue;
             }
@@ -281,7 +294,8 @@ public class QianJiPatternCommand {
                 // 2026-09-20：分清"没适配"和"我们适配了但读不出输入"——Thermal 那 564 条就是后者，
                 // 但旧文案一律写"标准 getIngredients 全空"，害我多绕了一圈才定位到 SRG 反射坑
                 boolean compatMatched = com.ae2addon.compat.ThermalCompat.isThermalRecipe(recipe)
-                        || com.ae2addon.compat.ProductiveBeesCompat.isProductiveBeesRecipe(recipe);
+                        || com.ae2addon.compat.ProductiveBeesCompat.isProductiveBeesRecipe(recipe)
+                        || com.ae2addon.compat.ForeignRecipeCompat.isHandled(recipe);
                 record(reasons, samples, type, id, compatMatched
                         ? "已适配但**读不出输入**（compat 的 inputSlots 返回空 → 反射/字段没打通）"
                         : "标准 getIngredients 全空（不走标准 API 或标签解析不出物品）");
@@ -289,7 +303,8 @@ public class QianJiPatternCommand {
             } else if (data.primary().isEmpty()) {
                 row[3]++;
                 boolean compatMatched2 = com.ae2addon.compat.ThermalCompat.isThermalRecipe(recipe)
-                        || com.ae2addon.compat.ProductiveBeesCompat.isProductiveBeesRecipe(recipe);
+                        || com.ae2addon.compat.ProductiveBeesCompat.isProductiveBeesRecipe(recipe)
+                        || com.ae2addon.compat.ForeignRecipeCompat.isHandled(recipe);
                 // 2026-09-20：这一档原来把两种情况混成一句话，害我误判过一批配方：
                 //   ① 真的"只剩概率产出"（有 chanced、没 primary）→ 靠配平机制仍能表达
                 //   ② **两边都空**（有输入、产出完全读不到）→ 这是适配层出问题，性质完全不同
@@ -392,13 +407,15 @@ public class QianJiPatternCommand {
         final int failed = rows.values().stream().mapToInt(r -> r[1]).sum();
         final int noInput = rows.values().stream().mapToInt(r -> r[2]).sum();
         final int excluded = rows.values().stream().mapToInt(r -> r[5]).sum();
+        final int deduped = duplicateCount;
         source.sendSuccess(() -> Component.literal("§e小结：共 " + total + " 条，§c提取失败 " + failed
                 + "§e，§e无输入 " + noInput + "§e，§8按设计排除 " + excluded
+                + (deduped > 0 ? "§e，§a候选/索引去重 " + deduped : "")
                 + "§e —— 有问题的用 §f/qianji probe <配方id> §e看细节"), false);
 
         // 2026-09-20：报告同时写进 logs/ae2addon-qianji-scan-<modid>.txt
         // —— 这样爱丽丝能自己读结果，不用 sensei 从聊天栏复制粘贴（聊天栏只截了 20 条，文件是完整的）
-        writeScanReport(source, modid, rows, classOf, reasons, samples, all);
+        writeScanReport(source, modid, rows, classOf, reasons, samples, all, duplicateCount);
 
         return 1;
     }
@@ -414,7 +431,7 @@ public class QianJiPatternCommand {
                                         java.util.Map<String, String> classOf,
                                         java.util.Map<String, java.util.LinkedHashMap<String, Integer>> reasons,
                                         java.util.Map<String, java.util.List<String>> samples,
-                                        int all) {
+                                        int all, int duplicateCount) {
         try {
             var dir = net.minecraftforge.fml.loading.FMLPaths.GAMEDIR.get().resolve("logs");
             java.nio.file.Files.createDirectories(dir);
@@ -423,6 +440,7 @@ public class QianJiPatternCommand {
             sb.append("modid: ").append(modid).append('\n');
             sb.append("time : ").append(java.time.LocalDateTime.now()).append('\n');
             sb.append("total: ").append(all).append('\n');
+            sb.append("candidate/index duplicates removed: ").append(duplicateCount).append('\n');
             sb.append("legend: 失败=fromRecipe 返回 null / 无输入 / 无主产物 / OK / 排除=按设计排除\n\n");
 
             var ordered = new java.util.ArrayList<>(rows.entrySet());

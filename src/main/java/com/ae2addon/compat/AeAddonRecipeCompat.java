@@ -55,19 +55,74 @@ public final class AeAddonRecipeCompat {
                 c -> ADV_REACTION.equals(c.getName()));
     }
 
-    /** 输入：{@code inputs} 字段就是 {@code List<GenericStack>}（物品/流体/气体都走 AEKey） */
-    public static List<GenericStack> advancedInputs(@Nullable Recipe<?> recipe) {
-        var out = new ArrayList<GenericStack>();
-        if (recipe == null) return out;
-        Object inputs = readField(recipe, "inputs");
-        if (!(inputs instanceof Iterable<?> it)) return out;
-        for (Object element : it) {
-            Object value = element instanceof GenericStack ? element : readField(element, "stack");
-            if (value instanceof GenericStack stack && stack.what() != null && stack.amount() > 0) {
-                out.add(stack);
+    /**
+     * 输入槽（**每个槽一组候选项**，保住标签语义）。
+     * <p>
+     * ⚠ <b>2026-10-11 实机教训：AdvancedAE 1.3.x 换了数据形状，我们这版 compat 悄悄失效了。</b>
+     * 现在配方类暴露公开访问器 {@code getInputs(): List<IngredientStack$Item>}
+     * （{@code IngredientStack} 在 jar-in-jar 的 {@code ae2addonlib-1.0.4} 里，基类有
+     * {@code getIngredient()} + {@code getAmount()}），而 2026-09-17 适配时读的字段
+     * {@code inputs: List<GenericStack>} **已经不存在** ⇒ 反射恒返回 null ⇒
+     * 实机 scan 里 {@code advanced_ae:reaction} **20 条全部「无输入」**（ae2cs 里另有 1 条）。
+     * <p>
+     * 新老两条路都留着：先走 {@code getInputs()}，拿不到再退回旧字段形状（早期版本）。
+     */
+    public static List<List<GenericStack>> advancedInputSlots(@Nullable Recipe<?> recipe) {
+        var slots = new ArrayList<List<GenericStack>>();
+        if (recipe == null) return slots;
+        // ① 新 API：List<IngredientStack$Item>（Ingredient + amount）
+        Object inputs = callGetter(recipe, "getInputs");
+        if (inputs instanceof Iterable<?> it) {
+            for (Object element : it) {
+                var options = optionsOfIngredientStack(element);
+                if (!options.isEmpty()) slots.add(options);
             }
         }
-        return out;
+        if (!slots.isEmpty()) return List.copyOf(slots);
+        // ② 旧形状兜底：字段 inputs = List<GenericStack>（AdvancedAE 早期版本）
+        Object legacy = readField(recipe, "inputs");
+        if (legacy instanceof Iterable<?> it) {
+            for (Object element : it) {
+                Object value = element instanceof GenericStack ? element : readField(element, "stack");
+                if (value instanceof GenericStack stack && stack.what() != null && stack.amount() > 0) {
+                    slots.add(List.of(stack));
+                }
+            }
+        }
+        return List.copyOf(slots);
+    }
+
+    /**
+     * 一个 {@code IngredientStack$Item} → 候选 {@link GenericStack} 列表
+     * （{@code getIngredient()} 是 {@code Ingredient}，数量在 {@code getAmount()}）。
+     */
+    private static List<GenericStack> optionsOfIngredientStack(@Nullable Object element) {
+        if (element == null) return List.of();
+        Object ingredient = callGetter(element, "getIngredient");
+        long amount = Math.max(1, callInt(element, "getAmount", 1));
+        if (ingredient instanceof Ingredient ing) return optionsOf(ing, amount);
+        // 兜底：真的是 GenericStack（旧形状混进来）
+        if (ingredient == null && element instanceof GenericStack stack && stack.what() != null) {
+            return List.of(stack);
+        }
+        return List.of();
+    }
+
+    @Nullable
+    private static Object callGetter(@Nullable Object target, String name) {
+        if (target == null) return null;
+        try {
+            var method = target.getClass().getMethod(name);
+            method.setAccessible(true);
+            return method.invoke(target);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static int callInt(@Nullable Object target, String name, int fallback) {
+        Object value = callGetter(target, name);
+        return value instanceof Number n ? n.intValue() : fallback;
     }
 
     /**
@@ -77,11 +132,29 @@ public final class AeAddonRecipeCompat {
      */
     public static List<GenericStack> advancedFluidInput(@Nullable Recipe<?> recipe) {
         if (recipe == null) return List.of();
-        Object fluid = readField(recipe, "fluid");
-        if (fluid == null) return List.of();
-        Object inner = readField(fluid, "ingredient");
+        // ① 新 API（1.3.x）：getFluid() → IngredientStack$Fluid（getStack() 直接给 FluidStack，数量在 getAmount()）
+        Object fluid = callGetter(recipe, "getFluid");
+        if (fluid != null) {
+            FluidStack stack = null;
+            Object raw = callGetter(fluid, "getStack");
+            if (raw instanceof FluidStack fs) stack = fs;
+            if (stack == null) {
+                Object inner = callGetter(fluid, "getIngredient");   // 新 API 这里给的是 Fluid
+                if (inner instanceof FluidStack fs2) stack = fs2;
+                else if (inner instanceof net.minecraft.world.level.material.Fluid f) stack = new FluidStack(f, 1);
+            }
+            if (stack != null && !stack.isEmpty()) {
+                long amount = Math.max(1, callInt(fluid, "getAmount", 1));
+                if (amount <= 1 && stack.getAmount() > 1) amount = stack.getAmount();
+                return List.of(new GenericStack(AEFluidKey.of(stack.getFluid()), amount));
+            }
+        }
+        // ② 旧形状兜底：字段 fluid（IngredientStack$Fluid，父类字段 ingredient 装的是 FluidStack）
+        Object legacy = readField(recipe, "fluid");
+        if (legacy == null) return List.of();
+        Object inner = readField(legacy, "ingredient");
         if (!(inner instanceof FluidStack stack) || stack.isEmpty()) return List.of();
-        long amount = Math.max(1, readInt(fluid, "amount"));
+        long amount = Math.max(1, readInt(legacy, "amount"));
         if (amount <= 1 && stack.getAmount() > 1) amount = stack.getAmount();
         return List.of(new GenericStack(AEFluidKey.of(stack.getFluid()), amount));
     }
