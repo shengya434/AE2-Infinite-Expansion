@@ -1,6 +1,7 @@
 package com.ae2addon.gui;
 
 import com.ae2addon.AE2Addon;
+import com.ae2addon.block.InfiniteDriveBE;
 import com.ae2addon.network.CellEditorPickPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -12,7 +13,7 @@ import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.inventory.Slot;
 
 /**
- * 驱动器（无限级）面板 —— 512 格元件，54 格/页翻页（2026-09-14 重写）。
+ * 驱动器（无限级）面板 —— 540 格元件，54 格/页翻页（2026-09-14 重写）。
  * <p>
  * 翻页经 {@code handleInventoryButtonClick} 发给服务端（服务端权威页码），
  * 页码从菜单的 DataSlot 读（不在客户端本地维护）。
@@ -73,9 +74,9 @@ public class InfiniteDriveScreen extends AbstractContainerScreen<InfiniteDriveMe
         g.drawString(font, Component.literal(pageText),
                 leftPos + W / 2 - font.width(pageText) / 2, topPos + 7, 0xFFFFFF, false);
 
-        // 页码对应的槽位区间提示（512 格 → 0-53 / 54-107 / …）
+        // 页码对应的槽位区间提示（540 格 → 0-53 / 54-107 / …）
         int from = page * 54 + 1;
-        int to = Math.min(page * 54 + 54, 512);
+        int to = Math.min(page * 54 + 54, InfiniteDriveBE.CELL_SLOTS);
         String rangeText = "§8#" + from + " – " + to;
         g.drawString(font, Component.literal(rangeText), leftPos + 6, topPos + 7, 0x808080, false);
 

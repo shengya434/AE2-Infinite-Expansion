@@ -25,12 +25,12 @@ import org.jetbrains.annotations.Nullable;
 import java.util.EnumSet;
 
 /**
- * 驱动器（无限级）方块实体 —— **512 格元件槽**。
+ * 驱动器（无限级）方块实体 —— **540 格元件槽**。
  * <p>
  * 设计路线（2026-09-15 第二次重写，修「元件插进去但不生效」）：
  * **不再手搓挂载链**，改为 {@code extends DriveBlockEntity} 只覆写 {@link #getCellCount()}。
  * <p>
- * 为什么这样就能 512 格：AE2 的 {@code DriveBlockEntity} 构造函数里是
+ * 为什么这样就能 540 格：AE2 的 {@code DriveBlockEntity} 构造函数里是
  * {@code new AppEngCellInventory(this, getCellCount())} + {@code new DriveWatcher[getCellCount()]}
  * —— {@code getCellCount()} 是**虚调用**，子类覆写即可把整套「构造函数注册
  * IStorageProvider 服务 / 槽位筛选 / DriveWatcher / mountInventories / 待机功耗 /
@@ -43,15 +43,15 @@ import java.util.EnumSet;
  * <ul>
  *   <li>{@link #getCellCount()} = {@value #CELL_SLOTS}（其余全继承）</li>
  *   <li>formed 门控：未成型时对 AE 网络完全不可见</li>
- *   <li>GUI 换成本模组的 512 格分页面板（覆盖 {@code openMenu}，不打开 AE2 原版 10 格面板）</li>
+ *   <li>GUI 换成本模组的 540 格分页面板（覆盖 {@code openMenu}，不打开 AE2 原版 10 格面板）</li>
  *   <li>{@link #writeToStream}/{@link #readFromStream} 覆写为空：不做 LED 状态同步
- *       （512 格全量同步没必要，且包会很大）</li>
+ *       （540 格全量同步没必要，且包会很大）</li>
  * </ul>
  */
 public class InfiniteDriveBE extends DriveBlockEntity implements Formable, MenuProvider {
 
-    /** 元件槽数量（512 格 = 54 格/页 × 10 页，见 InfiniteDriveMenu） */
-    public static final int CELL_SLOTS = 512;
+    /** 元件槽数量（540 格 = 54 格/页 × 10 页，见 InfiniteDriveMenu） */
+    public static final int CELL_SLOTS = 540;
 
     private boolean formed = false;
     /** 多方块朝向（成型时方向检测得出；见 {@link #getFacing()}） */
@@ -61,7 +61,7 @@ public class InfiniteDriveBE extends DriveBlockEntity implements Formable, MenuP
         super(ModBlockEntities.INFINITE_DRIVE.get(), pos, state);
     }
 
-    /** 512 格：父类构造函数里就用这个值建库存与 watcher 数组（虚调用，必须在这里覆写） */
+    /** 540 格：父类构造函数里就用这个值建库存与 watcher 数组（虚调用，必须在这里覆写） */
     @Override
     public int getCellCount() {
         return CELL_SLOTS;
@@ -144,7 +144,7 @@ public class InfiniteDriveBE extends DriveBlockEntity implements Formable, MenuP
         }
     }
 
-    // ── 不做 LED 状态同步（512 格全量同步没必要；避免大包与无谓开销）──
+    // ── 不做 LED 状态同步（540 格全量同步没必要；避免大包与无谓开销）──
 
     @Override
     protected void writeToStream(FriendlyByteBuf data) {
@@ -176,7 +176,7 @@ public class InfiniteDriveBE extends DriveBlockEntity implements Formable, MenuP
         }
     }
 
-    // ── GUI：本模组的 512 格分页面板 ──
+    // ── GUI：本模组的 540 格分页面板 ──
 
     @Override
     public Component getDisplayName() {
@@ -190,7 +190,7 @@ public class InfiniteDriveBE extends DriveBlockEntity implements Formable, MenuP
         return new InfiniteDriveMenu(containerId, playerInv, worldPosition);
     }
 
-    /** 右键打开 512 格元件面板（覆盖父类：避免打开 AE2 原版 10 格 DriveMenu） */
+    /** 右键打开 540 格元件面板（覆盖父类：避免打开 AE2 原版 10 格 DriveMenu） */
     @Override
     public void openMenu(Player player) {
         if (player instanceof ServerPlayer serverPlayer && formed) {

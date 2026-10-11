@@ -30,7 +30,7 @@ import java.util.List;
 /**
  * 无限驱动器核心方块（多方块 5×5×5）
  * <p>
- * 成型后：512 槽位，仅允许插入我们的无限元件。
+ * 成型后：540 槽位，仅允许插入我们的无限元件。
  * 结构材料：灰色混凝土、淡灰色混凝土、ME 驱动器。
  */
 public class InfiniteDriveBlock extends BaseEntityBlock {

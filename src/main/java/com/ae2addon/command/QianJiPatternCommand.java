@@ -33,7 +33,7 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
  */
 public class QianJiPatternCommand {
 
-    /** 千机 GUI 每页槽数（与 {@code QianJiScreen} 的分页一致：1280 槽 / 54 槽一页） */
+    /** 千机 GUI 每页槽数（与 {@code QianJiScreen} 的分页一致：1296 槽 / 54 槽一页） */
     private static final int PATTERNS_PER_PAGE = 54;
 
     @SubscribeEvent
@@ -555,7 +555,7 @@ public class QianJiPatternCommand {
      * {@code /qianji find <关键词>}：在**附近那台千机**里搜样板。
      * <p>
      * 这是"千机 GUI 内自写搜索"的**第一步（命令版）**：先把搜索逻辑在服务端跑通、能自证，
-     * 再去做 GUI（v244）。搜索本身在 {@link QianJiBE#searchPatterns} 里，服务端扫 1280 槽。
+     * 再去做 GUI（v244）。搜索本身在 {@link QianJiBE#searchPatterns} 里，服务端扫 1296 槽。
      * <p>
      * 命中数同时写日志 {@code [ae2addon][search]} —— AI 看不到画面，靠这行核对结果。
      */

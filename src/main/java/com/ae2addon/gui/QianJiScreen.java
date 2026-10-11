@@ -24,7 +24,7 @@ import java.util.List;
  * 2026-09-21（v244）：加**千机自有样板搜索**。设计取舍：
  * <ul>
  *   <li>搜索在**服务端**做（{@link QianJiSearchRequestPacket}），客户端只发关键词、只收命中 ——
- *       1280 个槽绝不能整包同步（本项目铁律）。</li>
+ *       1296 个槽绝不能整包同步（本项目铁律）。</li>
  *   <li>面板做成**覆盖层**而不是往界面里加一行：GUI 已经排满了
  *       （样板网格 6 行到 y=146、玩家背包从 y=140 起、快捷栏 y=198、总高 222），
  *       硬塞输入框就得把所有槽位坐标下移，回归面太大。覆盖层零改动原有布局。</li>
@@ -41,8 +41,8 @@ public class QianJiScreen extends AbstractContainerScreen<QianJiMenu> {
     private static final int JUMP_BASE = 100;
     /** 每页槽数（与菜单一致） */
     private static final int PAGE_SIZE = 54;
-    /** 样板总槽数（只用于算总页数） */
-    private static final int PATTERN_SLOTS = 1280;
+    /** 样板总槽数（单点定义在 {@link com.ae2addon.block.QianJiBE#PATTERN_SLOTS}，这里只用于算总页数） */
+    private static final int PATTERN_SLOTS = com.ae2addon.block.QianJiBE.PATTERN_SLOTS;
 
     // ── 搜索面板几何（覆盖层，全部相对 GUI 左上角） ──
     private static final int PANEL_X = 6;

@@ -321,7 +321,7 @@
   "gui.ae2addon.qianji.label.parallel": "§7当前并行数：",
   "gui.ae2addon.qianji.label.patterns": "§7样板",
   "gui.ae2addon.qianji.search.hint": "§7搜索 §8(输入/产物/机器 · Enter 搜索 · Esc 收起)",
-  "gui.ae2addon.qianji.search.hint_idle": "§8在这台千机的 1280 个槽里搜样板",
+  "gui.ae2addon.qianji.search.hint_idle": "§8在这台千机的 1296 个槽里搜样板",
   "gui.ae2addon.qianji.search.row": "§8[%s页 槽%s] ",
   "gui.ae2addon.qianji.search.hint_jump": "§8点结果跳页 · 命中槽画绿框",
   "gui.ae2addon.qianji.search.hit_range": "§7命中 §e%s §7条 §8(%s-%s)",

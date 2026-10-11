@@ -67,7 +67,7 @@ public class ModBlocks {
             InfiniteDriveBlock::new
     );
 
-    /** 千机·阿比舒（无限级）— 3×3×3 多方块，无视配方条件的瞬间处理机（1280 样板槽 + 催化剂槽） */
+    /** 千机·阿比舒（无限级）— 3×3×3 多方块，无视配方条件的瞬间处理机（1296 样板槽 + 催化剂槽） */
     public static final RegistryObject<Block> QIAN_JI = BLOCKS.register(
             "qianji",
             QianJiBlock::new

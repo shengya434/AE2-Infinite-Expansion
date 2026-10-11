@@ -52,7 +52,7 @@ public class ModMenuTypes {
             MENUS.register("qianji",
                     () -> IForgeMenuType.create(QianJiMenu::new));
 
-    // 驱动器（无限级）512 格元件面板（2026-09-14 重写）
+    // 驱动器（无限级）540 格元件面板（2026-09-14 重写）
     public static final RegistryObject<MenuType<InfiniteDriveMenu>> INFINITE_DRIVE =
             MENUS.register("infinite_drive",
                     () -> IForgeMenuType.create(InfiniteDriveMenu::new));

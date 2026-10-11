@@ -13,7 +13,7 @@ import java.util.function.Supplier;
  * 千机 GUI 搜索结果（服务端 → 客户端，2026-09-21 v244）。
  * <p>
  * 只带**命中项**：槽位号 + 一行短标签。不带样板完整数据（客户端不需要，也不该拿到
- * 1280 槽的内容 —— 同"大槽位不同步"铁律）。客户端拿到的这批命中用来：
+ * 1296 槽的内容 —— 同"大槽位不同步"铁律）。客户端拿到的这批命中用来：
  * ① 在结果面板里列出；② 在当前页上给命中的槽画绿框；③ 点击后跳到它所在的页。
  */
 public final class QianJiSearchResultPacket {
@@ -24,7 +24,7 @@ public final class QianJiSearchResultPacket {
      * 为什么要带 tooltip：2026-09-21 sensei 反馈"只显示机器名和产物，区分效果不太强"——
      * 搜索结果里好几条看着一样，得能看到**输入有哪些、概率产出是什么**才能分辨。
      * tooltip 文本在**服务端**用 {@code QianJiPatternData#describe()} 拼好（与物品 tooltip 同源），
-     * 客户端仍然拿不到样板数据本身（1280 槽不同步的铁律不破）。
+     * 客户端仍然拿不到样板数据本身（1296 槽不同步的铁律不破）。
      *
      * @param slot    样板槽位号
      * @param label   列表行短标签（主产物 + 概率条数 + 来源机器）

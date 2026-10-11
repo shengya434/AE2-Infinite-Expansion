@@ -321,7 +321,7 @@
   "gui.ae2addon.qianji.label.parallel": "§7Current parallel: ",
   "gui.ae2addon.qianji.label.patterns": "§7Patterns",
   "gui.ae2addon.qianji.search.hint": "§7Search §8(input/output/machine · Enter to search · Esc to close)",
-  "gui.ae2addon.qianji.search.hint_idle": "§8Search patterns across this QianJi's 1280 slots",
+  "gui.ae2addon.qianji.search.hint_idle": "§8Search patterns across this QianJi's 1296 slots",
   "gui.ae2addon.qianji.search.row": "§8[page %s · slot %s] ",
   "gui.ae2addon.qianji.search.hint_jump": "§8Click a result to jump · hits get a green box",
   "gui.ae2addon.qianji.search.hit_range": "§7Hits §e%s §7(§8%s-%s§8)",

@@ -63,7 +63,7 @@ import java.util.Set;
 /**
  * 千机·阿比舒（无限级）方块实体。
  * <p>
- * - 1280 样板槽（仅接受编码处理样板）
+ * - 1296 样板槽（仅接受编码处理样板）
  * - 催化剂槽（基础/高级/终极）
  * - 副产物：实时查「真实配方」的次级产出，按概率额外给
  * - 催化剂：**所有产出（主产物 + 副产物）的数量倍数**（每次合成掷一次）
@@ -73,7 +73,12 @@ import java.util.Set;
 public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICraftingProvider, ICraftingMachine, Formable,
         appeng.helpers.patternprovider.PatternContainer, com.ae2addon.crafting.QianJiByproducts.RecipeLookup {
 
-    private static final int PATTERN_SLOTS = 1280;
+    /**
+     * 样板槽总数。**2026-10-11 从 1280 补到 1296**（= 24 页 × 54 格，分页见 {@code QianJiMenu}）：
+     * 1280 不是 54 的整数倍，最后一页会多画 16 个**永远用不了**的"死格"
+     * （越界槽 `getSlotLimit` 返 0、放不进也取不出）。GUI 侧一律引用本常量，不再各写一份数字。
+     */
+    public static final int PATTERN_SLOTS = 1296;
     private static final int CATALYST_SLOTS = 1;
 
     private boolean formed = false;
@@ -941,7 +946,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     /**
      * 本机样板槽的**定义 key 集合**（缓存）。
      * <p>
-     * ⚠ 2026-09-18：原来 {@code declaresPattern} 每次遍历 1280 个槽并逐个 {@code AEItemKey.of}，
+     * ⚠ 2026-09-18：原来 {@code declaresPattern} 每次遍历 1296 个槽并逐个 {@code AEItemKey.of}，
      * 而归属查表（{@code settleOwner}）在网络里每台千机上都要调一次 ——
      * 策划阶段对每个样板 × 每台千机各扫一遍槽位，直接把「计划合成」卡死（sensei 实测）。
      * 现在只扫一次并缓存；样板装/卸时（{@code cachedPatterns} 置 null）跟着失效。
@@ -1676,7 +1681,7 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
      * （AE2 自己样板的产物格式），我们补写过也没用 —— 那条路已放弃（耗了 sensei 6+ 次重启）。
      * 千机的数据（机器/配方 id/输入/主产物/概率产出）全在我们手里，所以自己做更准。
      * <p>
-     * **做法：服务端扫全部 1280 槽，只回"命中的槽位 + 数据"。** 客户端不参与、不整包同步 →
+     * **做法：服务端扫全部 1296 槽，只回"命中的槽位 + 数据"。** 客户端不参与、不整包同步 →
      * 不违反本项目"大槽位 GUI 绝不全量同步"的铁律（GUI 那步只拿命中结果，见 v244）。
      *
      * @param term  关键词；空白 → 返回空表（**不做**"空词全命中"这种容易误伤的行为）

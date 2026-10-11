@@ -20,7 +20,7 @@ import org.jetbrains.annotations.NotNull;
 /**
  * 千机·阿比舒 样板管理界面
  * <p>
- * 使用 PagedPatternHandler 包装真正的 1280 槽处理器，
+ * 使用 PagedPatternHandler 包装真正的 1296 槽处理器，
  * 仅暴露当前页的 54 个槽位给 GUI。
  * 翻页通过 clickMenuButton 实现服务端同步。
  * <p>
@@ -32,7 +32,8 @@ import org.jetbrains.annotations.NotNull;
 public class QianJiMenu extends AbstractContainerMenu {
 
     private static final int PAGE_SIZE = 54;
-    private static final int MAX_PAGE = (1280 + PAGE_SIZE - 1) / PAGE_SIZE - 1;
+    /** 总页数 - 1（槽数单点定义在 {@link QianJiBE#PATTERN_SLOTS}，那边补到 54 的整数倍后每页都满） */
+    private static final int MAX_PAGE = (QianJiBE.PATTERN_SLOTS + PAGE_SIZE - 1) / PAGE_SIZE - 1;
 
     private static final int BTN_PREV = 0;
     private static final int BTN_NEXT = 1;
@@ -46,7 +47,7 @@ public class QianJiMenu extends AbstractContainerMenu {
     private static final int JUMP_BASE = 100;
 
     private final QianJiBE be;
-    /** 分页包装器：将 1280 槽映射为当前页的 54 槽 */
+    /** 分页包装器：将 1296 槽映射为当前页的 54 槽 */
     private final PagedPatternHandler pagedHandler;
     private final ItemStackHandler catalystHandler;
     private final ContainerData pageData;
@@ -176,7 +177,7 @@ public class QianJiMenu extends AbstractContainerMenu {
     }
 
     /**
-     * GUI 搜索：在**打开这个菜单的那台千机**上搜（服务端执行，扫 1280 槽）。
+     * GUI 搜索：在**打开这个菜单的那台千机**上搜（服务端执行，扫 1296 槽）。
      * <p>
      * 门槛就挂在"菜单"上——玩家必须先真的打开这台千机，才能通过它搜索；
      * 客户端自己拿不到任何样板数据。搜索逻辑与 {@code /qianji find} 共用同一份实现。
@@ -265,7 +266,7 @@ public class QianJiMenu extends AbstractContainerMenu {
     // ════════════════════════════════════════════
 
     /**
-     * 包装 1280 槽的 realHandler，对外暴露 54 槽（当前页）。
+     * 包装 1296 槽的 realHandler，对外暴露 54 槽（当前页）。
      * 所有读写都映射到 realHandler 的真实槽位。
      * 翻页时触发 broadcastChanges 刷新客户端显示。
      */
