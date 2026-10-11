@@ -1798,6 +1798,29 @@ public class QianJiBE extends AENetworkBlockEntity implements MenuProvider, ICra
     private class PatternHandler extends ItemStackHandler {
         PatternHandler() { super(PATTERN_SLOTS); }
 
+        /**
+         * ⚠ <b>2026-10-11 实机抓到的存档坑：槽数会被 NBT 里的 {@code Size} 改回去。</b>
+         * <p>
+         * Forge 的 {@code ItemStackHandler.deserializeNBT} 实现是
+         * {@code setSize(nbt.contains("Size") ? nbt.getInt("Size") : stacks.size())}（字节码实证），
+         * 而 {@code serializeNBT} 会把当前槽数写进 {@code Size}。
+         * 于是**老存档**（存的是旧槽数 1280）在加载时会把这个 handler **缩回 1280** ——
+         * 表现就是"新建的千机是 1296、存档里既有的千机最后一页还是 16 格死格"。
+         * <p>
+         * 槽数是本类的常量（见 {@link #PATTERN_SLOTS}）、不随存档变，所以这里把它钉死后交给父类。
+         * 修好之后第一次保存就会写回正确的 {@code Size}，属自愈。
+         */
+        @Override
+        public void deserializeNBT(CompoundTag nbt) {
+            if (nbt != null && nbt.contains("Size")) {
+                CompoundTag fixed = nbt.copy();
+                fixed.putInt("Size", PATTERN_SLOTS);
+                super.deserializeNBT(fixed);
+            } else {
+                super.deserializeNBT(nbt);
+            }
+        }
+
         @Override
         public boolean isItemValid(int slot, @NotNull ItemStack stack) {
             // 自有样板（2026-09-15）：我们的样板物品，或 AE2 样板 + 我们的元数据
