@@ -145,9 +145,16 @@ public class InfiniteInterfacePart extends AEBasePart
     /** 同 key 合成请求冷却（tick；5 秒，与方块版一致）。 */
     private static final long CRAFT_COOLDOWN = 100;
 
-    /** 频道卡无线从端链路（ExtendedAE+；惰性持有——缺依赖不崩类加载）。 */
-    private final com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink channelLink =
-            new com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink();
+    /**
+     * 频道卡无线从端链路（ExtendedAE+）。
+     * <p>
+     * ⚠ 必须「惰性 new」——写成 {@code = new ChannelLink()} 字段初始化时，part 一进世界
+     * （构造/加载）就会初始化 ChannelLink 类，JVM 校验 {@code ChannelLink.update()} 时要解析
+     * {@code WirelessSlaveLink.<init>(IWirelessEndpoint)} 的参数类型 →
+     * 没装 extendedae_plus 时 {@code NoClassDefFoundError: IWirelessEndpoint}
+     * （2026-10-13 与方块版同源崩溃；修法一致：守卫内首次使用才 new）。
+     */
+    private com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink channelLink;
 
     public InfiniteInterfacePart(IPartItem<?> partItem) {
         super(partItem);
@@ -173,7 +180,9 @@ public class InfiniteInterfacePart extends AEBasePart
 
     @Override
     public void removeFromWorld() {
-        channelLink.unload(); // 频道卡无线链路断开（与方块版生命周期一致）
+        if (channelLink != null) {
+            channelLink.unload(); // 频道卡无线链路断开（与方块版生命周期一致）
+        }
         super.removeFromWorld();
         removed = true;
         ACTIVE_PARTS.remove(this);
@@ -987,6 +996,12 @@ public class InfiniteInterfacePart extends AEBasePart
 
     /** 按卡刷新无线链路（每 64 tick；无卡自动断开）。 */
     private void updateChannelLink() {
+        if (!com.ae2addon.compat.ExtendedAEPlusCompat.isLoaded()) {
+            return; // 未装 extendedae_plus：连 ChannelLink 类都不加载（见字段注释）
+        }
+        if (channelLink == null) {
+            channelLink = new com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink();
+        }
         var card = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
         net.minecraft.world.item.ItemStack cardStack = net.minecraft.world.item.ItemStack.EMPTY;
         if (card != null) {
