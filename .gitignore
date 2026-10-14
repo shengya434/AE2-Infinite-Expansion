@@ -23,3 +23,7 @@ run
 
 # Files from Forge MDK
 forge*changelog.txt
+
+# 1.12.2 依赖 jar 不入库（2026-10-14）：这些是第三方模组，公开仓库不转发其二进制；
+# 需要的文件清单见 libs/README.md，自行从各模组官方发布页获取。
+libs/*.jar
