@@ -11,7 +11,14 @@ import net.minecraftforge.network.NetworkEvent;
 import java.util.function.Supplier;
 
 public class RequestCellScreenPacket {
-    public enum Target { SELECT, CONFIG }
+    /**
+     * 目标界面。**只剩 SELECT**：
+     * 原先还有 {@code CONFIG}（「从模式选择页不改模式、直接进配置页」那条路），
+     * 2026-10-14 清掉 —— 点「自定义无限」当场就会进配置页
+     * （见 {@link SetCellModePacket#handle} 里的 {@code openConfigFor(..., newMode == 2)}），
+     * 那条路既没接完也没用了。载荷形状保持不变，将来要加回来只需补枚举与分支。
+     */
+    public enum Target { SELECT }
 
     private final Target target;
 
@@ -36,15 +43,10 @@ public class RequestCellScreenPacket {
             }
             CellScreenTarget.CellTarget target = CellScreenTarget.resolveCellTarget(player);
             if (target == null) return;
-            AE2Addon.LOGGER.info("[cellscreen] menu={} src={} newMode={} open={}",
+            AE2Addon.LOGGER.info("[cellscreen] menu={} src={} newMode={} open=ModeSelectMenu",
                     player.containerMenu.getClass().getSimpleName(), target.source(),
-                    target.stack().getOrCreateTag().getInt("umode"),
-                    packet.target == Target.SELECT ? "ModeSelectMenu" : "Mode2ConfigMenu");
-            if (packet.target == Target.SELECT) {
-                UniversalStorageCell.openSelectMenuFor(player, target.stack(), target.drive(), target.driveSlot());
-            } else {
-                UniversalStorageCell.openConfigFor(player, target.stack(), target.drive(), target.driveSlot(), true);
-            }
+                    target.stack().getOrCreateTag().getInt("umode"));
+            UniversalStorageCell.openSelectMenuFor(player, target.stack(), target.drive(), target.driveSlot());
         });
         ctx.get().setPacketHandled(true);
     }

@@ -57,13 +57,16 @@ static @Nullable CellTarget resolveCellTarget(ServerPlayer player)
 
 ### F4 新包 `RequestCellScreenPacket`（或复用现成 type；你定，但要复用菜单有效性校验的思路）
 - 载荷：目标界面枚举 `SELECT` / `CONFIG`；
+  > **⚠ 2026-10-14 实际落地：`CONFIG` 那条被删了。**
+  > 选「自定义无限」当场就进配置页（`SetCellModePacket` → `openConfigFor(..., newMode == 2)`），
+  > 「从选择页不改模式直接进配置页」既没接完也用不上；枚举现在只有 `SELECT`（载荷形状未变）。
 - 服务端：F1 解析元件 → 分别打开 ModeSelect 菜单 / 按 `openConfigFor` 打开；
 - 解析失败 → warn + 聊天提示；
 - **必须校验发包者确实打开了这个元件的界面**（照 `Mode2ConfigPacket` 现有做法抄，别放宽）。
 
 ### F5 重开落点：mode 2 **直接进配置页**
 - `Mode2ConfigScreen` 的初始 `uiState` 默认改成 **1（配置页）**；
-- **只有**"从主模式界面选 mode 2 / 请求 CONFIG"这一次要落在**子模式页（uiState 0）**：
+- **只有**"从主模式界面选 mode 2"这一次要落在**子模式页（uiState 0）**：
   用 `openScreen(...)` 的 buffer 带一个 `showWorkMode` 标志，客户端在菜单的 `fromNetwork` 里读出来传给 Screen
   （构造函数或 setter 都行）。⚠ **不要**用静态变量跨界面传状态——会在别的路径漏进去。
 - 其它路径（手持右键元件 / 元件编辑器 / 驱动器）打开 mode 2 → **直接配置页** ✓

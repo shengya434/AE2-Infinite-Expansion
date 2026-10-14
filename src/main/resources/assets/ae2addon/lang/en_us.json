@@ -70,7 +70,6 @@
   "gui.ae2addon.cpu.lane.working": "%s: working",
   "gui.ae2addon.cpu.lane.progress": "%s: %s %s%%",
   "gui.ae2addon.mode_select.title": "§lSelect Storage Mode",
-  "gui.ae2addon.mode_select.hint": "§7Right-click to configure custom mode",
   "gui.ae2addon.mode_select.btn1": "§a[Unlimited Storage]",
   "gui.ae2addon.mode_select.btn2": "§e[Custom Infinite]",
   "gui.ae2addon.mode_select.btn3": "§d[All-Types Infinite]",

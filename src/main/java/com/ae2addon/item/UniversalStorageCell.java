@@ -155,11 +155,6 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
     }
 
     public static void openConfigFor(ServerPlayer player, ItemStack stack,
-                                     InfiniteDriveBE drive, int driveSlot) {
-        openConfigFor(player, stack, drive, driveSlot, false);
-    }
-
-    public static void openConfigFor(ServerPlayer player, ItemStack stack,
                                      InfiniteDriveBE drive, int driveSlot, boolean showWorkMode) {
         if (!(stack.getItem() instanceof UniversalStorageCell)) return;
         int mode = stack.getOrCreateTag().getInt("umode");
