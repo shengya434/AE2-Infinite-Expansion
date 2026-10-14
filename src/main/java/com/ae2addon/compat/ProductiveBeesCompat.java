@@ -345,16 +345,29 @@ public final class ProductiveBeesCompat {
                     // botania/log_to_livingwood.json 正好就是实机报告里 block_conversion **唯一**的 OK 条。
                     // 不改会怎样：只读 input → 20 条配方一个输入槽都没有（整类报"无输入"）。
                     var blockInput = itemOptions(field(recipe, "input"));
+                    if (!blockInput.isEmpty()) com.ae2addon.AE2Addon.LOGGER.info(
+                            "[ProductiveBees] block_conversion recipe={} input route=input", recipe.getId());
                     if (blockInput.isEmpty()) {
-                        blockInput = itemOptions(requiredField(recipe, "stateFrom"));
+                        Object stateFrom = requiredField(recipe, "stateFrom");
+                        blockInput = itemOptions(field(recipe, "fromDisplay"));
+                        String route = "fromDisplay";
                         if (blockInput.isEmpty()) {
-                            // from 是水/空气这类**没有物品形态**的方块 → 这个输入表达不出来。
-                            // 照实打一条日志（旧行为是静默丢槽，实机上根本查不出为什么"无输入"）
-                            warnOnce("pb-block-from-noitem",
-                                    "block_conversion 的输入方块没有物品形态（from="
-                                            + describeBlock(field(recipe, "stateFrom"))
-                                            + "）→ 该输入槽缺失，样板只剩蜜蜂那一槽");
+                            GenericStack item = blockStateToItemKey(stateFrom);
+                            if (item != null) { blockInput = List.of(item); route = "block item"; }
                         }
+                        if (blockInput.isEmpty()) {
+                            GenericStack fluid = blockStateToFluidKey(stateFrom);
+                            if (fluid != null) { blockInput = List.of(fluid); route = "fluid"; }
+                            else {
+                                warnOnce("pb-block-from-noitem",
+                                        "block_conversion 输入已尝试 fromDisplay/物品/流体（from="
+                                                + describeBlock(stateFrom)
+                                                + "），无可编码输入槽");
+                            }
+                        }
+                        if (!blockInput.isEmpty()) com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ProductiveBees] block_conversion recipe={} from={} input route={}",
+                                recipe.getId(), describeBlock(stateFrom), route);
                     }
                     if (!blockInput.isEmpty()) slots.add(blockInput);
                 }
@@ -419,19 +432,28 @@ public final class ProductiveBeesCompat {
                     }
                 }
                 case "BlockConversionRecipe" -> {
-                    // stateTo 是**方块状态**，千机只能按方块物品表示
+                    // stateTo 是方块状态；无物品形态时尝试映射水或岩浆流体。
                     Object stateTo = requiredField(recipe, "stateTo");
                     GenericStack stack = toGeneric(stateTo);
+                    if (stack == null) stack = firstItemOption(field(recipe, "toDisplay"));
+                    if (stack == null) stack = blockStateToItemKey(stateTo);
+                    if (stack == null) {
+                        stack = blockStateToFluidKey(stateTo);
+                        if (stack != null) {
+                            com.ae2addon.AE2Addon.LOGGER.info(
+                                    "[ProductiveBees] block_conversion 产物方块无物品形态 → 映射为流体 {}",
+                                    describeBlock(stateTo));
+                        }
+                    }
                     Float chance = chance100(field(recipe, "chance"));
                     if (chance != null && stack != null && stack.amount() > 0) {
+                        com.ae2addon.AE2Addon.LOGGER.info(
+                                "[ProductiveBees] block_conversion recipe={} output={}", recipe.getId(), stack.what());
                         out.add(new Stat(stack, chance));
                     } else if (chance != null && stack == null) {
-                        // to 是水/岩浆/空气这类**没有物品形态**的方块 → 产出表达不出来。
-                        // 实机里 block_conversion 的 3 条"提取失败"就是这三条（air_to_water / water_to_air /
-                        // cobble_to_lava）。不硬编成流体（方块 ≠ 流体，会造假配方），照实打日志说明原因
                         warnOnce("pb-block-to-noitem",
                                 "block_conversion 的产物方块没有物品形态（to=" + describeBlock(stateTo)
-                                        + "）→ 无法编码成 AE 样板，这条配方只剩输入（会被报成「无主产物」）");
+                                        + "），也不是已知流体 → 无法编码成 AE 样板，这条配方只剩输入（会被报成「无主产物」）");
                     }
                 }
                 case "BeeConversionRecipe" -> {
@@ -627,6 +649,12 @@ public final class ProductiveBeesCompat {
         return options;
     }
 
+    @Nullable
+    private static GenericStack firstItemOption(@Nullable Object ingredient) {
+        var options = itemOptions(ingredient);
+        return options.isEmpty() ? null : options.get(0);
+    }
+
     /** 蜜蜂对象（各种形态）→ 刷怪蛋候选 */
     private static List<GenericStack> beeOptions(@Nullable Object value) {
         var options = new ArrayList<GenericStack>();
@@ -811,6 +839,30 @@ public final class ProductiveBeesCompat {
                             + "（该配方的这一部分会被漏掉 —— PB 可能改了字段名，用 javap 复核）");
         }
         return value;
+    }
+
+    /** 方块状态对应的物品；空气没有输入物品。 */
+    @Nullable
+    private static GenericStack blockStateToItemKey(@Nullable Object value) {
+        if (!(value instanceof BlockState state)) return null;
+        Item item = state.getBlock().asItem();
+        if (item == null || item == Items.AIR) return null;
+        return toGeneric(new ItemStack(item));
+    }
+
+    /** 仅将已知的水和岩浆方块状态映射成同名流体。 */
+    @Nullable
+    private static GenericStack blockStateToFluidKey(@Nullable Object value) {
+        if (!(value instanceof BlockState state)) return null;
+        try {
+            ResourceLocation blockId = ForgeRegistries.BLOCKS.getKey(state.getBlock());
+            if (!new ResourceLocation("minecraft", "water").equals(blockId)
+                    && !new ResourceLocation("minecraft", "lava").equals(blockId)) return null;
+            Fluid fluid = fluidById(blockId);
+            return fluid == null ? null : new GenericStack(AEFluidKey.of(fluid), 1);
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     /** 方块状态 → 注册名（日志用；取不到就退回 toString） */
