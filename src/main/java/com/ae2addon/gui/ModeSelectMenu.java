@@ -1,6 +1,7 @@
 package com.ae2addon.gui;
 
 import com.ae2addon.block.InfiniteDriveBE;
+import com.ae2addon.AE2Addon;
 import com.ae2addon.init.ModMenuTypes;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.entity.player.Inventory;
@@ -50,6 +51,8 @@ public class ModeSelectMenu extends AbstractContainerMenu {
     public ItemStack getCellStack() {
         return cellStack;
     }
+    public InfiniteDriveBE getDrive() { return drive; }
+    public int getDriveSlot() { return driveSlot; }
 
     public boolean isCellPresent(Player player) {
         return drive == null || (driveSlot >= 0 && drive.isFormed()
@@ -77,6 +80,10 @@ public class ModeSelectMenu extends AbstractContainerMenu {
 
     @Override
     public boolean stillValid(Player player) {
-        return !cellStack.isEmpty() && isCellPresent(player);
+        boolean present = isCellPresent(player);
+        boolean valid = !cellStack.isEmpty() && present;
+        if (!valid && !player.level().isClientSide)
+            AE2Addon.LOGGER.warn("[cellscreen] stillValid=false menu=ModeSelectMenu cellEmpty={} present={}", cellStack.isEmpty(), present);
+        return valid;
     }
 }

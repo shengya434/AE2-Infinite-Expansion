@@ -262,6 +262,7 @@ public class AE2AddonJEIPlugin implements IModPlugin {
                 Component.translatable("gui.ae2addon.jei.m1.desc1"),
                 Component.literal(""),
                 Component.translatable("gui.ae2addon.jei.m1.desc2"),
+                Component.translatable("gui.ae2addon.jei.cell.reject_hint"),
                 Component.translatable("gui.ae2addon.jei.switch_hint")
         );
 
@@ -277,6 +278,7 @@ public class AE2AddonJEIPlugin implements IModPlugin {
                 Component.translatable("gui.ae2addon.jei.m2.step2"),
                 Component.translatable("gui.ae2addon.jei.m2.step2b"),
                 Component.translatable("gui.ae2addon.jei.m2.step3"),
+                Component.translatable("gui.ae2addon.jei.cell.reject_hint"),
                 Component.translatable("gui.ae2addon.jei.switch_hint")
         );
 
@@ -290,6 +292,8 @@ public class AE2AddonJEIPlugin implements IModPlugin {
                 Component.translatable("gui.ae2addon.jei.m3.desc2"),
                 Component.translatable("gui.ae2addon.jei.m3.desc3"),
                 Component.translatable("gui.ae2addon.jei.m3.desc4"),
+                Component.translatable("gui.ae2addon.jei.m3.desc5"),
+                Component.translatable("gui.ae2addon.jei.cell.reject_hint"),
                 Component.translatable("gui.ae2addon.jei.switch_hint")
         );
 
@@ -328,6 +332,12 @@ public class AE2AddonJEIPlugin implements IModPlugin {
         registration.addGhostIngredientHandler(
                 Mode2ConfigScreen.class,
                 new Mode2ConfigGhostHandler()
+        );
+
+        // 「选择存储模式」界面的拒收列表：JEI 拖入 = 加入拒收（2026-10-13）
+        registration.addGhostIngredientHandler(
+                com.ae2addon.gui.ModeSelectScreen.class,
+                new ModeSelectGhostHandler()
         );
 
         // ME接口（无限级）标记槽：JEI 拖取物品/流体/气体直接标记

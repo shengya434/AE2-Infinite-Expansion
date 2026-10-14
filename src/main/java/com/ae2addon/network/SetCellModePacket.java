@@ -1,6 +1,7 @@
 package com.ae2addon.network;
 
 import com.ae2addon.cell.UnlimitedCellInventory;
+import com.ae2addon.AE2Addon;
 import com.ae2addon.item.UniversalStorageCell;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
@@ -36,17 +37,9 @@ public class SetCellModePacket {
             ServerPlayer player = ctx.get().getSender();
             if (player == null) return;
 
-            ItemStack stack = ItemStack.EMPTY;
-            if (player.containerMenu instanceof com.ae2addon.gui.ModeSelectMenu menu) {
-                if (!menu.isCellPresent(player)) return;
-                stack = menu.getCellStack();
-                menu.markCellChanged();
-            }
-            if (stack.isEmpty()) stack = player.getMainHandItem();
-            if (!(stack.getItem() instanceof UniversalStorageCell)) {
-                stack = player.getOffhandItem();
-                if (!(stack.getItem() instanceof UniversalStorageCell)) return;
-            }
+            CellScreenTarget.CellTarget target = CellScreenTarget.resolveCellTarget(player);
+            if (target == null) return;
+            ItemStack stack = target.stack();
 
             int newMode = packet.mode;
             if (newMode < 1 || newMode > 3) {
@@ -59,6 +52,11 @@ public class SetCellModePacket {
             // 通过 inventory 设置模式，同步更新 _b/_t 摘要标签
             UnlimitedCellInventory inv = new UnlimitedCellInventory(stack, null);
             inv.setMode(newMode);
+            if (target.drive() != null) target.drive().setChanged();
+            AE2Addon.LOGGER.info("[cellscreen] menu={} src={} newMode={} open={}",
+                    player.containerMenu.getClass().getSimpleName(), target.source(), newMode,
+                    newMode == 2 ? "Mode2ConfigMenu" : "ModeSelectMenu");
+            UniversalStorageCell.openConfigFor(player, stack, target.drive(), target.driveSlot(), newMode == 2);
         });
         ctx.get().setPacketHandled(true);
     }

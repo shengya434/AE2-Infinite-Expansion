@@ -79,11 +79,28 @@ public class UnlimitedCellInventory implements StorageCell {
     private Set<AEKey> blacklist = new HashSet<>();
     /** 数量被锁定的条目。 */
     private Set<AEKey> qtyLocked = new HashSet<>();
+    private Set<AEKey> rejectOn = new HashSet<>();
+    private Set<AEKey> rejectOff = new HashSet<>();
+    private boolean rejectDefault;
 
     private static List<AEKey> ALL_KEYS_CACHE = null;
     private static Set<AEKey> ALL_KEYS_SET = null;
     private static int ALL_KEYS_VERSION = -1;
     private static boolean ALL_KEYS_INIT = false;
+
+    /**
+     * 额外通道键缓存（2026-10-13 sensei：mode3 没覆盖 AE2 附属存储）。
+     * <p>
+     * 物品/流体之外，附属模组还贡献了自己的键型（Mekanism 化学物、AppFlux 能量、
+     * applied-botanics 魔力、arseng 源质…）。这些键**只能**回到各附属自己的注册表/单例去拿
+     * （{@code AEKeyType} 没有枚举接口），所以集中放在这里懒建一次：
+     * 注册发生在模组加载期、之后不变；某家没装就是空表。
+     * <p>
+     * ⚠ 全部经 {@code compat} 包的**纯反射**帮手取，不在本类 import 任何附属的类 ——
+     * 免得「缺前置 → 类加载/校验期 NoClassDefFoundError」那类事故（见 2026-10-13 的
+     * ChannelLink 内联字段崩溃）。
+     */
+    private static volatile List<AEKey> EXTRA_KEYS_CACHE;
 
     private boolean dataDirty = false;
 
@@ -181,6 +198,11 @@ public class UnlimitedCellInventory implements StorageCell {
         blacklist.addAll(data.blacklist);
         qtyLocked.clear();
         qtyLocked.addAll(data.qtyLocked);
+        rejectOn.clear();
+        rejectOn.addAll(data.rejectOn);
+        rejectOff.clear();
+        rejectOff.addAll(data.rejectOff);
+        rejectDefault = data.rejectDefault;
     }
 
     private void save() {
@@ -216,6 +238,11 @@ public class UnlimitedCellInventory implements StorageCell {
         data.blacklist.addAll(blacklist);
         data.qtyLocked.clear();
         data.qtyLocked.addAll(qtyLocked);
+        data.rejectOn.clear();
+        data.rejectOn.addAll(rejectOn);
+        data.rejectOff.clear();
+        data.rejectOff.addAll(rejectOff);
+        data.rejectDefault = rejectDefault;
         savedData.setDirty();
         updateSummary();
         if (saveProvider != null) {
@@ -231,6 +258,7 @@ public class UnlimitedCellInventory implements StorageCell {
         s1.clear(); s2.clear(); wl.clear(); ul.clear(); ca.clear(); itemThr.clear();
         tags.clear(); mods.clear(); ruleModes.clear(); ruleTouched.clear(); blacklist.clear();
         qtyLocked.clear();
+        rejectOn.clear(); rejectOff.clear(); rejectDefault = false;
         // mode3 的 m3 不清
         ruleInstant = true;
         workMode = 1;
@@ -346,22 +374,20 @@ public class UnlimitedCellInventory implements StorageCell {
     }
 
     public long insert(AEKey what, long amount, Actionable act, IActionSource src) {
+        if (isRejecting(what)) return 0;
         if (amount <= 0) return 0;
         // 锁定条目：收下但不上账（2026-09-27 sensei）—— 来源侧正常扣除，本条目数量被钉死不变。
-        // TODO: “禁止存入（拒收）”以后单开一个通用设置，不与锁定绑定。
         if (mode == 2 && qtyLocked.contains(what)) return amount;
         return insert(what, amount, act, src, 0);
     }
 
     /** 内部 insert：depth 为解包深度（物质球套球最多解 2 层）。 */
     private long insert(AEKey what, long amount, Actionable act, IActionSource src, int depth) {
+        if (isRejecting(what)) return 0;
         if (amount <= 0) return 0;
         // 锁定条目：收下但不上账（2026-09-27 sensei）—— 来源侧正常扣除，本条目数量被钉死不变。
-        // TODO: “禁止存入（拒收）”以后单开一个通用设置，不与锁定绑定。
         if (mode == 2 && qtyLocked.contains(what)) return amount;
-        insertBI(what, BigInteger.valueOf(amount), act, src, depth);
-        // 原语义：MODULATE 收下全额；非 MODULATE 也返回 amount（调用方据此判断"可收"）
-        return amount;
+        return insertBI(what, BigInteger.valueOf(amount), act, src, depth) ? amount : 0;
     }
 
     /**
@@ -373,12 +399,11 @@ public class UnlimitedCellInventory implements StorageCell {
      *
      * @param depth 解包深度（物质球套球最多解 2 层）
      */
-    private void insertBI(AEKey what, BigInteger amount, Actionable act, IActionSource src, int depth) {
-        if (what == null || amount == null || amount.signum() <= 0) return;
+    private boolean insertBI(AEKey what, BigInteger amount, Actionable act, IActionSource src, int depth) {
+        if (isRejecting(what)) return false;
+        if (what == null || amount == null || amount.signum() <= 0) return false;
         // 锁定条目：收下但不上账（2026-09-27 sensei）—— 来源侧正常扣除，本条目数量被钉死不变。
-        // TODO: “禁止存入（拒收）”以后单开一个通用设置，不与锁定绑定。
-        if (mode == 2 && qtyLocked.contains(what)) return;
-        if (act != Actionable.MODULATE) return;
+        if (mode == 2 && qtyLocked.contains(what)) return true;
 
         // ── 物质球特例（2026-08-27 22:16 sensei 要求）：存入物质球 → 自动解包入库 ──
         // 物质球是取消无限时打包的临时容器（NBT 存 innerKey+amount），
@@ -391,12 +416,17 @@ public class UnlimitedCellInventory implements StorageCell {
             // ⚠ BigInteger：解开物质球时按真实数量入库（可能远超 Long.MAX）
             BigInteger innerAmount = com.ae2addon.item.MatterBallItem.getAmount(ballStack);
             if (innerKey != null && innerAmount.signum() > 0) {
-                insertBI(innerKey, innerAmount, act, src, depth + 1);
+                if (isRejecting(innerKey)) return false;
+                if (!insertBI(innerKey, innerAmount, act, src, depth + 1)) return false;
             }
-            dataDirty = true;
-            save();
-            return; // 物质球本身不入库（已解包）
+            if (act == Actionable.MODULATE) {
+                dataDirty = true;
+                save();
+            }
+            return true; // 物质球本身不入库（已解包）
         }
+
+        if (act != Actionable.MODULATE) return true;
 
         // ── 无限路径：直接收下，不占内部存储 ──
         if (mode == 3) {
@@ -405,7 +435,7 @@ public class UnlimitedCellInventory implements StorageCell {
                 dataDirty = true;
                 save();
             }
-            return;
+            return true;
         }
         if (mode == 2) {
             if (!blacklist.contains(what) && matchesRule(what)) {
@@ -421,7 +451,7 @@ public class UnlimitedCellInventory implements StorageCell {
                 ca.merge(what, amount, BigInteger::add);
                 dataDirty = true;
                 save();
-                return;
+                return true;
             }
         }
         // 黑名单：无法无限（2026-09-27 sensei：阈值/存入无限模式也要拦）
@@ -432,10 +462,10 @@ public class UnlimitedCellInventory implements StorageCell {
             if (!ul.contains(what)) ul.add(what);
             dataDirty = true;
             save();
-            return;
+            return true;
         }
         if (mode == 2 && workMode == 3 && (wl.contains(what) || ul.contains(what))) {
-            return;
+            return true;
         }
 
         // ── 非无限路径：用 BigInteger 累加，永不溢出 ──
@@ -456,6 +486,7 @@ public class UnlimitedCellInventory implements StorageCell {
         }
 
         save();
+        return true;
     }
 
     /** 从 BigInteger map 中安全提取，返回 long（上限 Long.MAX_VALUE） */
@@ -510,8 +541,11 @@ public class UnlimitedCellInventory implements StorageCell {
     }
 
     private static void ensureAllKeysCache() {
+        List<AEKey> extra = extraKeys();
         // 版本化缓存：注册表条目数变化时自动重建（新模组/数据包加载后不脏读）
-        int version = BuiltInRegistries.ITEM.keySet().size() + BuiltInRegistries.FLUID.keySet().size();
+        // 2026-10-13：版本号把额外通道键数也算进来（mode3 现在覆盖附属键型）
+        int version = BuiltInRegistries.ITEM.keySet().size()
+                + BuiltInRegistries.FLUID.keySet().size() + extra.size();
         if (ALL_KEYS_INIT && ALL_KEYS_VERSION == version) return;
         ALL_KEYS_INIT = true;
         ALL_KEYS_VERSION = version;
@@ -548,8 +582,57 @@ public class UnlimitedCellInventory implements StorageCell {
             }
         }
 
+        // 额外通道（Mekanism 化学物 / AppFlux 能量 / 魔力 / 源质）：最后并入，按 set 去重
+        for (AEKey k : extra) {
+            if (set.add(k)) {
+                list.add(k);
+            }
+        }
+
         ALL_KEYS_CACHE = list;
         ALL_KEYS_SET = set;
+    }
+
+    /**
+     * 额外通道键（懒建一次；首次构建打一行日志说明各通道命中情况，便于核对）。
+     * <p>
+     * 全部走 {@code compat} 包的**纯反射**帮手：本类不 import 任何附属的类，
+     * 对方缺席时各帮手返回空表/ null（不会因为「缺前置」在类加载校验期炸）。
+     */
+    private static List<AEKey> extraKeys() {
+        List<AEKey> cached = EXTRA_KEYS_CACHE;
+        if (cached != null) {
+            return cached;
+        }
+        List<AEKey> list = new ArrayList<>();
+        int chemicals = 0;
+        int flux = 0;
+        AEKey mana = null;
+        AEKey source = null;
+        try {
+            var chem = com.ae2addon.compat.ChemicalCompat.allChemicalKeys();
+            chemicals = chem.size();
+            list.addAll(chem);
+            var fe = com.ae2addon.compat.ExtraKeysCompat.fluxKeys();
+            flux = fe.size();
+            list.addAll(fe);
+            mana = com.ae2addon.compat.ExtraKeysCompat.manaKey();
+            source = com.ae2addon.compat.ExtraKeysCompat.sourceKey();
+            if (mana != null) {
+                list.add(mana);
+            }
+            if (source != null) {
+                list.add(source);
+            }
+        } catch (Throwable t) {
+            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon] 额外通道键枚举异常：{}", t.toString());
+        }
+        list = new ArrayList<>(new LinkedHashSet<>(list));
+        EXTRA_KEYS_CACHE = list;
+        com.ae2addon.AE2Addon.LOGGER.info(
+                "[ae2addon] mode3 额外通道键 {} 个（Mekanism 化学物 {}，AppFlux 能量 {}，魔力 {}，源质 {}）",
+                list.size(), chemicals, flux, mana != null, source != null);
+        return list;
     }
 
     /**
@@ -741,6 +824,45 @@ public class UnlimitedCellInventory implements StorageCell {
     public boolean isQuantityLocked(AEKey key) { return qtyLocked.contains(key); }
 
     public Set<AEKey> quantityLockedKeys() { return qtyLocked; }
+
+    public boolean isRejecting(AEKey k) {
+        if (k == null) return false;
+        if (rejectOn.contains(k)) return true;
+        if (rejectOff.contains(k)) return false;
+        return rejectDefault;
+    }
+
+    public void toggleReject(AEKey k) {
+        if (k == null) return;
+        boolean reject = !isRejecting(k);
+        rejectOn.remove(k);
+        rejectOff.remove(k);
+        if (reject) rejectOn.add(k);
+        else rejectOff.add(k);
+        dataDirty = true;
+        save();
+    }
+
+    public void clearReject(AEKey k) {
+        if (k == null) return;
+        if (rejectOn.remove(k) | rejectOff.remove(k)) {
+            dataDirty = true;
+            save();
+        }
+    }
+
+    public void setRejectDefault(boolean v) {
+        if (rejectDefault == v) return;
+        rejectDefault = v;
+        dataDirty = true;
+        save();
+    }
+
+    public boolean rejectDefault() { return rejectDefault; }
+
+    public Set<AEKey> rejectOnKeys() { return rejectOn; }
+
+    public Set<AEKey> rejectOffKeys() { return rejectOff; }
 
     public int getWorkMode() {
         return workMode;

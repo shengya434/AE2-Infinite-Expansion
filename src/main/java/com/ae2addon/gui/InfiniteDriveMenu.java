@@ -19,9 +19,9 @@ import net.minecraftforge.items.SlotItemHandler;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * 驱动器（无限级）元件面板 —— **512 格，54 格/页 × 10 页**（2026-09-14 重写）。
+ * 驱动器（无限级）元件面板 —— **540 格，54 格/页 × 10 页**（2026-09-14 重写）。
  * <p>
- * 大槽位 GUI 的铁律（本项目 3f/3g 经验）：**绝不把 512 个槽全加进菜单**（广播爆炸），
+ * 大槽位 GUI 的铁律（本项目 3f/3g 经验）：**绝不把 540 个槽全加进菜单**（广播爆炸），
  * 只暴露当前页的 54 格；页码走服务端权威的 {@link ContainerData}（客户端本地猜页会导致
  * 写进旧页 → 吞元件），翻页按钮只发 {@code clickMenuButton} 包。
  */
@@ -39,6 +39,7 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
     private final PagedCellHandler paged;
     private final ContainerData pageData;
     private final boolean editorMode;
+    private ItemStack selectedCell = ItemStack.EMPTY;
 
     /** 客户端构造（IForgeMenuType → 只带 pos） */
     public InfiniteDriveMenu(int id, Inventory playerInv, FriendlyByteBuf buf) {
@@ -107,6 +108,8 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
     public int getMaxPage() { return MAX_PAGE; }
 
     public boolean isEditorMode() { return editorMode; }
+    public void setSelectedCell(ItemStack stack) { selectedCell = stack; }
+    public ItemStack getSelectedCell() { return selectedCell; }
 
     public BlockPos getDrivePos() { return drivePos; }
 
@@ -164,7 +167,7 @@ public class InfiniteDriveMenu extends AbstractContainerMenu {
     // ── 分页映射 ──
 
     /**
-     * 把 512 格元件库存的「当前页 54 格」暴露成 IItemHandler。
+     * 把 540 格元件库存的「当前页 54 格」暴露成 IItemHandler。
      * 每次写入都会显式通知 BE（{@code onChangeInventory}）——BE 据此重建该槽的
      * {@code DriveWatcher} 并请求网格重新挂载（否则新插的元件不生效）。
      */

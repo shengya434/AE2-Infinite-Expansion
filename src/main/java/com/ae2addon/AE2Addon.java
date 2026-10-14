@@ -337,6 +337,11 @@ public class AE2Addon {
                 com.ae2addon.network.CellEditorPickPacket::decode,
                 com.ae2addon.network.CellEditorPickPacket::handle
         );
+        NETWORK.registerMessage(24, com.ae2addon.network.RequestCellScreenPacket.class,
+                com.ae2addon.network.RequestCellScreenPacket::encode,
+                com.ae2addon.network.RequestCellScreenPacket::decode,
+                com.ae2addon.network.RequestCellScreenPacket::handle
+        );
 
         MinecraftForge.EVENT_BUS.register(this);
         MinecraftForge.EVENT_BUS.register(com.ae2addon.command.AE2InfoCommand.class);

@@ -28,6 +28,7 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
     private final ItemStack cellStack;
     private final InfiniteDriveBE drive;
     private final int driveSlot;
+    private final boolean showWorkMode;
     /** 客户端缓存的面板数据 */
     private List<UnlimitedCellInventory.PanelItem> panelItems = new ArrayList<>();
     /** 客户端缓存的 tag 规则 */
@@ -47,10 +48,16 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
 
     public Mode2ConfigMenu(int id, Inventory playerInventory, ItemStack cellStack,
                            InfiniteDriveBE drive, int driveSlot) {
+        this(id, playerInventory, cellStack, drive, driveSlot, false);
+    }
+
+    public Mode2ConfigMenu(int id, Inventory playerInventory, ItemStack cellStack,
+                           InfiniteDriveBE drive, int driveSlot, boolean showWorkMode) {
         super(ModMenuTypes.MODE2_CONFIG.get(), id);
         this.cellStack = cellStack;
         this.drive = drive;
         this.driveSlot = driveSlot;
+        this.showWorkMode = showWorkMode;
 
         // 使用可切换隐藏的 Slot 包装
         var inv = playerInventory;
@@ -71,10 +78,13 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
     }
 
     public static Mode2ConfigMenu fromNetwork(int id, Inventory inv, FriendlyByteBuf buf) {
-        return new Mode2ConfigMenu(id, inv, buf.readItem());
+        return new Mode2ConfigMenu(id, inv, buf.readItem(), null, -1, buf.readBoolean());
     }
 
     public ItemStack getCellStack() { return cellStack; }
+    public InfiniteDriveBE getDrive() { return drive; }
+    public int getDriveSlot() { return driveSlot; }
+    public boolean showWorkMode() { return showWorkMode; }
 
     /** 编辑器打开期间确认目标仍在原槽，避免改到已取出的旧栈。 */
     public boolean isCellPresent(Player player) {
@@ -172,22 +182,22 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
 
     /** 添加 tag 规则 */
     public void sendAddTagRule(String tag) {
-        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(7, tag, true));
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(19, tag, true));
     }
 
     /** 移除 tag 规则 */
     public void sendRemoveTagRule(String tag) {
-        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(8, tag, true));
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(20, tag, true));
     }
 
     /** 添加 mod 规则 */
     public void sendAddModRule(String mod) {
-        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(7, mod, false));
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(19, mod, false));
     }
 
     /** 移除 mod 规则 */
     public void sendRemoveModRule(String mod) {
-        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(8, mod, false));
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(20, mod, false));
     }
 
     /** 设置单条规则的无限模式。 */
@@ -215,6 +225,14 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
         AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(keyTag));
     }
 
+    public void sendToggleReject(CompoundTag keyTag) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(7, keyTag));
+    }
+
+    public void sendRejectDefault(boolean value) {
+        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(8, value));
+    }
+
     /** 点击背包物品 → 加入白名单（自动检测流体容器） */
     @Override
     public ItemStack quickMoveStack(Player player, int slotIndex) {
@@ -228,5 +246,11 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
     }
 
     @Override
-    public boolean stillValid(Player p) { return !cellStack.isEmpty() && isCellPresent(p); }
+    public boolean stillValid(Player p) {
+        boolean present = isCellPresent(p);
+        boolean valid = !cellStack.isEmpty() && present;
+        if (!valid && !p.level().isClientSide)
+            AE2Addon.LOGGER.warn("[cellscreen] stillValid=false menu=Mode2ConfigMenu cellEmpty={} present={}", cellStack.isEmpty(), present);
+        return valid;
+    }
 }

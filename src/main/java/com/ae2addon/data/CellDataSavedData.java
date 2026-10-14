@@ -126,6 +126,9 @@ public class CellDataSavedData extends SavedData {
         public final Set<AEKey> blacklist = new HashSet<>();
         /** 已锁定「元件内数量」的条目：存入拒收、取出不扣减（数量恒定）。 */
         public final Set<AEKey> qtyLocked = new HashSet<>();
+        public final Set<AEKey> rejectOn = new HashSet<>();
+        public final Set<AEKey> rejectOff = new HashSet<>();
+        public boolean rejectDefault = false;
 
         public void save(CompoundTag tag) {
             putBigIntMap(tag, "s1", s1);
@@ -141,6 +144,9 @@ public class CellDataSavedData extends SavedData {
             putSet(tag, "rt", ruleTouched);
             putSet(tag, "bl", blacklist);
             putSet(tag, "ql", qtyLocked);
+            putSet(tag, "rjo", rejectOn);
+            putSet(tag, "rjf", rejectOff);
+            tag.putBoolean("rjd", rejectDefault);
         }
 
         public static CellData load(CompoundTag tag) {
@@ -163,6 +169,9 @@ public class CellDataSavedData extends SavedData {
             getSet(tag, "rt", data.ruleTouched);
             getSet(tag, "bl", data.blacklist);
             getSet(tag, "ql", data.qtyLocked);
+            getSet(tag, "rjo", data.rejectOn);
+            getSet(tag, "rjf", data.rejectOff);
+            data.rejectDefault = tag.getBoolean("rjd");
             return data;
         }
 

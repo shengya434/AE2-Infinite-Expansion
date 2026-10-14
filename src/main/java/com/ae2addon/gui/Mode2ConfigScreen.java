@@ -7,7 +7,7 @@ import appeng.api.stacks.AEFluidKey;
 import com.ae2addon.AE2Addon;
 import com.ae2addon.cell.UnlimitedCellInventory;
 import com.ae2addon.network.Mode2ConfigPacket;
-import com.ae2addon.network.SetCellModePacket;
+import com.ae2addon.network.RequestCellScreenPacket;
 import com.ae2addon.util.NumberExpr;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -74,6 +74,12 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     private AEKey quantityKey;
     private boolean quantityLock;
     private EditBox searchBox;
+    private Button rejectDefaultButton;
+    private boolean rejectDefault;
+    private final Set<AEKey> rejectOn = new HashSet<>();
+    private final Set<AEKey> rejectOff = new HashSet<>();
+    private boolean rejectTab;
+    private boolean returningToWorkModes;
     private EditBox ruleInput;
     private List<UnlimitedCellInventory.PanelItem> displayItems = new ArrayList<>();
     /** 搜索+分类过滤后的条目 */
@@ -97,7 +103,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     private String lastSearch = "";
     private int currentWorkMode = 1;
     /** 0=工作模式选择, 1=具体配置 */
-    private int uiState = 0;
+    private int uiState = 1;
     private Button thresholdSaveBtn;
     /** 规则输入框当前类型：true=tag, false=mod */
     private boolean ruleIsTag = true;
@@ -119,6 +125,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
 
     public Mode2ConfigScreen(Mode2ConfigMenu menu, Inventory inv, Component title) {
         super(menu, inv, title);
+        uiState = menu.showWorkMode() ? 0 : 1;
         imageWidth = W;
         imageHeight = H;
         titleLabelY = -1000;
@@ -131,6 +138,8 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         menu.slotsHidden = (uiState == 0);
         if (uiState == 0) {
             buildWorkModeSelectUI();
+            if (!returningToWorkModes) AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(23));
+            returningToWorkModes = false;
         } else {
             buildFullConfigUI();
         }
@@ -177,8 +186,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         addRenderableWidget(Button.builder(
                 Component.translatable("gui.ae2addon.mode2.back"),
                 b -> {
-                    AE2Addon.NETWORK.sendToServer(new SetCellModePacket(0));
-                    onClose();
+                    AE2Addon.NETWORK.sendToServer(new RequestCellScreenPacket(RequestCellScreenPacket.Target.SELECT));
                 }
         ).bounds(cx - 30, topPos + 102, 60, 16).build());
     }
@@ -187,6 +195,11 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     private void buildFullConfigUI() {
         itemThrKey = null;
         quantityKey = null;
+        addRenderableWidget(Button.builder(Component.translatable("gui.ae2addon.mode2.back"), b -> {
+            returningToWorkModes = true;
+            uiState = 0;
+            rebuildWidgets();
+        }).bounds(leftPos + 158, topPos + 49, 60, 10).build());
         // ── 阈值输入（仅模式1可见） ──
         thresholdInput = new EditBox(font, leftPos + 10, topPos + 20, 100, 16, Component.literal("Threshold"));
         thresholdInput.setValue(String.valueOf(menu.getThreshold()));
@@ -247,11 +260,12 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         ).bounds(ruleX + inputW + tagBtnW + 4, ruleY - 1, addBtnW, 16).build());
 
         // ── 搜索框 ──
-        searchBox = new EditBox(font, leftPos + PANEL_X, topPos + PANEL_Y - 24, PANEL_W - 50, 14,
+        searchBox = new EditBox(font, leftPos + PANEL_X, topPos + PANEL_Y - 24, PANEL_W - 100, 14,
                 Component.literal("Search"));
         searchBox.setMaxLength(40);
         searchBox.setHint(Component.translatable("gui.ae2addon.mode2.search"));
         addRenderableWidget(searchBox);
+        // Default No-In is configured on ModeSelectScreen.
 
         // 面板条目右键后在面板下方编辑，留空即回落全局阈值。
         itemThrInput = new EditBox(font, leftPos + 10, topPos + 152, 166, 16,
@@ -678,6 +692,54 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         }
     }
 
+    private boolean isRejecting(AEKey key) {
+        if (rejectOn.contains(key)) return true;
+        if (rejectOff.contains(key)) return false;
+        return rejectDefault;
+    }
+
+    private void updateRejectDefaultButton() {
+        if (rejectDefaultButton != null) rejectDefaultButton.setMessage(Component.literal(
+                (rejectDefault ? "☑ " : "☐ ") + I18n.get("gui.ae2addon.mode2.reject_default")));
+    }
+
+    public static void handleRejectState(net.minecraft.nbt.CompoundTag state) {
+        if (state == null) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (!(mc.screen instanceof Mode2ConfigScreen screen)) return;
+        screen.rejectDefault = state.getBoolean("default");
+        screen.rejectOn.clear();
+        screen.rejectOff.clear();
+        for (net.minecraft.nbt.Tag tag : state.getList("on", net.minecraft.nbt.Tag.TAG_COMPOUND)) {
+            AEKey key = AEKey.fromTagGeneric((net.minecraft.nbt.CompoundTag) tag);
+            if (key != null) screen.rejectOn.add(key);
+        }
+        for (net.minecraft.nbt.Tag tag : state.getList("off", net.minecraft.nbt.Tag.TAG_COMPOUND)) {
+            AEKey key = AEKey.fromTagGeneric((net.minecraft.nbt.CompoundTag) tag);
+            if (key != null) screen.rejectOff.add(key);
+        }
+        screen.updateRejectDefaultButton();
+    }
+
+    public void setRejectKeys(Set<AEKey> on, Set<AEKey> off) {
+        rejectOn.clear(); rejectOn.addAll(on);
+        rejectOff.clear(); rejectOff.addAll(off);
+        scrollOffset = Math.min(scrollOffset, Math.max(0, rejectEntries().size() - maxVisibleRows));
+    }
+
+    private List<AEKey> rejectEntries() {
+        Set<AEKey> keys = new LinkedHashSet<>();
+        for (var item : filteredItems) keys.add(item.key);
+        keys.addAll(rejectOn);
+        keys.addAll(rejectOff);
+        List<AEKey> result = new ArrayList<>(keys);
+        String search = searchBox.getValue().toLowerCase(Locale.ROOT).trim();
+        if (!search.isEmpty()) result.removeIf(k -> !matchesSearch(k.getDisplayName().getString().toLowerCase(Locale.ROOT), search));
+        if (currentTypeFilter != null) result.removeIf(k -> !k.getType().getId().equals(currentTypeFilter));
+        result.sort(Comparator.comparing(k -> k.getDisplayName().getString()));
+        return result;
+    }
+
     // ── 渲染 ──
 
     @Override
@@ -709,10 +771,15 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         // 完整配置界面
         g.drawString(font, I18n.get("gui.ae2addon.mode2.title"), leftPos + 10, topPos + 4, 0xFFFFAA, false);
         renderRuleBar(g, mx, my);
-        renderPanel(g, mx, my);
+        if (rejectTab && currentRuleFilter == null) renderRejectPanel(g, mx, my);
+        else renderPanel(g, mx, my);
         renderFilterTabs(g, mx, my);
+        g.drawString(font, Component.translatable("gui.ae2addon.mode2.tab_items"), leftPos + 144, topPos + 36,
+                rejectTab ? 0x888888 : 0xFFFFAA, false);
+        g.drawString(font, Component.translatable("gui.ae2addon.mode2.tab_reject"), leftPos + 193, topPos + 36,
+                rejectTab ? 0xFFFFAA : 0x888888, false);
         if (itemThrKey == null && quantityKey == null) {
-            String hint = I18n.get("gui.ae2addon.mode2.hint_bar");
+            String hint = I18n.get(rejectTab ? "gui.ae2addon.mode2.hint_reject" : "gui.ae2addon.mode2.hint_bar");
             float scale = Math.min(1.0F, (W - 20.0F) / font.width(hint));
             g.pose().pushPose();
             g.pose().translate(leftPos + 10, topPos + PANEL_Y + PANEL_H + 8, 0);
@@ -727,7 +794,51 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
                     0xFFFFAA, false);
         }
         renderTooltip(g, mx, my);
-        renderPanelTooltip(g, mx, my);
+        if (rejectTab && currentRuleFilter == null) renderRejectTooltip(g, mx, my);
+        else renderPanelTooltip(g, mx, my);
+    }
+
+    private void renderRejectPanel(GuiGraphics g, int mx, int my) {
+        int x = leftPos + PANEL_X, y = topPos + PANEL_Y + 16;
+        g.fill(x, y, x + PANEL_W, y + PANEL_LIST_H, 0xCC111111);
+        List<AEKey> entries = rejectEntries();
+        if (entries.isEmpty()) {
+            g.drawString(font, Component.translatable("gui.ae2addon.mode2.reject_empty"), x + 8, y + 6, 0x888888, false);
+            return;
+        }
+        scrollOffset = Math.min(scrollOffset, Math.max(0, entries.size() - maxVisibleRows));
+        for (int i = scrollOffset; i < Math.min(entries.size(), scrollOffset + maxVisibleRows); i++) {
+            AEKey key = entries.get(i);
+            int rowY = y + (i - scrollOffset) * ROW_H;
+            if (mx >= x && mx < x + PANEL_W && my >= rowY && my < rowY + ROW_H)
+                g.fill(x + 1, rowY, x + PANEL_W - 1, rowY + ROW_H, 0x66FFFF00);
+            ItemStack icon = key instanceof AEItemKey item ? item.toStack() : new ItemStack(Items.BUCKET);
+            if (!icon.isEmpty()) g.renderItem(icon, x + 2, rowY);
+            String name = key.getDisplayName().getString();
+            if (font.width(name) > 165) name = font.plainSubstrByWidth(name, 162) + "…";
+            g.drawString(font, name, x + 20, rowY + 3, 0xCCCCCC, false);
+            g.drawString(font, rejectOn.contains(key) ? Component.translatable("gui.ae2addon.mode2.reject_mark")
+                    : Component.translatable("gui.ae2addon.mode2.reject_allow_mark"),
+                    x + PANEL_W - 30, rowY + 3, rejectOn.contains(key) ? 0xFF5555 : 0x55FF55, false);
+        }
+        if (entries.size() > maxVisibleRows) {
+            int barH = Math.max(8, maxVisibleRows * PANEL_LIST_H / entries.size());
+            int barY = y + scrollOffset * PANEL_LIST_H / entries.size();
+            g.fill(x + PANEL_W - 3, barY, x + PANEL_W - 1, barY + barH, 0xFF888888);
+        }
+    }
+
+    private void renderRejectTooltip(GuiGraphics g, int mx, int my) {
+        if (!isInPanelArea(mx, my)) return;
+        int row = (my - topPos - PANEL_Y - 16) / ROW_H + scrollOffset;
+        List<AEKey> entries = rejectEntries();
+        if (row < 0 || row >= entries.size()) return;
+        AEKey key = entries.get(row);
+        g.renderTooltip(font, Component.literal(key.getDisplayName().getString() + " | "
+                + I18n.get(rejectOn.contains(key) ? "gui.ae2addon.mode2.reject_mark"
+                        : "gui.ae2addon.mode2.reject_allow_mark") + " | "
+                // 配置页没有 JEI 拖入口（那套只挂在模式选择页），所以用不带「JEI 拖入」的文案
+                + I18n.get("gui.ae2addon.mode2.reject_tip_config")), mx, my);
     }
 
     /** 渲染批量无限规则条（tags/mods），点击可删除；横向可滚动 */
@@ -858,7 +969,11 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         var entry = filteredItems.get(row);
         AEKey key = entry.key;
 
-        if (key instanceof appeng.api.stacks.AEItemKey itemKey) {
+        if (rejectTab) {
+            g.renderTooltip(font, Component.literal(key.getDisplayName().getString() + " | "
+                    + I18n.get(isRejecting(key) ? "gui.ae2addon.mode2.reject_mark"
+                    : "gui.ae2addon.mode2.reject_allow_mark")), mx, my);
+        } else if (key instanceof appeng.api.stacks.AEItemKey itemKey) {
             // 物品：获取完整 tooltip（含模组名/附魔等），再追加无限标记
             ItemStack stack = itemKey.toStack();
             var mc = Minecraft.getInstance();
@@ -1052,6 +1167,15 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
                 g.renderItemDecorations(font, iconStack, x + 2, rowY);
             }
 
+            if (rejectTab) {
+                boolean rejecting = isRejecting(key);
+                g.drawString(font, key.getDisplayName(), x + 20, rowY + 3, 0xCCCCCC, false);
+                g.drawString(font, Component.translatable(rejecting ? "gui.ae2addon.mode2.reject_mark"
+                                : "gui.ae2addon.mode2.reject_allow_mark"),
+                        x + PANEL_W - 30, rowY + 3, rejecting ? 0xFF5555 : 0x55FF55, false);
+                continue;
+            }
+
             // 物品名（规则分类下黑名单物品变红）
             boolean isBlocked = currentRuleFilter != null && !isInfinite
                     && amount.signum() == 0 && !entry.quantityLocked
@@ -1060,21 +1184,27 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
             if (font.width(name) > 80) name = font.plainSubstrByWidth(name, 77) + "…";
             g.drawString(font, name, x + 20, rowY + 3, isBlocked ? 0xFF5555 : (isInfinite ? 0xFFFFAA : 0xCCCCCC), false);
 
+            int rejectInset = isRejecting(key) ? 25 : 0;
+            if (rejectInset > 0) {
+                g.drawString(font, Component.translatable("gui.ae2addon.mode2.reject_mark"),
+                        x + PANEL_W - 24, rowY + 3, 0xFF5555, false);
+            }
+
             // 数量/无限
             if (isInfinite) {
-                g.drawString(font, Component.literal("§b∞"), x + PANEL_W - 20, rowY + 3, 0x55FFFF, false);
+                g.drawString(font, Component.literal("§b∞"), x + PANEL_W - 20 - rejectInset, rowY + 3, 0x55FFFF, false);
             } else if (isBlocked) {
-                g.drawString(font, Component.translatable("gui.ae2addon.mode2.blacklisted"), x + PANEL_W - 30, rowY + 3, 0xFF5555, false);
+                g.drawString(font, Component.translatable("gui.ae2addon.mode2.blacklisted"), x + PANEL_W - 30 - rejectInset, rowY + 3, 0xFF5555, false);
             } else {
                 String ct = formatAmount(amount) + (entry.quantityLocked ? " §b🔒" : "");
                 int cw = font.width(ct);
-                g.drawString(font, ct, x + PANEL_W - cw - 10, rowY + 3, 0xAAAAAA, false);
+                g.drawString(font, ct, x + PANEL_W - cw - 10 - rejectInset, rowY + 3, 0xAAAAAA, false);
             }
             if (entry.itemThreshold > 0) {
                 String marker = "§b⚡" + formatAmount(entry.itemThreshold);
                 int countWidth = font.width(isInfinite ? "∞" : isBlocked ? I18n.get("gui.ae2addon.mode2.blacklisted")
                         : formatAmount(amount) + (entry.quantityLocked ? " §b🔒" : ""));
-                g.drawString(font, marker, x + PANEL_W - countWidth - font.width(marker) - 14,
+                g.drawString(font, marker, x + PANEL_W - countWidth - font.width(marker) - 14 - rejectInset,
                         rowY + 3, 0x55FFFF, false);
             }
         }
@@ -1117,6 +1247,23 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     @Override
     public boolean mouseClicked(double mx, double my, int button) {
         if (uiState == 0) return super.mouseClicked(mx, my, button);
+        if (button == 0 && my >= topPos + 36 && my < topPos + 47) {
+            if (mx >= leftPos + 144 && mx < leftPos + 189) { rejectTab = false; return true; }
+            if (mx >= leftPos + 193 && mx < leftPos + 246) { rejectTab = true; return true; }
+        }
+        if (rejectTab && isInPanelArea(mx, my)) {
+            int row = (int)(my - topPos - PANEL_Y - 16) / ROW_H + scrollOffset;
+            List<AEKey> entries = currentRuleFilter == null ? rejectEntries()
+                    : filteredItems.stream().map(item -> item.key).toList();
+            if (button == 0 && !hasControlDown() && row >= 0 && row < entries.size()) {
+                var tag = entries.get(row).toTagGeneric();
+                // Shift+左键 = 从拒收列表删除（type 22 = clearReject）；左键 = 切换 拒收/允许（type 7）。
+                // 2026-10-13 与 ModeSelect 界面手势对齐（两处共用同一套提示文案键）。
+                AE2Addon.NETWORK.sendToServer(hasShiftDown()
+                        ? new Mode2ConfigPacket(22, tag) : new Mode2ConfigPacket(7, tag));
+            }
+            return true;
+        }
 
         // 滑条命中（优先于行/标签点击；Shift 时保留原删除/切换语义）
         if (button == 0 && !hasShiftDown()) {
@@ -1227,6 +1374,7 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
                     showQuantity(filteredItems.get(row).key);
                     return true;
                 }
+                if (button == 1 && hasControlDown()) return true;
                 if (button == 1 && hasShiftDown()) {
                     menu.sendToggleBlacklist(filteredItems.get(row).key.toTagGeneric());
                     return true;
@@ -1250,6 +1398,11 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     @Override
     public boolean mouseScrolled(double mx, double my, double delta) {
         if (uiState == 0) return super.mouseScrolled(mx, my, delta);
+        if (rejectTab && currentRuleFilter == null && isInPanelArea(mx, my)) {
+            scrollOffset = Math.max(0, Math.min(Math.max(0, rejectEntries().size() - maxVisibleRows),
+                    scrollOffset + (delta < 0 ? 1 : -1)));
+            return true;
+        }
         // 规则条横向滚动（y=62~72）
         if (my >= topPos + 62 && my < topPos + 72
                 && mx >= leftPos + 10 && mx < leftPos + 10 + PANEL_W) {

@@ -39,8 +39,8 @@ import java.util.function.Supplier;
  * type 4 = 面板数据响应（服务端→客户端，支持分包）
  * type 5 = 切换无限状态（客户端→服务端，传完整AEKey NBT）
  * type 6 = 设置工作模式
- * type 7 = 添加 tag/mod 规则（tag=true 传 tag 名，false 传 mod id）
- * type 8 = 移除 tag/mod 规则
+ * type 19 = 添加 tag/mod 规则（tag=true 传 tag 名，false 传 mod id）
+ * type 20 = 移除 tag/mod 规则
  * type 9 = 规则数据响应（服务端→客户端：tags/mods 列表及各自模式）
  * type 10 = 旧版全局规则模式（兼容解码，不再发送）
  * type 11 = 切换黑名单（客户端→服务端，传完整AEKey NBT）
@@ -53,13 +53,17 @@ import java.util.function.Supplier;
 public class Mode2ConfigPacket {
 
     private final int type;
+    private CompoundTag rejectState;
+    private List<AEKey> rejectChunkOn;
+    private List<AEKey> rejectChunkOff;
+    private boolean rejectDefaultValue;
     private final long threshold;
     private final String itemId;           // type 2 用
     private final ItemStack clickedStack;  // type 1 用
     private final List<UnlimitedCellInventory.PanelItem> panelItems; // type 4
-    private final CompoundTag keyTag;      // type 5 用
+    private CompoundTag keyTag;      // type 5 用
     private final int workMode;            // type 6 用
-    /** type 7/8：规则字符串 + 是否 tag（false=mod） */
+    /** type 19/20：规则字符串 + 是否 tag（false=mod） */
     private final String rule;
     private final boolean isTag;
     /** type 9：规则列表 */
@@ -101,6 +105,28 @@ public class Mode2ConfigPacket {
         this.chunkIndex = 0;
         this.totalChunks = 1;
     }
+
+    public Mode2ConfigPacket(int type, CompoundTag tag) {
+        this(type);
+        if (type == 7 || type == 22) this.keyTag = tag;
+        else this.rejectState = tag;
+    }
+
+    public Mode2ConfigPacket(int type, boolean value) {
+        this(type);
+        this.rejectDefaultValue = value;
+    }
+
+    public Mode2ConfigPacket(List<AEKey> on, List<AEKey> off, int chunkIndex, int totalChunks) {
+        this(21);
+        this.rejectChunkOn = on;
+        this.rejectChunkOff = off;
+        this.rejectChunkIndex = chunkIndex;
+        this.rejectTotalChunks = totalChunks;
+    }
+
+    private int rejectChunkIndex;
+    private int rejectTotalChunks;
 
     /** type 16：设置或清除单物品阈值。 */
     public Mode2ConfigPacket(CompoundTag itemThrKeyTag, long itemThrValue) {
@@ -212,7 +238,7 @@ public class Mode2ConfigPacket {
         this.totalChunks = 1;
     }
 
-    // type 7 添加规则 / type 8 移除规则（isTag=true → tag，false → mod）
+    // type 19 添加规则 / type 20 移除规则（isTag=true → tag，false → mod）
     // type 13：JEI 拖取流体/化学物、任意 AEKey 直加白名单（keyTag 携带）
     public Mode2ConfigPacket(appeng.api.stacks.AEKey key) {
         this.type = 13;
@@ -356,7 +382,24 @@ public class Mode2ConfigPacket {
             buf.writeNbt(p.keyTag);
         } else if (p.type == 6) {
             buf.writeVarInt(p.workMode);
-        } else if (p.type == 7 || p.type == 8) {
+        } else if (p.type == 7) {
+            buf.writeNbt(p.keyTag);
+        } else if (p.type == 8) {
+            buf.writeBoolean(p.rejectDefaultValue);
+        } else if (p.type == 18) {
+            buf.writeNbt(p.rejectState);
+        } else if (p.type == 21) {
+            buf.writeVarInt(p.rejectChunkIndex);
+            buf.writeVarInt(p.rejectTotalChunks);
+            buf.writeVarInt(p.rejectChunkOn.size());
+            for (AEKey key : p.rejectChunkOn) buf.writeNbt(key.toTagGeneric());
+            buf.writeVarInt(p.rejectChunkOff.size());
+            for (AEKey key : p.rejectChunkOff) buf.writeNbt(key.toTagGeneric());
+        } else if (p.type == 22) {
+            buf.writeNbt(p.keyTag);
+        } else if (p.type == 23) {
+            // Request current reject state.
+        } else if (p.type == 19 || p.type == 20) {
             buf.writeBoolean(p.isTag);
             buf.writeUtf(p.rule == null ? "" : p.rule);
         } else if (p.type == 9 && p.ruleList != null) {
@@ -438,7 +481,27 @@ public class Mode2ConfigPacket {
             return new Mode2ConfigPacket(6, buf.readVarInt());
         }
 
-        if (type == 7 || type == 8) {
+        if (type == 7) return new Mode2ConfigPacket(7, buf.readNbt());
+        if (type == 8) return new Mode2ConfigPacket(8, buf.readBoolean());
+        if (type == 18) return new Mode2ConfigPacket(18, buf.readNbt());
+        if (type == 21) {
+            int index = buf.readVarInt(), total = buf.readVarInt();
+            int onCount = buf.readVarInt();
+            List<AEKey> on = new ArrayList<>(), off = new ArrayList<>();
+            for (int i = 0; i < onCount; i++) {
+                CompoundTag tag = buf.readNbt();
+                if (tag != null) { AEKey key = AEKey.fromTagGeneric(tag); if (key != null) on.add(key); }
+            }
+            int offCount = buf.readVarInt();
+            for (int i = 0; i < offCount; i++) {
+                CompoundTag tag = buf.readNbt();
+                if (tag != null) { AEKey key = AEKey.fromTagGeneric(tag); if (key != null) off.add(key); }
+            }
+            return new Mode2ConfigPacket(on, off, index, total);
+        }
+        if (type == 22) return new Mode2ConfigPacket(22, buf.readNbt());
+        if (type == 23) return new Mode2ConfigPacket(23);
+        if (type == 19 || type == 20) {
             boolean isTag = buf.readBoolean();
             String rule = buf.readUtf();
             return new Mode2ConfigPacket(type, rule, isTag);
@@ -525,6 +588,23 @@ public class Mode2ConfigPacket {
             return;
         }
 
+        if (side.isClient() && p.type == 18) {
+            ctx.get().enqueueWork(() -> {
+                com.ae2addon.gui.Mode2ConfigScreen.handleRejectState(p.rejectState);
+                var screen = net.minecraft.client.Minecraft.getInstance().screen;
+                if (screen instanceof com.ae2addon.gui.ModeSelectScreen select)
+                    select.setRejectDefault(p.rejectState.getBoolean("default"));
+            });
+            ctx.get().setPacketHandled(true);
+            return;
+        }
+        if (side.isClient() && p.type == 21) {
+            ctx.get().enqueueWork(() -> com.ae2addon.gui.RejectListState.handleChunk(
+                    p.rejectChunkOn, p.rejectChunkOff, p.rejectChunkIndex, p.rejectTotalChunks));
+            ctx.get().setPacketHandled(true);
+            return;
+        }
+
         if (!side.isServer()) {
             ctx.get().setPacketHandled(true);
             return;
@@ -533,6 +613,13 @@ public class Mode2ConfigPacket {
         ctx.get().enqueueWork(() -> {
             ServerPlayer player = ctx.get().getSender();
             if (player == null) return;
+            if (p.type == 7 || p.type == 8 || p.type == 22 || p.type == 23) {
+                boolean mode2 = player.containerMenu instanceof com.ae2addon.gui.Mode2ConfigMenu menu
+                        && menu.stillValid(player);
+                boolean select = player.containerMenu instanceof com.ae2addon.gui.ModeSelectMenu menu
+                        && menu.stillValid(player);
+                if (!mode2 && !select) return;
+            }
 
             // 菜单里的栈可能在驱动器内，所有配置操作都优先使用这只活栈。
             ItemStack stack = ItemStack.EMPTY;
@@ -543,7 +630,8 @@ public class Mode2ConfigPacket {
                     stack = s;
                     m2.markCellChanged();
                 }
-            } else if (p.type == 14 && player.containerMenu instanceof com.ae2addon.gui.ModeSelectMenu m1) {
+            } else if ((p.type == 14 || p.type == 7 || p.type == 8 || p.type == 22 || p.type == 23)
+                    && player.containerMenu instanceof com.ae2addon.gui.ModeSelectMenu m1) {
                 if (!m1.isCellPresent(player)) return;
                 ItemStack s = m1.getCellStack();
                 if (s != null && !s.isEmpty() && s.getItem() instanceof UniversalStorageCell) {
@@ -551,6 +639,7 @@ public class Mode2ConfigPacket {
                     m1.markCellChanged();
                 }
             }
+            if ((p.type == 7 || p.type == 8 || p.type == 22 || p.type == 23) && stack.isEmpty()) return;
             if (stack.isEmpty()) stack = player.getMainHandItem();
             if (!(stack.getItem() instanceof UniversalStorageCell)) {
                 stack = player.getOffhandItem();
@@ -578,6 +667,9 @@ public class Mode2ConfigPacket {
                 sendBlacklistData(inv, player);
                 sendPanelRefresh(inv, player);
                 return;
+            } else if (p.type == 23) {
+                sendRejectState(inv, player);
+                return;
 
             } else if (p.type == 5 && p.keyTag != null) {
                 handleToggleInfinite(inv, p.keyTag, player);
@@ -594,7 +686,23 @@ public class Mode2ConfigPacket {
                 inv.setWorkMode(p.workMode);
                 sendPanelRefresh(inv, player);
                 return;
-            } else if (p.type == 7 && !p.rule.isEmpty()) {
+            } else if (p.type == 7 && p.keyTag != null) {
+                AEKey key = AEKey.fromTagGeneric(p.keyTag);
+                if (key != null) inv.toggleReject(key);
+                if (player.containerMenu instanceof com.ae2addon.gui.ModeSelectMenu) sendRejectState(inv, player);
+                else sendPanelRefresh(inv, player);
+                return;
+            } else if (p.type == 8) {
+                inv.setRejectDefault(p.rejectDefaultValue);
+                if (player.containerMenu instanceof com.ae2addon.gui.ModeSelectMenu) sendRejectState(inv, player);
+                else sendPanelRefresh(inv, player);
+                return;
+            } else if (p.type == 22 && p.keyTag != null) {
+                AEKey key = AEKey.fromTagGeneric(p.keyTag);
+                if (key != null) inv.clearReject(key);
+                sendRejectState(inv, player);
+                return;
+            } else if (p.type == 19 && !p.rule.isEmpty()) {
                 // 添加 tag/mod 规则（先验证存在性）
                 boolean added;
                 if (p.isTag) {
@@ -616,7 +724,7 @@ public class Mode2ConfigPacket {
                 sendRuleData(inv, player);
                 sendPanelRefresh(inv, player);
                 return;
-            } else if (p.type == 8 && !p.rule.isEmpty()) {
+            } else if (p.type == 20 && !p.rule.isEmpty()) {
                 // 移除 tag/mod 规则
                 if (p.isTag) {
                     inv.removeTagRule(p.rule);
@@ -703,6 +811,7 @@ public class Mode2ConfigPacket {
 
     /** 分包发送面板刷新数据：每包最多 MAX_ITEMS_PER_CHUNK 个 item */
     private static void sendPanelRefresh(UnlimitedCellInventory inv, ServerPlayer player) {
+        sendRejectState(inv, player);
         List<UnlimitedCellInventory.PanelItem> allItems = new ArrayList<>();
         for (UnlimitedCellInventory.PanelItem item : inv.getPanelItems()) {
             allItems.add(new UnlimitedCellInventory.PanelItem(item.key, item.amount, item.isInfinite,
@@ -734,6 +843,23 @@ public class Mode2ConfigPacket {
                     PacketDistributor.PLAYER.with(() -> player),
                     new Mode2ConfigPacket(chunk, i, totalChunks)
             );
+        }
+    }
+
+    private static void sendRejectState(UnlimitedCellInventory inv, ServerPlayer player) {
+        CompoundTag state = new CompoundTag();
+        state.putBoolean("default", inv.rejectDefault());
+        com.ae2addon.AE2Addon.NETWORK.send(
+                PacketDistributor.PLAYER.with(() -> player), new Mode2ConfigPacket(18, state));
+        List<AEKey> on = new ArrayList<>(inv.rejectOnKeys());
+        List<AEKey> off = new ArrayList<>(inv.rejectOffKeys());
+        int total = Math.max(on.size(), off.size());
+        int chunks = Math.max(1, (total + MAX_ITEMS_PER_CHUNK - 1) / MAX_ITEMS_PER_CHUNK);
+        for (int i = 0; i < chunks; i++) {
+            int from = i * MAX_ITEMS_PER_CHUNK;
+            com.ae2addon.AE2Addon.NETWORK.send(PacketDistributor.PLAYER.with(() -> player),
+                    new Mode2ConfigPacket(on.subList(Math.min(from, on.size()), Math.min(from + MAX_ITEMS_PER_CHUNK, on.size())),
+                            off.subList(Math.min(from, off.size()), Math.min(from + MAX_ITEMS_PER_CHUNK, off.size())), i, chunks));
         }
     }
 

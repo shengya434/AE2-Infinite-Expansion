@@ -48,6 +48,7 @@ public class CellEditorPickPacket {
                 player.sendSystemMessage(Component.translatable("gui.ae2addon.cell_editor.not_a_cell"));
                 return;
             }
+            menu.setSelectedCell(stack);
             UniversalStorageCell.openConfigFor(player, stack);
         });
         ctx.get().setPacketHandled(true);

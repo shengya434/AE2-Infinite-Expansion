@@ -56,10 +56,12 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
         private final InfiniteDriveBE drive;
         private final int driveSlot;
 
-        Mode2MenuProvider(ItemStack stack, InfiniteDriveBE drive, int driveSlot) {
+        private final boolean showWorkMode;
+        Mode2MenuProvider(ItemStack stack, InfiniteDriveBE drive, int driveSlot, boolean showWorkMode) {
             this.stack = stack;
             this.drive = drive;
             this.driveSlot = driveSlot;
+            this.showWorkMode = showWorkMode;
         }
 
         @Override
@@ -69,7 +71,7 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
 
         @Override
         public AbstractContainerMenu createMenu(int id, Inventory inv, Player p) {
-            return new com.ae2addon.gui.Mode2ConfigMenu(id, inv, stack, drive, driveSlot);
+            return new com.ae2addon.gui.Mode2ConfigMenu(id, inv, stack, drive, driveSlot, showWorkMode);
         }
     }
 
@@ -101,9 +103,11 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
         private final ItemStack stack;
         private final boolean dropModeData; // true=模式1/3（额外移除 a）
 
-        LightStackWriter(ItemStack stack, boolean dropModeData) {
+        private final boolean showWorkMode;
+        LightStackWriter(ItemStack stack, boolean dropModeData, boolean showWorkMode) {
             this.stack = stack;
             this.dropModeData = dropModeData;
+            this.showWorkMode = showWorkMode;
         }
 
         @Override
@@ -120,6 +124,7 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
                 tag.remove("a");
             }
             buf.writeItem(copy);
+            if (!dropModeData) buf.writeBoolean(showWorkMode);
         }
     }
 
@@ -146,18 +151,36 @@ public class UniversalStorageCell extends Item implements ICellWorkbenchItem {
             drive = menu.getDrive();
         }
 
+        openConfigFor(player, stack, drive, driveSlot, false);
+    }
+
+    public static void openConfigFor(ServerPlayer player, ItemStack stack,
+                                     InfiniteDriveBE drive, int driveSlot) {
+        openConfigFor(player, stack, drive, driveSlot, false);
+    }
+
+    public static void openConfigFor(ServerPlayer player, ItemStack stack,
+                                     InfiniteDriveBE drive, int driveSlot, boolean showWorkMode) {
+        if (!(stack.getItem() instanceof UniversalStorageCell)) return;
         int mode = stack.getOrCreateTag().getInt("umode");
         if (mode < 1 || mode > 3) mode = 1;
         if (mode == MODE_CUSTOM) {
             NetworkHooks.openScreen(player,
-                    new Mode2MenuProvider(stack, drive, driveSlot),
-                    new LightStackWriter(stack, false));
+                    new Mode2MenuProvider(stack, drive, driveSlot, showWorkMode),
+                    new LightStackWriter(stack, false, showWorkMode));
         } else {
             // Mode 1 / Mode 3：只传光副本，裁掉存储NBT防炸包
             NetworkHooks.openScreen(player,
                     new ModeSelectMenuProvider(stack, drive, driveSlot),
-                    new LightStackWriter(stack, true));
+                    new LightStackWriter(stack, true, false));
         }
+    }
+
+    public static void openSelectMenuFor(ServerPlayer player, ItemStack stack,
+                                         InfiniteDriveBE drive, int driveSlot) {
+        if (!(stack.getItem() instanceof UniversalStorageCell)) return;
+        NetworkHooks.openScreen(player, new ModeSelectMenuProvider(stack, drive, driveSlot),
+                new LightStackWriter(stack, true, false));
     }
 
     // ── ICellWorkbenchItem ──

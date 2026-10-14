@@ -184,6 +184,78 @@ public final class ChemicalCompat {
             {"slurryRegistry", "mekanism.api.chemical.slurry.SlurryStack"},
     };
 
+    /**
+     * 枚举**全部**化学品键（mode3「全类型无限」用；2026-10-13 sensei：mode3 要覆盖附属存储）。
+     * <p>
+     * 做法与 {@link #keyOf} 同一条链，只是把「按 id 查一个」换成「遍历注册表全部 id」：
+     * {@code IForgeRegistry.getKeys()} → {@code getValue(id)} → {@code new XxxStack(chemical, 1)}
+     * → {@code MekanismKey.of(stack)}。全程反射、零硬依赖，appmek / Mekanism 缺席时返回空表。
+     * <p>
+     * 失败/跳过一律不抛：单个化学物造不出来只跳过（不能因为一个坏的注册项让整个 mode3 空掉）。
+     */
+    public static java.util.List<AEKey> allChemicalKeys() {
+        java.util.List<AEKey> out = new java.util.ArrayList<>();
+        if (!available()) {
+            return out;
+        }
+        Method of = mekanismKeyOf();
+        if (of == null) {
+            return out;
+        }
+        java.util.Set<AEKey> seen = new java.util.LinkedHashSet<>();
+        try {
+            Class<?> api = Class.forName("mekanism.api.MekanismAPI");
+            Class<?> regIface = Class.forName("net.minecraftforge.registries.IForgeRegistry");
+            Method getValue = regIface.getMethod("getValue", ResourceLocation.class);
+            Method getKeys = regIface.getMethod("getKeys");
+            for (String[] entry : CHEMICAL_TYPES) {
+                Object registry;
+                try {
+                    registry = api.getMethod(entry[0]).invoke(null);
+                } catch (Throwable t) {
+                    continue;   // 这个版本没有这类化学物
+                }
+                if (registry == null) {
+                    continue;
+                }
+                Constructor<?> ctor = stackConstructor(entry[1]);
+                if (ctor == null) {
+                    continue;
+                }
+                Object rawKeys;
+                try {
+                    rawKeys = getKeys.invoke(registry);
+                } catch (Throwable t) {
+                    continue;
+                }
+                if (!(rawKeys instanceof Iterable<?> keys)) {
+                    continue;
+                }
+                for (Object k : keys) {
+                    if (!(k instanceof ResourceLocation id)) {
+                        continue;
+                    }
+                    try {
+                        Object chemical = getValue.invoke(registry, id);
+                        if (chemical == null) {
+                            continue;
+                        }
+                        Object stack = ctor.newInstance(chemical, 1L);
+                        Object key = of.invoke(null, stack);
+                        if (key instanceof AEKey aeKey && seen.add(aeKey)) {
+                            out.add(aeKey);
+                        }
+                    } catch (Throwable ignored) {
+                        // 单个化学物跳过
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon] 化学品键枚举失败：{}", t.toString());
+        }
+        return out;
+    }
+
     private static volatile Method mekKeyOf;
     private static volatile boolean mekKeyOfProbed;
 
