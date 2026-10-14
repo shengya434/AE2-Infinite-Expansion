@@ -74,7 +74,6 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
     private AEKey quantityKey;
     private boolean quantityLock;
     private EditBox searchBox;
-    private Button rejectDefaultButton;
     private boolean rejectDefault;
     private final Set<AEKey> rejectOn = new HashSet<>();
     private final Set<AEKey> rejectOff = new HashSet<>();
@@ -698,11 +697,6 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
         return rejectDefault;
     }
 
-    private void updateRejectDefaultButton() {
-        if (rejectDefaultButton != null) rejectDefaultButton.setMessage(Component.literal(
-                (rejectDefault ? "☑ " : "☐ ") + I18n.get("gui.ae2addon.mode2.reject_default")));
-    }
-
     public static void handleRejectState(net.minecraft.nbt.CompoundTag state) {
         if (state == null) return;
         Minecraft mc = Minecraft.getInstance();
@@ -718,7 +712,6 @@ public class Mode2ConfigScreen extends AbstractContainerScreen<Mode2ConfigMenu> 
             AEKey key = AEKey.fromTagGeneric((net.minecraft.nbt.CompoundTag) tag);
             if (key != null) screen.rejectOff.add(key);
         }
-        screen.updateRejectDefaultButton();
     }
 
     public void setRejectKeys(Set<AEKey> on, Set<AEKey> off) {

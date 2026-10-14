@@ -225,14 +225,6 @@ public class Mode2ConfigMenu extends AbstractContainerMenu {
         AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(keyTag));
     }
 
-    public void sendToggleReject(CompoundTag keyTag) {
-        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(7, keyTag));
-    }
-
-    public void sendRejectDefault(boolean value) {
-        AE2Addon.NETWORK.sendToServer(new Mode2ConfigPacket(8, value));
-    }
-
     /** 点击背包物品 → 加入白名单（自动检测流体容器） */
     @Override
     public ItemStack quickMoveStack(Player player, int slotIndex) {

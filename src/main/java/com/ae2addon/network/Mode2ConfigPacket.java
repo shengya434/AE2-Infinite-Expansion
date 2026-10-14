@@ -39,6 +39,8 @@ import java.util.function.Supplier;
  * type 4 = 面板数据响应（服务端→客户端，支持分包）
  * type 5 = 切换无限状态（客户端→服务端，传完整AEKey NBT）
  * type 6 = 设置工作模式
+ * type 7 = 切换拒收（禁止存入）状态（客户端→服务端，传完整AEKey NBT）
+ * type 8 = 设置元件级默认拒收（客户端→服务端，布尔）
  * type 19 = 添加 tag/mod 规则（tag=true 传 tag 名，false 传 mod id）
  * type 20 = 移除 tag/mod 规则
  * type 9 = 规则数据响应（服务端→客户端：tags/mods 列表及各自模式）
@@ -49,6 +51,10 @@ import java.util.function.Supplier;
  * type 15 = 设置单条 tag/mod 规则的无限模式
  * type 16 = 设置或清除单物品阈值
  * type 17 = 设置元件内数量及锁定状态
+ * type 18 = 拒收状态响应（服务端→客户端：默认值 + 拒收/允许列表）
+ * type 21 = 拒收列表分包（服务端→客户端，按 chunk 索引）
+ * type 22 = 清除某键的拒收/允许标记（客户端→服务端，传完整AEKey NBT）
+ * type 23 = 请求拒收状态（客户端→服务端）
  */
 public class Mode2ConfigPacket {
 

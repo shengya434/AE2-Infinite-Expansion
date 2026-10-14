@@ -39,15 +39,6 @@ public final class ExtraKeysCompat {
     private ExtraKeysCompat() {
     }
 
-    /** 全部额外通道键（各家缺席的自动跳过，不抛异常）。 */
-    public static List<AEKey> allKeys() {
-        List<AEKey> out = new ArrayList<>();
-        out.addAll(fluxKeys());
-        addIfKey(out, manaKey());
-        addIfKey(out, sourceKey());
-        return out;
-    }
-
     /** applied-botanics 魔力键（未装返回 null）。 */
     public static AEKey manaKey() {
         return singleKey(MANA_KEY_CLASS);
@@ -103,20 +94,5 @@ public final class ExtraKeysCompat {
         } catch (Throwable t) {
             return null;
         }
-    }
-
-    private static void addIfKey(List<AEKey> out, AEKey key) {
-        if (key != null && !out.contains(key)) {
-            out.add(key);
-        }
-    }
-
-    /** 诊断用一行（挂启动日志，便于核对哪个通道被算进 mode3）。 */
-    public static String describe() {
-        int flux = fluxKeys().size();
-        boolean mana = manaKey() != null;
-        boolean source = sourceKey() != null;
-        return "额外通道: AppFlux 能量=" + flux + " 键，applied-botanics 魔力="
-                + (mana ? "ok" : "无") + "，arseng 源质=" + (source ? "ok" : "无");
     }
 }
