@@ -2,9 +2,14 @@ package com.ae2addon.block.multiblock;
 
 import com.ae2addon.AE2Addon;
 import com.ae2addon.util.ChatLog;
+import appeng.api.config.Actionable;
+import appeng.api.networking.security.IActionSource;
+import appeng.api.stacks.AEItemKey;
+import appeng.api.storage.MEStorage;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -155,6 +160,8 @@ public final class StructureBuilder {
                 .thenComparingInt(IntegratedCpuStructure.PlanCell::x));
 
         Map<Block, Integer> picked = new HashMap<>();
+        // 同物品多形态候选表的缓存（见 candidateKeys 注释）：只对"精确 key 取不到"的方块才真去枚举
+        Map<Block, List<AEItemKey>> keyCache = new HashMap<>();
 
         for (var cell : cells) {
             // 该格可接受的方块里，挑第一个"网络里有货"的；都要看替换项
@@ -164,9 +171,7 @@ public final class StructureBuilder {
                 if (item == net.minecraft.world.item.Items.AIR) {
                     continue;   // 没有物品形态的方块不能放置
                 }
-                long have = storage.extract(appeng.api.stacks.AEItemKey.of(candidate),
-                        1, appeng.api.config.Actionable.SIMULATE, src);
-                if (have > 0) {
+                if (availableTotal(storage, candidate, 1, src, keyCache) > 0) {
                     chosen = candidate;
                     break;
                 }
@@ -185,13 +190,125 @@ public final class StructureBuilder {
 
         // 库存够不够（按 SIMULATE 精确核对每种方块的总需求）
         for (var e : picked.entrySet()) {
-            long have = storage.extract(appeng.api.stacks.AEItemKey.of(e.getKey()),
-                    e.getValue(), appeng.api.config.Actionable.SIMULATE, src);
+            long have = availableTotal(storage, e.getKey(), e.getValue(), src, keyCache);
             if (have < e.getValue()) {
                 missingOut.merge(e.getKey(), e.getValue() - have, Long::sum);
+                continue;
+            }
+            // ★ 取证日志（2026-10-02）：这份材料是不是**部分要靠非精确形态**才够？
+            // 是 → 玩家会看到"明明有一堆却要挑形状"的现象，这行日志就是他实机时的证据。
+            long plainOnly = storage.extract(AEItemKey.of(e.getKey()), e.getValue(),
+                    Actionable.SIMULATE, src);
+            if (plainOnly < e.getValue()) {
+                AE2Addon.LOGGER.info(
+                        "[ae2addon][结构] 材料 {} 需要 {} 个：无 NBT 形态只有 {} 个 → 其余取自同物品的其它 NBT 形态",
+                        e.getKey().getName().getString(), e.getValue(), plainOnly);
             }
         }
         return out;
+    }
+
+    // ── 结构材料的「同物品多形态」容忍（2026-10-02 sensei 报的 bug）────────────
+    //
+    // 症状：一网络满满的致密能源元件，一键成型却报**缺料**；只有"放在世界上过"的那种才认。
+    //
+    // 根因（已用 javap 逐条核对 AE2 15.4.11 字节码，不是猜）：
+    //   · AE2 的物品 key `AEItemKey` 是 **item + tag + caps 全程精确匹配**，
+    //     且 `equals` 对 tag/caps 用的是 **InternedTag 实例引用比较**（`if_acmpne`）；
+    //   · `AEItemKey.of(ItemLike)` → `InternedTag.of(null)` → 共用 **EMPTY 单例**（tag = null）；
+    //   · 而一个**非 null 但空**的 CompoundTag（NBT 里的 `tag:{}`）会走另一条分支
+    //     `new InternedTag(空tag)` → **另一个实例**，`equals` 比 `tag` 字段：null vs {} ⇒ **false**。
+    //   ⇒ 网络里存的是"带空 tag"的那种时，`AEItemKey.of(block)`（本类原先唯一的取料 key）**永远取不到**，
+    //     而方块挖出/新合成的干净栈是 tag=null ⇒ 认得。
+    //
+    // 修法：取料/核对时把**同一物品的所有 key 形态**都算候选，使用优先级
+    //       ① tag=null（精确，老行为）→ ② 空 tag（等价于没数据）→ ③ 带内容的 NBT（最后才动，打警告）。
+    // 性能：常见情况（①有货）走原路径、**零额外开销**；只有①取不到时才枚举一次网络物品表，
+    //       且每次 plan()/placeBatch() 内按方块缓存，不会每格枚举。
+
+    /** NBT 是否"没有数据"（null 或空复合都算） */
+    private static boolean blankTag(@Nullable CompoundTag tag) {
+        return tag == null || tag.isEmpty();
+    }
+
+    /** 该方块在网络里的候选 key 形态（[0] 恒为精确的 `AEItemKey.of(block)`） */
+    private static List<AEItemKey> candidateKeys(MEStorage storage, Block block) {
+        AEItemKey plain = AEItemKey.of(block);
+        List<AEItemKey> blank = new ArrayList<>();
+        List<AEItemKey> risky = new ArrayList<>();
+        if (plain == null) {
+            return List.of();
+        }
+        Item item = plain.getItem();
+        try {
+            for (var entry : storage.getAvailableStacks()) {
+                if (!(entry.getKey() instanceof AEItemKey key)) {
+                    continue;
+                }
+                if (key.getItem() != item || key.equals(plain)) {
+                    continue;
+                }
+                if (blankTag(key.getTag())) {
+                    blank.add(key);      // 空 tag：与 tag=null 实质等价
+                } else {
+                    risky.add(key);      // 真的带数据（例如充过电）→ 排最后，动用时打警告
+                }
+            }
+        } catch (RuntimeException e) {
+            // 列不全就退回"只认精确 key"（老行为），绝不让结构构建因此崩掉
+            AE2Addon.LOGGER.warn("[ae2addon][结构] 枚举网络物品表失败，退回精确 key：{}", e.toString());
+            return List.of(plain);
+        }
+        List<AEItemKey> out = new ArrayList<>(1 + blank.size() + risky.size());
+        out.add(plain);
+        out.addAll(blank);
+        out.addAll(risky);
+        return out;
+    }
+
+    /** 取候选表（每次 plan/placeBatch 内按方块缓存，避免逐格枚举） */
+    private static List<AEItemKey> keysFor(MEStorage storage, Block block,
+                                           Map<Block, List<AEItemKey>> cache) {
+        return cache.computeIfAbsent(block, b -> candidateKeys(storage, b));
+    }
+
+    /** 网络里该方块（含其它 NBT 形态）**合计**能满足 need 的量 —— SIMULATE，不扣料 */
+    private static long availableTotal(MEStorage storage, Block block, long need,
+                                       IActionSource src, Map<Block, List<AEItemKey>> cache) {
+        long total = 0;
+        for (AEItemKey key : keysFor(storage, block, cache)) {
+            total += storage.extract(key, need, Actionable.SIMULATE, src);
+            if (total >= need) {
+                break;
+            }
+        }
+        return total;
+    }
+
+    /** 已就"动用了带 NBT 形态"警告过的方块（会话内每方块只警告一次，防刷屏） */
+    private static final Set<Block> WARNED_NBT = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * 真取 1 个：按候选优先级试，返回**实际取到料的那把 key**（取不到 = null）。
+     * <p>
+     * 返回 key 而不是 boolean —— 回退时要"取哪种还哪种"，否则会把带 NBT 的换成无 NBT 的（凭空改物品形态）。
+     */
+    @Nullable
+    private static AEItemKey extractOne(MEStorage storage, Block block, IActionSource src,
+                                        Map<Block, List<AEItemKey>> cache) {
+        for (AEItemKey key : keysFor(storage, block, cache)) {
+            if (storage.extract(key, 1, Actionable.MODULATE, src) < 1) {
+                continue;
+            }
+            if (!blankTag(key.getTag()) && WARNED_NBT.add(block)) {
+                AE2Addon.LOGGER.warn(
+                        "[ae2addon][结构] 取料动用了带 NBT 的形态：方块={}（同物品已无干净形态，"
+                                + "该 NBT 数据在放置时会丢失）",
+                        block.getName().getString());
+            }
+            return key;
+        }
+        return null;
     }
 
     /** 某格可接受的方块（含可替换项，已展开） */
@@ -261,6 +378,7 @@ public final class StructureBuilder {
         Direction right = body.getCounterClockWise();
         BlockPos core = p.coreOffset();
         int placed = 0;
+        Map<Block, List<AEItemKey>> keyCache = new HashMap<>();
 
         while (placed < BLOCKS_PER_TICK && !job.done()) {
             Place place = job.queue().get(job.cursor());
@@ -281,15 +399,15 @@ public final class StructureBuilder {
                 }
             }
 
-            var key = appeng.api.stacks.AEItemKey.of(place.block());
-            long got = storage.extract(key, 1, appeng.api.config.Actionable.MODULATE, src);
-            if (got < 1) {
+            // 取料：容忍同物品的其它 NBT 形态（见 candidateKeys 注释）
+            AEItemKey key = extractOne(storage, place.block(), src, keyCache);
+            if (key == null) {
                 return placed;   // 取不到料（网络被抽干/断网）→ 停下，下次再试
             }
             BlockState state = place.block().defaultBlockState();
             boolean ok = level.setBlock(pos, state, 3);
             if (!ok) {
-                storage.insert(key, 1, appeng.api.config.Actionable.MODULATE, src);   // 放不进去回料
+                storage.insert(key, 1, Actionable.MODULATE, src);   // 放不进去回料（按原形态还）
                 return placed;
             }
             job.cursor++;
