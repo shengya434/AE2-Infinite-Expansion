@@ -177,57 +177,128 @@ public class MatterBallItem extends Item {
         return InteractionResult.SUCCESS;
     }
 
-    private static boolean supports(BlockEntity target, Direction side, AEKey key) {
-        if (key instanceof AEItemKey) return target.getCapability(ForgeCapabilities.ITEM_HANDLER, side).isPresent();
-        if (key instanceof AEFluidKey) return target.getCapability(ForgeCapabilities.FLUID_HANDLER, side).isPresent();
-        if (AeResourceKeys.isManaKey(key)) return ManaReceiverAccess.find(target) != null;
-        if (AeResourceKeys.isSourceKey(key)) return SourceTileAccess.find(target) != null;
-        if (AppFluxPowerCompat.isFluxKey(key)) return AppFluxPowerCompat.canReceiveEnergy(target, side);
-        return MekanismGasCompat.supports(target, side, key);
+    private interface Pourer {
+        boolean supports(BlockEntity target, Direction side, AEKey key);
+        BigInteger pour(BlockEntity target, Direction side, AEKey key, BigInteger remaining);
     }
 
-    /** 返回剩余量。每次按能力接口可表达的大小灌入；上限防止虚空容器处理天文数量时卡住服务器。 */
+    private static final List<Pourer> POURERS = List.of(
+            new ItemPourer(), new FluidPourer(), new ManaPourer(),
+            new SourcePourer(), new FluxPourer(), new MekanismPourer());
+
+    private static boolean supports(BlockEntity target, Direction side, AEKey key) {
+        return POURERS.stream().anyMatch(p -> p.supports(target, side, key));
+    }
+
     private static BigInteger pour(BlockEntity target, Direction side, AEKey key, BigInteger amount) {
+        for (Pourer p : POURERS) {
+            if (p.supports(target, side, key)) return p.pour(target, side, key, amount);
+        }
+        return amount;
+    }
+
+    @FunctionalInterface
+    private interface ChunkInserter {
+        long insert(BigInteger remaining);
+    }
+
+    /** 保持原循环的次数上限、停止条件和剩余量扣减。 */
+    private static BigInteger pourChunks(BigInteger amount, ChunkInserter inserter) {
         BigInteger remaining = amount;
-        BigInteger intMax = BigInteger.valueOf(Integer.MAX_VALUE);
-        boolean manaKey = AeResourceKeys.isManaKey(key);
-        boolean sourceKey = AeResourceKeys.isSourceKey(key);
-        boolean fluxKey = AppFluxPowerCompat.isFluxKey(key);
-        ManaReceiverAccess mana = manaKey ? ManaReceiverAccess.find(target) : null;
-        SourceTileAccess source = sourceKey ? SourceTileAccess.find(target) : null;
         for (int attempts = 0; attempts < 4096 && remaining.signum() > 0; attempts++) {
-            long inserted;
-            if (key instanceof AEItemKey itemKey) {
-                IItemHandler handler = target.getCapability(ForgeCapabilities.ITEM_HANDLER, side).orElse(null);
-                if (handler == null) break;
-                int chunk = remaining.min(BigInteger.valueOf(Math.max(1, itemKey.getItem().getMaxStackSize()))).intValue();
-                ItemStack leftover = itemKey.toStack(chunk);
-                for (int slot = 0; slot < handler.getSlots() && !leftover.isEmpty(); slot++) {
-                    leftover = handler.insertItem(slot, leftover, false);
-                }
-                inserted = chunk - leftover.getCount();
-            } else if (key instanceof AEFluidKey fluidKey) {
-                IFluidHandler handler = target.getCapability(ForgeCapabilities.FLUID_HANDLER, side).orElse(null);
-                if (handler == null) break;
-                int chunk = remaining.min(intMax).intValue();
-                inserted = handler.fill(fluidKey.toStack(chunk), IFluidHandler.FluidAction.EXECUTE);
-            } else if (manaKey) {
-                inserted = mana == null ? 0 : mana.insert(remaining);
-            } else if (sourceKey) {
-                inserted = source == null ? 0 : source.insert(remaining);
-            } else if (fluxKey) {
-                long chunk = remaining.min(intMax).longValue();
-                inserted = AppFluxPowerCompat.insertEnergy(target, side, chunk);
-            } else {
-                long chunk = remaining.min(intMax).longValue();
-                inserted = MekanismGasCompat.insert(target, side, key, chunk);
-            }
+            long inserted = inserter.insert(remaining);
             if (inserted <= 0) break;
             remaining = remaining.subtract(BigInteger.valueOf(inserted));
         }
         return remaining;
     }
 
+    private static final class ItemPourer implements Pourer {
+        public boolean supports(BlockEntity target, Direction side, AEKey key) {
+            return key instanceof AEItemKey && target.getCapability(ForgeCapabilities.ITEM_HANDLER, side).isPresent();
+        }
+
+        public BigInteger pour(BlockEntity target, Direction side, AEKey key, BigInteger amount) {
+            AEItemKey itemKey = (AEItemKey) key;
+            return pourChunks(amount, remaining -> {
+                IItemHandler handler = target.getCapability(ForgeCapabilities.ITEM_HANDLER, side).orElse(null);
+                if (handler == null) return 0;
+                int chunk = remaining.min(BigInteger.valueOf(Math.max(1, itemKey.getItem().getMaxStackSize()))).intValue();
+                ItemStack leftover = itemKey.toStack(chunk);
+                for (int slot = 0; slot < handler.getSlots() && !leftover.isEmpty(); slot++) {
+                    leftover = handler.insertItem(slot, leftover, false);
+                }
+                return chunk - leftover.getCount();
+            });
+        }
+    }
+
+    private static final class FluidPourer implements Pourer {
+        public boolean supports(BlockEntity target, Direction side, AEKey key) {
+            return key instanceof AEFluidKey && target.getCapability(ForgeCapabilities.FLUID_HANDLER, side).isPresent();
+        }
+
+        public BigInteger pour(BlockEntity target, Direction side, AEKey key, BigInteger amount) {
+            AEFluidKey fluidKey = (AEFluidKey) key;
+            BigInteger intMax = BigInteger.valueOf(Integer.MAX_VALUE);
+            return pourChunks(amount, remaining -> {
+                IFluidHandler handler = target.getCapability(ForgeCapabilities.FLUID_HANDLER, side).orElse(null);
+                if (handler == null) return 0;
+                int chunk = remaining.min(intMax).intValue();
+                return handler.fill(fluidKey.toStack(chunk), IFluidHandler.FluidAction.EXECUTE);
+            });
+        }
+    }
+
+    private static final class ManaPourer implements Pourer {
+        public boolean supports(BlockEntity target, Direction side, AEKey key) {
+            return AeResourceKeys.isManaKey(key) && ManaReceiverAccess.find(target) != null;
+        }
+
+        public BigInteger pour(BlockEntity target, Direction side, AEKey key, BigInteger amount) {
+            ManaReceiverAccess mana = ManaReceiverAccess.find(target);
+            return pourChunks(amount, remaining -> mana == null ? 0 : mana.insert(remaining));
+        }
+    }
+
+    private static final class SourcePourer implements Pourer {
+        public boolean supports(BlockEntity target, Direction side, AEKey key) {
+            return AeResourceKeys.isSourceKey(key) && SourceTileAccess.find(target) != null;
+        }
+
+        public BigInteger pour(BlockEntity target, Direction side, AEKey key, BigInteger amount) {
+            SourceTileAccess source = SourceTileAccess.find(target);
+            return pourChunks(amount, remaining -> source == null ? 0 : source.insert(remaining));
+        }
+    }
+
+    private static final class FluxPourer implements Pourer {
+        public boolean supports(BlockEntity target, Direction side, AEKey key) {
+            return AppFluxPowerCompat.isFluxKey(key) && AppFluxPowerCompat.canReceiveEnergy(target, side);
+        }
+
+        public BigInteger pour(BlockEntity target, Direction side, AEKey key, BigInteger amount) {
+            BigInteger intMax = BigInteger.valueOf(Integer.MAX_VALUE);
+            return pourChunks(amount, remaining -> {
+                long chunk = remaining.min(intMax).longValue();
+                return AppFluxPowerCompat.insertEnergy(target, side, chunk);
+            });
+        }
+    }
+
+    private static final class MekanismPourer implements Pourer {
+        public boolean supports(BlockEntity target, Direction side, AEKey key) {
+            return MekanismGasCompat.supports(target, side, key);
+        }
+
+        public BigInteger pour(BlockEntity target, Direction side, AEKey key, BigInteger amount) {
+            BigInteger intMax = BigInteger.valueOf(Integer.MAX_VALUE);
+            return pourChunks(amount, remaining -> {
+                long chunk = remaining.min(intMax).longValue();
+                return MekanismGasCompat.insert(target, side, key, chunk);
+            });
+        }
+    }
     /** Botania 接收器的接口方法只在运行时查找；方块实体不实现时再试方块本身。 */
     private record ManaReceiverAccess(Object receiver, Method isFull, Method current, Method receive, @Nullable Method max) {
         @Nullable
