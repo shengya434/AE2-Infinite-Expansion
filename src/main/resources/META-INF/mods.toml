@@ -4,7 +4,7 @@ license="LGPL-3.0"
 
 [[mods]]
 modId="ae2addon"
-version="2.0.0"
+version="2.0.1"
 displayName="AE2 Addon — Infinite Expansion"
 logoFile=""
 credits="Made with ❤️ by Tendo Alice and sensei ✨"
@@ -15,7 +15,7 @@ description='''
 §6✦ 万能无限存储元件§r
   • 三种模式：无限存储 / 自定义无限 / 全类型无限
   • 模式切换，满足不同场景需求
-  • 全类型无限模式自动覆盖所有注册物品与流体
+  • 全类型无限模式自动覆盖所有注册物品与流体，以及已装附属的键型（化学物/能量/魔力/源质）
   • 内置拼音搜索的中文配置界面
 
 §6✦ 无限合成存储器§r

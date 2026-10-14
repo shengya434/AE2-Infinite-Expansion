@@ -142,7 +142,7 @@ jar {
                 "Specification-Vendor"    : "Tendo Alice",
                 "Specification-Version"   : "1",
                 "Implementation-Title"    : project.name,
-                "Implementation-Version"  : "2.0.0",
+                "Implementation-Version"  : "2.0.1",
                 "Implementation-Vendor"   : "Tendo Alice",
                 "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
                 "MixinConfigs"            : "ae2addon.mixins.json",
@@ -154,5 +154,4 @@ jar {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
-
 
