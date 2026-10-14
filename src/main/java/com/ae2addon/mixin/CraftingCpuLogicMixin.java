@@ -75,7 +75,10 @@ public abstract class CraftingCpuLogicMixin {
      * Long.MAX_VALUE：批量 N 可以一路涨到 long 级（2^63−1），
      * 单次 push 即可发放 long 级材料（受任务剩余量与库存钳制，
      * 输入×N 溢出由 ScaledPattern 的 multiplyExact 抛异常自动回退）。
-     * config batchMaxMultiplier 可配（热加载）。
+     * <p>
+     * ⚠ 2026-10-02（C2 口径 A）：config 项 {@code batchMaxMultiplier} 已删除 —— 它的默认值本来就是
+     * {@code Long.MAX_VALUE}（= 不限），退役后**固定为常量**，对默认档行为中性。
+     * 本方法保留为单点入口，四处调用（无限接口全量 / 自指增殖 / 合成族虚拟结算全量 / 有效上限）无需改动。
      */
     @Unique
     private long ae2addon$batchMaxMultiplier() {
@@ -228,8 +231,15 @@ public abstract class CraftingCpuLogicMixin {
     private boolean ae2addon$budgetActive;
 
     // 诊断状态
+    /**
+     * "mixin 已生效"那条日志只打一次。
+     * <p>
+     * ⚠ 2026-10-02：原来是**实例字段** —— 集成 CPU 会分裂出几十条 lane，每条 lane 一个
+     * {@code CraftingCpuLogic} 实例 ⇒ 同一句话在 latest.log 里打了 51 次（实测计数）。
+     * 改成 static（每 JVM 一次）。
+     */
     @Unique
-    private boolean ae2addon$diagLoaded;
+    private static boolean ae2addon$diagLoaded;
     @Unique
     private Object ae2addon$diagLastJob;
     @Unique
@@ -254,6 +264,39 @@ public abstract class CraftingCpuLogicMixin {
     private boolean ae2addon$diagExtractLogged;
     @Unique
     private long ae2addon$diagPushCalls;
+
+    // ── ★ 2026-10-02（C2 口径 B）：提取分支取证计数 ──
+    // 目的：回答"批量通道的爬坡分支（L1363 `n = min(batchNext, selfRemaining)`）在实机里到底有没有被走"。
+    // 爬坡只服务"真实 provider 推送"（通用处理样板 / 无归属机器的千机样板）；
+    // 若实机计数恒为 0 ⇒ 这一层可以安全退役；若在涨 ⇒ 退役必须先造替代机制（见 md/c2-*-plan.md §7）。
+    // 全部只加计数、不改行为；随 debugLogs 的 `CPU调度诊断` 行一起输出/清零。
+    /** 无限接口全量推送（feeder 声明了该样板） */
+    @Unique
+    private long ae2addon$diagBranchFeeder;
+    /** 合成族 + 虚拟结算（千机或装配处理器声明的样板） */
+    @Unique
+    private long ae2addon$diagBranchCraftVirtual;
+    /** 合成族 + 未走虚拟结算 → 强制 1× */
+    @Unique
+    private long ae2addon$diagBranchCraft1x;
+    /** ★ 爬坡分支：既非 feeder 声明、也非合成族 → n 取自 batchNext */
+    @Unique
+    private long ae2addon$diagBranchRamp;
+    /** 千机虚拟结算短路（提取侧返回空数组，交结算自定批） */
+    @Unique
+    private long ae2addon$diagBranchQianjiShort;
+    /** 同 tick 同样板缓存命中（没有真提取） */
+    @Unique
+    private long ae2addon$diagBranchCache;
+    /** 非集成 CPU / 其它样板 → 交回原版方法 */
+    @Unique
+    private long ae2addon$diagBranchPassthrough;
+    /** 本批实走 1× 提取（n<=1） */
+    @Unique
+    private long ae2addon$diagBranchExtract1x;
+    /** 本批实走 ScaledPattern N× 提取（n>1） */
+    @Unique
+    private long ae2addon$diagBranchExtractScaled;
 
     /** 诊断日志节流计数器（extractBatch 详情/1x提取/pushBatch 共用，防刷屏掉刻） */
     @Unique
@@ -1031,6 +1074,20 @@ public abstract class CraftingCpuLogicMixin {
                             ae2addon$diagPushCalls,
                             ae2addon$diagProbeGrowth,
                             ae2addon$diagBatchFailProvider);
+                    // ★ 2026-10-02（C2 口径 B）分支取证行：回答"爬坡层（批量通道）到底有没有被走"。
+                    // `爬坡=0` 且其余分支在涨 ⇒ 这一层可安全退役；`爬坡>0` ⇒ 退役必须先造替代机制。
+                    AE2Addon.LOGGER.info(
+                            "[ae2addon] CPU分支取证: 爬坡={} 无限接口全量={} 合成族虚拟={} 合成族1×={} "
+                                    + "千机短路={} 同tick缓存={} 原版透传={} | 实提取 1×={} N×={}",
+                            ae2addon$diagBranchRamp,
+                            ae2addon$diagBranchFeeder,
+                            ae2addon$diagBranchCraftVirtual,
+                            ae2addon$diagBranchCraft1x,
+                            ae2addon$diagBranchQianjiShort,
+                            ae2addon$diagBranchCache,
+                            ae2addon$diagBranchPassthrough,
+                            ae2addon$diagBranchExtract1x,
+                            ae2addon$diagBranchExtractScaled);
                 }
                 ae2addon$diagLastTick = tick;
                 ae2addon$diagIterations = 0;
@@ -1043,6 +1100,16 @@ public abstract class CraftingCpuLogicMixin {
                 ae2addon$diagTaskValueFallback = 0;
                 ae2addon$diagPushCalls = 0;
                 ae2addon$diagProbeGrowth = 0;
+                // ★ 分支取证计数同步清零
+                ae2addon$diagBranchRamp = 0;
+                ae2addon$diagBranchFeeder = 0;
+                ae2addon$diagBranchCraftVirtual = 0;
+                ae2addon$diagBranchCraft1x = 0;
+                ae2addon$diagBranchQianjiShort = 0;
+                ae2addon$diagBranchCache = 0;
+                ae2addon$diagBranchPassthrough = 0;
+                ae2addon$diagBranchExtract1x = 0;
+                ae2addon$diagBranchExtractScaled = 0;
             }
         }
     }
@@ -1222,6 +1289,7 @@ public abstract class CraftingCpuLogicMixin {
             sameTickSamePattern = false;   // 走完整路径：重算 n、重新提取
         }
         if (sameTickSamePattern && ae2addon$batchCachedInputs != null) {
+            ae2addon$diagBranchCache++;   // ★ 分支取证：同 tick 缓存命中（本批无真提取）
             // 修复：补回 expected 快照，否则原版 push 成功后的 waitingFor 记账为空
             if (ae2addon$batchCachedOutputs != null) {
                 for (var entry : ae2addon$batchCachedOutputs) {
@@ -1263,6 +1331,7 @@ public abstract class CraftingCpuLogicMixin {
         //      真正的「定批 + 提取 + 结算」由虚拟结算自己做（见 ae2addon$virtualSettle）；
         //   ③ 收尾处 `reinjectPatternInputs(inventory, 空)` 是空操作（不会重复退料）。
         if (ae2addon$isQianJiPattern(patternDetails) && ae2addon$virtualSettleActive(patternDetails)) {
+            ae2addon$diagBranchQianjiShort++;   // ★ 分支取证：千机虚拟结算短路（结算自定批）
             ae2addon$clearBatchContext();
             // 每次一个空数组（每 tick 至多几次，开销可忽略；不进 static 字段是为了少一处 mixin 静态初始化）
             return new KeyCounter[0];
@@ -1319,7 +1388,8 @@ public abstract class CraftingCpuLogicMixin {
         if (patternDetails != null) {
             long residual = ae2addon$getTaskValue(patternDetails);
             long beforeClamp = Math.min(ae2addon$getBatchMultiplier(patternDetails), residual);
-            if (residual > 0 && residual < 100000L) {
+            if (CraftingCompat.debugLogs && ae2addon$logHot()
+                    && residual > 0 && residual < 100000L) {
                 AE2Addon.LOGGER.info(
                         "[ae2addon][夹取] 本批 batchNext={} 残值={} → 可做 {} 份（末批应按残值，不应整批 8194）",
                         ae2addon$getBatchMultiplier(patternDetails), residual, beforeClamp);
@@ -1330,6 +1400,7 @@ public abstract class CraftingCpuLogicMixin {
         ae2addon$qianjiBatch = !ae2addon$budgetActive && ae2addon$isQianJiPattern(patternDetails);
         if ((!ae2addon$budgetActive && !ae2addon$qianjiBatch)
                 || patternDetails == null || inventory == null) {
+            ae2addon$diagBranchPassthrough++;   // ★ 分支取证：非集成 CPU / 其它样板 → 原版
             // 别的样板 / 原版 CPU：直接调用原始静态方法（原版行为）
             return CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
                     level, expectedOutputs, expectedContainerItems);
@@ -1348,9 +1419,11 @@ public abstract class CraftingCpuLogicMixin {
         ae2addon$checkJobSwitch();
         selfRemaining = ae2addon$ledgerRemaining(patternDetails);
         if (selfRemaining <= 0) {
-            AE2Addon.LOGGER.info(
-                    "[ae2addon][提取] 本单已交付足够（自记剩余={}，AE2 读到的={}）→ 停止提取，不再多给",
-                    selfRemaining, taskRemaining);
+            if (CraftingCompat.debugLogs && ae2addon$logHot()) {
+                AE2Addon.LOGGER.info(
+                        "[ae2addon][提取] 本单已交付足够（自记剩余={}，AE2 读到的={}）→ 停止提取，不再多给",
+                        selfRemaining, taskRemaining);
+            }
             ae2addon$settleBatchN = 0L;
             return null;
         }
@@ -1371,6 +1444,7 @@ public abstract class CraftingCpuLogicMixin {
         // 2026-08-28：同网格存在无限接口声明该样板 → 跳过自适应爬坡直接全量推。
         // 无限接口无条件收 N×，一次 push 交付整个任务（多 lane 并行 = 并行推送）。
         if (ae2addon$hasFeederFor(patternDetails)) {
+            ae2addon$diagBranchFeeder++;   // ★ 分支取证：无限接口全量推送
             n = Math.min(taskRemaining, ae2addon$batchMaxMultiplier());
             if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
                 com.ae2addon.AE2Addon.LOGGER.info(
@@ -1383,6 +1457,7 @@ public abstract class CraftingCpuLogicMixin {
             // （sensei 实测：AECraftingPattern 单 tick 206 次拒收、任务卡 1、CPU
             // 永久 busy）。处理样板（AEProcessingPattern）保留批量推送。
             if (ae2addon$virtualSettleActive(patternDetails)) {
+                ae2addon$diagBranchCraftVirtual++;   // ★ 分支取证：合成族 + 虚拟结算
                 // ⚠ 2026-09-18：千机样板**先夹再分派**（不要等到后面统一夹取）——
                 // 否则夹取后 n 可能落到 1× 提取分支，而批量上下文仍是"想提取的"大 N，
                 // 结算侧就会按大 N 结算 → 提取份数 ≠ 结算份数 → 任务卡死。
@@ -1436,6 +1511,7 @@ public abstract class CraftingCpuLogicMixin {
                     }
                 }
             } else {
+                ae2addon$diagBranchCraft1x++;   // ★ 分支取证：合成族未走虚拟结算 → 1×
                 n = 1;
                 if (com.ae2addon.crafting.CraftingCompat.debugLogs) {
                     com.ae2addon.AE2Addon.LOGGER.info(
@@ -1444,6 +1520,11 @@ public abstract class CraftingCpuLogicMixin {
                             ae2addon$getBatchMultiplier(patternDetails), taskRemaining);
                 }
             }
+        } else {
+            // ★ 分支取证：爬坡分支 —— 既非 feeder 声明、也非合成族 ⇒ n 仍是上面算出的
+            //   `min(batchNext, selfRemaining)`（批量通道的自适应层只在这里生效）。
+            //   这就是"退役批量通道"要动的那一层；若这段计数在实机恒为 0，则它没被走。
+            ae2addon$diagBranchRamp++;
         }
         // ⚠ 2026-09-18 晚（sensei：产物比下单量多，且随下单量增大而增大）：
         // **把「本批实际提取份数」收敛成唯一权威来源**。结算侧只认 settleBatchN，
@@ -1453,8 +1534,10 @@ public abstract class CraftingCpuLogicMixin {
         // 末批特征是"残值 < batchNext"，任何"整批"口径都会多出 (batchNext − 残值)。
         long residualNow = ae2addon$getTaskValue(patternDetails);
         if (residualNow > 0 && n > residualNow) {
-            AE2Addon.LOGGER.info("[ae2addon][夹取] 末批：本批想提 {} 份，残值 {} → 夹到 {} 份",
-                    n, residualNow, residualNow);
+            if (CraftingCompat.debugLogs && ae2addon$logHot()) {
+                AE2Addon.LOGGER.info("[ae2addon][夹取] 末批：本批想提 {} 份，残值 {} → 夹到 {} 份",
+                        n, residualNow, residualNow);
+            }
             n = residualNow;
         }
         ae2addon$settleBatchN = n;
@@ -1476,7 +1559,8 @@ public abstract class CraftingCpuLogicMixin {
         }
         // ⚠ 2026-09-18 晚：**提取时刻的实测数字**（判定"读晚了还是减晚了"）。
         // 只在本批"可能吃满"时打（残值不大），避免刷屏。
-        if (residualNow > 0 && residualNow <= 200000L) {
+        if (CraftingCompat.debugLogs && ae2addon$logHot()
+                && residualNow > 0 && residualNow <= 200000L) {
             AE2Addon.LOGGER.info(
                     "[ae2addon][提取] 本批 n={} taskRemaining(读到的)={} batchNext={} 残值(夹取时)={}"
                             + " 自记剩余={}",
@@ -1487,12 +1571,15 @@ public abstract class CraftingCpuLogicMixin {
         // 不再靠推算 —— 并行上限 / config 上限 / 有效上限。
         if (ae2addon$diagCapLogged != ae2addon$flushAllowedTick) {
             ae2addon$diagCapLogged = ae2addon$flushAllowedTick;
-            AE2Addon.LOGGER.info(
-                    "[ae2addon][上限] 并行上限={} config上限={} 有效批量上限={} 当前 batchNext={} 本tick每tick份数cap={}",
-                    ae2addon$parallelCap(), ae2addon$batchMaxMultiplier(), ae2addon$effectiveBatchMax(),
-                    ae2addon$getBatchMultiplier(patternDetails), ae2addon$qianjiSettleCapPerTick());
+            if (CraftingCompat.debugLogs && ae2addon$logHot()) {
+                AE2Addon.LOGGER.info(
+                        "[ae2addon][上限] 并行上限={} config上限={} 有效批量上限={} 当前 batchNext={} 本tick每tick份数cap={}",
+                        ae2addon$parallelCap(), ae2addon$batchMaxMultiplier(), ae2addon$effectiveBatchMax(),
+                        ae2addon$getBatchMultiplier(patternDetails), ae2addon$qianjiSettleCapPerTick());
+            }
         }
         if (n <= 1) {
+            ae2addon$diagBranchExtract1x++;   // ★ 分支取证：本批实走 1× 提取
             // 我们 CPU：直接调原始静态方法，绕开 Omni 的 extractBatch handler
             // （它会对 scaled 输出算 waitingFor 余量，N 大时 reinject+null → 批量被误判失败锁 1）
             var result1x = CraftingCpuHelper.extractPatternInputs(patternDetails, inventory,
@@ -1521,6 +1608,7 @@ public abstract class CraftingCpuLogicMixin {
         }
 
         ae2addon$diagBatchExtractAttempts++;
+        ae2addon$diagBranchExtractScaled++;   // ★ 分支取证：本批实走 ScaledPattern N× 提取
         ScaledPattern scaled;
         try {
             scaled = new ScaledPattern(patternDetails, n);
@@ -2105,8 +2193,10 @@ public abstract class CraftingCpuLogicMixin {
             ae2addon$checkJobSwitch();
             long left = ae2addon$ledgerRemaining(patternDetails);
             if (left <= 0) {
-                AE2Addon.LOGGER.info(
-                        "[ae2addon][结算] 本单已交付足够（自记剩余={}）→ 跳过本批结算，不再多给", left);
+                if (CraftingCompat.debugLogs && ae2addon$logHot()) {
+                    AE2Addon.LOGGER.info(
+                            "[ae2addon][结算] 本单已交付足够（自记剩余={}）→ 跳过本批结算，不再多给", left);
+                }
                 return 0L;
             }
             // ⚠ 2026-09-19（解耦虚拟结算的批量）：**本批份数由这里自己定**，
@@ -2949,7 +3039,9 @@ public abstract class CraftingCpuLogicMixin {
         if (seedKey != null) {
             var seeded = ae2addon$pendingSeed.remove(seedKey);
             if (seeded != null && seeded > 1) {
-                AE2Addon.LOGGER.info("[ae2addon][种子] 本单起步 N={}（沿用上一单学到的规模）", seeded);
+                if (CraftingCompat.debugLogs && ae2addon$logHot()) {
+                    AE2Addon.LOGGER.info("[ae2addon][种子] 本单起步 N={}（沿用上一单学到的规模）", seeded);
+                }
                 ae2addon$batchNext.put(seedKey, seeded);
                 return seeded;
             }
@@ -2992,7 +3084,9 @@ public abstract class CraftingCpuLogicMixin {
             }
         }
         if (kept > 0) {
-            AE2Addon.LOGGER.info("[ae2addon][种子] 新任务：保留 {} 个样板的已爬到 N 作为起步值", kept);
+            if (CraftingCompat.debugLogs && ae2addon$logHot()) {
+                AE2Addon.LOGGER.info("[ae2addon][种子] 新任务：保留 {} 个样板的已爬到 N 作为起步值", kept);
+            }
         }
         ae2addon$batchNext.clear();
     }

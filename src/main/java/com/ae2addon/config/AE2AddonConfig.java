@@ -36,23 +36,27 @@ public final class AE2AddonConfig {
 
     // ── 批量推送 ──
 
-    /**
-     * 批量推送翻倍上限（1×→2×→4×… 指数暴涨的最大 N）。
+    /*
+     * 【已退役 · 2026-10-02 C2 口径 A】原 `batchMaxMultiplier`（批量推送翻倍上限）配置项已删除。
      * <p>
-     * ⚠ 2026-09-18 sensei：千机样板改走**虚拟结算**（每 tick 结算 round(并行/20) 份）后，
-     * 「批量通道」计划退役 —— 本项属于批量通道，**暂时仍被引用**，退役后即失效。
-     * 新代码不要再依赖它。
+     * 退役理由（读码取证，见 `md/c2-retire-batch-channel-plan.md` §4/§7）：
+     * 本项**不只是**批量通道在用 —— 它同时被当"单批 N 上限"用在
+     * 无限接口全量推送、自指增殖批量、合成族虚拟结算全量三处；而它的默认值本来就是
+     * `Long.MAX_VALUE`（= 不限），实机配置也是这个值 ⇒ 删掉配置项、内联常量是**行为中性**的，
+     * 界面上少一条没用的旋钮。
+     * <p>
+     * 现在值固定在 {@link com.ae2addon.crafting.CraftingCompat#batchMaxMultiplier}（= Long.MAX_VALUE）。
+     * 与之相对：**批量通道本身没有退役** —— 它是真实 provider 推送的唯一缩放层，
+     * 且 `sharedExpCap`/`batchNext` 经验继承是巨型订单的提速旋钮，仍在使用中。
      */
-    public static final ForgeConfigSpec.LongValue BATCH_MAX_MULTIPLIER = BUILDER
-            .comment("批量推送翻倍上限（N× 指数暴涨的最大值；999999999999999999 ≈ Long.MAX）",
-                    "Max batch multiplier for exponential push growth")
-            .defineInRange("batchMaxMultiplier", Long.MAX_VALUE, 1L, Long.MAX_VALUE);
 
     /**
      * 全网格每 tick 成功 push 次数共享预算（0=不限制；防巨型订单独占服务端 tick）。
      * <p>
-     * ⚠ 2026-09-18：属于**批量通道 / 推送路径**的限流。千机样板改虚拟结算后不再走这条，
-     * 退役批量通道时会一并处理；在此之前仍然生效。
+     * ⚠ 2026-09-18 原注：属于**批量通道 / 推送路径**的限流，退役批量通道时会一并处理。
+     * 2026-10-02（C2 口径 A）**决定保留**：真实 provider 推送仍在用，且它按"成功 push 调用次数"
+     * 计数（批量大 N 一次推送不受影响），是防多个巨型订单同 tick 抢占的独立闸门 ——
+     * 与虚拟结算的次数/份数闸门（`qianjiSettleCallsPerTick`/`qianjiSettleCap`）互不替代。
      */
     public static final ForgeConfigSpec.IntValue DISPATCH_BUDGET_PER_TICK = BUILDER
             .comment("全网格每 tick 成功 push 次数共享预算（0=不限制=旧行为；",
@@ -343,10 +347,6 @@ public final class AE2AddonConfig {
 
     public static int maxBatchCount() {
         return Math.max(2, MAX_BATCH_COUNT.get());
-    }
-
-    public static long batchMaxMultiplier() {
-        return Math.max(1L, BATCH_MAX_MULTIPLIER.get());
     }
 
     /** 全网格每 tick 成功 push 次数共享预算（0 = 不限制）。 */

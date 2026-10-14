@@ -21,9 +21,16 @@ public final class CraftingCompat {
 
     // ── 可热加载配置（config/ae2addon-common.toml 修改后自动生效，无需重启）──
 
-    /** 批量推送翻倍上限（1×→2×→4× 指数暴涨的最大 N）。 */
-    public static volatile long batchMaxMultiplier =
-            com.ae2addon.config.AE2AddonConfig.batchMaxMultiplier();
+    /**
+     * 单批推送的 N 上限（原 config `batchMaxMultiplier`）。
+     * <p>
+     * ⚠ 2026-10-02（C2 口径 A）：配置项已退役，**固定为 Long.MAX_VALUE = 不限**。
+     * 这不是"删掉一个功能"，而是"把本来就没调过的旋钮固化成默认值"：
+     * 该配置的默认值一直是 Long.MAX_VALUE（实机 `ae2addon-common.toml` 亦是此值），
+     * 而它同时被无限接口全量推送 / 自指增殖 / 合成族虚拟结算全量三处当 N 上限用 ——
+     * 所以**不能**连字段一起删（那些路径仍需要这个上限概念），只把它从"可配"降级为"常量"。
+     */
+    public static final long batchMaxMultiplier = Long.MAX_VALUE;
 
     /** 批量经验共享继承上限（0 = 关闭共享，新 lane 从 1× 起步）。 */
     public static volatile long sharedExpCap =
@@ -194,7 +201,6 @@ public final class CraftingCompat {
     /** 配置热加载时由 AE2AddonConfig 调用，同步最新值。 */
     public static void applyConfig() {
         debugLogs = com.ae2addon.config.AE2AddonConfig.debugLogs();
-        batchMaxMultiplier = com.ae2addon.config.AE2AddonConfig.batchMaxMultiplier();
         sharedExpCap = com.ae2addon.config.AE2AddonConfig.sharedExpCap();
         cpuTimeSliceTargetMs = com.ae2addon.config.AE2AddonConfig.cpuTimeSliceTargetMs();
         dispatchBudgetPerTick = com.ae2addon.config.AE2AddonConfig.dispatchBudgetPerTick();

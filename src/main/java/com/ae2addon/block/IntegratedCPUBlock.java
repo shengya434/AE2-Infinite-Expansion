@@ -104,7 +104,8 @@ public class IntegratedCPUBlock extends CraftingUnitBlock {
         }
         return (lvl, pos, st, be) -> {
             long calls = TICKER_ENTRY_CALLS.incrementAndGet();
-            if (calls % 100 == 0) {
+            // ⚠ 2026-10-02：这条"入口是否被调用"的探针已收进 debugLogs（原先每 100 次一条、稳态常驻刷屏）
+            if (calls % 100 == 0 && com.ae2addon.crafting.CraftingCompat.debugLogs) {
                 com.ae2addon.AE2Addon.LOGGER.info(
                         "[ae2addon][cpu-diag] ticker入口 calls={} levelNull={} clientSide={} gameTime={} cpuBE={}",
                         calls, lvl == null, lvl != null && lvl.isClientSide,

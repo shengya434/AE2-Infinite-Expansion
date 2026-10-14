@@ -143,6 +143,13 @@ public class IntegratedCPUBE extends CraftingBlockEntity implements Formable {
     }
 
     /**
+     * ⚠ 2026-10-02：本诊断原先**每次重新判定都打一遍**（每 2 秒一条，latest.log 被它刷满）。
+     * 现在改成**只在内容变化时打**（稳态零输出，真出问题时那条一定会出现且带完整信息）。
+     * key = 判定的关键字段；字段没变就不再重复写盘。
+     */
+    private String lastThreadDiagKey;
+
+    /**
      * 线程为 0 时的决定性诊断（2026-09-24 sensei 报障「线程数一直是0」）。
      * <p>
      * AE2 的线程数走 {@code CraftingCPUCluster.addBlockEntity → getAcceleratorThreads()}，
@@ -173,15 +180,21 @@ public class IntegratedCPUBE extends CraftingBlockEntity implements Formable {
                                 .getKey(nb.getBlock()))
                         .append(' ');
             }
+            String unitType = getUnitBlock() == null ? "?"
+                    : String.valueOf(net.minecraft.core.registries.BuiltInRegistries.BLOCK
+                            .getKey(getUnitBlock()));
+            String key = worldPosition + "|" + com.ae2addon.block.multiblock.StructureMatcher.describe(structureBody)
+                    + "|" + (cluster == null ? "null" : (cluster.isDestroyed() ? "destroyed" : "有"))
+                    + "|" + clusterSize + "|" + hasCoProcessing + "|" + unitType + "|" + sb.toString().trim();
+            if (key.equals(lastThreadDiagKey)) {
+                return;   // 稳态：内容没变就不重复刷日志
+            }
+            lastThreadDiagKey = key;
             com.ae2addon.AE2Addon.LOGGER.info(
                     "[ae2addon][cpu] 成型判定通过 pos={} 朝向={} 簇={} 簇内块数={} hasCo={} 本块类型={} 邻居: {}",
                     worldPosition, com.ae2addon.block.multiblock.StructureMatcher.describe(structureBody),
                     cluster == null ? "null" : (cluster.isDestroyed() ? "destroyed" : "有"),
-                    clusterSize, hasCoProcessing,
-                    getUnitBlock() == null ? "?"
-                            : net.minecraft.core.registries.BuiltInRegistries.BLOCK
-                                    .getKey(getUnitBlock()),
-                    sb.toString().trim());
+                    clusterSize, hasCoProcessing, unitType, sb.toString().trim());
         } catch (RuntimeException e) {
             com.ae2addon.AE2Addon.LOGGER.warn("[ae2addon][cpu] 诊断失败: {}", e.toString());
         }
@@ -987,11 +1000,18 @@ public class IntegratedCPUBE extends CraftingBlockEntity implements Formable {
     /** 稳态诊断日志限频（5 秒）。初值同样用 0，理由见上。 */
     private long lastStatusLogTick = 0;
 
+    /** 「对外状态」诊断的内容指纹：变了才打（2026-10-02 治稳态刷屏） */
+    private String lastStatusDiagKey;
+
+    /** 「服务端 ring-debug」诊断的内容指纹：变了才打（2026-10-02 治稳态刷屏） */
+    private String lastRingDebugKey;
+
     private long statusEntryCalls;
 
     public void pushStatusToClients(boolean force) {
         long calls = ++statusEntryCalls;
-        if (calls % 100 == 0) {
+        // ⚠ 2026-10-02：这条"入口是否被调用"的探针已收进 debugLogs（原先是每 100 次一条、稳态常驻刷屏）
+        if (calls % 100 == 0 && com.ae2addon.crafting.CraftingCompat.debugLogs) {
             com.ae2addon.AE2Addon.LOGGER.info(
                     "[ae2addon][cpu-diag] push入口 calls={} levelNull={} clientSide={} gameTime={}",
                     calls, level == null, level != null && level.isClientSide,
@@ -1008,12 +1028,18 @@ public class IntegratedCPUBE extends CraftingBlockEntity implements Formable {
         pushRingStateToClients();
         // 稳态诊断（2026-09-24 sensei：重新成型后 AE2 列表里并行数又不显示）：
         // 每 5 秒打一行"我现在对外报什么值"，用来确认数值到底有没有算出来。
+        // ⚠ 2026-10-02：改成**只在内容变化时打**（原先每 5 秒一条，稳态常驻刷屏）。
         if (now - lastStatusLogTick >= 100) {
             lastStatusLogTick = now;
-            com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][cpu] 对外状态 pos={} formed={} lane数={} 线程={} 存储={} 主簇={}",
-                    worldPosition, formed, allCpus().size(), getAcceleratorThreads(),
-                    getStorageBytes(), getCluster() == null ? "null" : "有");
+            String key = formed + "|" + allCpus().size() + "|" + getAcceleratorThreads()
+                    + "|" + getStorageBytes() + "|" + (getCluster() == null ? "null" : "有");
+            if (!key.equals(lastStatusDiagKey)) {
+                lastStatusDiagKey = key;
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][cpu] 对外状态 pos={} formed={} lane数={} 线程={} 存储={} 主簇={}",
+                        worldPosition, formed, allCpus().size(), getAcceleratorThreads(),
+                        getStorageBytes(), getCluster() == null ? "null" : "有");
+            }
         }
         try {
             var packet = new com.ae2addon.network.IntegratedCpuStatusPacket(worldPosition,
@@ -1043,9 +1069,14 @@ public class IntegratedCPUBE extends CraftingBlockEntity implements Formable {
         long now = level.getGameTime();
         if (visible && (lastRingDebugTick == Long.MIN_VALUE || now - lastRingDebugTick >= 100)) {
             lastRingDebugTick = now;
-            com.ae2addon.AE2Addon.LOGGER.info(
-                    "[ae2addon][ring-debug] 服务端 pos={} bodySent={} structureBody={} outlineBody={} buildFacing={} formed={}",
-                    worldPosition, sentBody, structureBody, outlineBody(), buildFacing, formed);
+            // ⚠ 2026-10-02：改成**内容变化才打**（原先每 5 秒一条，稳态常驻刷屏）
+            String key = sentBody + "|" + structureBody + "|" + outlineBody() + "|" + buildFacing + "|" + formed;
+            if (!key.equals(lastRingDebugKey)) {
+                lastRingDebugKey = key;
+                com.ae2addon.AE2Addon.LOGGER.info(
+                        "[ae2addon][ring-debug] 服务端 pos={} bodySent={} structureBody={} outlineBody={} buildFacing={} formed={}",
+                        worldPosition, sentBody, structureBody, outlineBody(), buildFacing, formed);
+            }
         }
         try {
             com.ae2addon.AE2Addon.NETWORK.send(
