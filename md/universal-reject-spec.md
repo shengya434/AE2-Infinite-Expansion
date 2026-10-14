@@ -81,6 +81,15 @@ public Set<AEKey> rejectOnKeys() { return rejectOn; }
 ## 4. 交互：手势 + 界面（两条都要）
 
 ### 4.1 手势
+
+> **⚠ 实际落地口径（2026-10-13 定、10-14 复核）——以这段为准：**
+> `Ctrl+右键 = 切拒收` **没有实现**（也未进任何文案）；最终手势是
+> **`左键` = 切换 拒↔允**、**`Shift+左键` = 删除该键的显式标记**、
+> **`JEI 拖入` = 加入拒收（仅模式选择页）**。
+> 配置页现在把 `Ctrl+右键` 直接吞掉（`if (button == 1 && hasControlDown()) return true;`），
+> 所以按下去不会有任何动作，也不会误触发「单物品阈值」。
+> 原 R6 提案（删掉 Shift 热键）已被同一天的实测决定推翻，见 `md/r6-reject-hotkeys-spec.md` 顶部口径更新。
+
 `client/gui/Mode2ConfigScreen.mouseClicked` 里现有分支：`Ctrl+左键 = 元件内数量`（L1226）、
 `Shift+右键 = 切黑名单`（L1230）、`Shift+左键 = 切无限`（L1234）、`右键 = 单物品阈值`（L1238）。
 **新增 `button == 1 && hasControlDown()`（Ctrl+右键）= 切换该条目的拒收**。
@@ -92,6 +101,7 @@ public Set<AEKey> rejectOnKeys() { return rejectOn; }
 - **元件级默认**：屏幕顶部（搜索框右侧，或现有按钮区）加 `□ 默认拒收` 勾选框 →
   切换 `rejectDefault`（发 packet）。
 - **提示行**：`gui.ae2addon.mode2.hint_bar` 的手势全表补上 `Ctrl+右键=切拒收`。
+  （⚠ 2026-10-14 复核：这句**没做**，且按上面 4.1 的口径也不该做；拒收手势写在 `hint_reject` 与列表 tooltip 里。）
 - **语言键**（`assets/ae2addon/lang/zh_cn.json` 与 `en_us.json` 各一份）：
   `gui.ae2addon.mode2.reject_mark`（`拒` / `No-In`）、`gui.ae2addon.mode2.reject_default`（`默认拒收` / `Default No-In`）。
 
