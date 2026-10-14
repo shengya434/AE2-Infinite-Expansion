@@ -1193,10 +1193,28 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     // ── 频道卡无线链路（ExtendedAE+，惰性持有——缺依赖不崩类加载） ──
 
     /** 无线从端链路持有者（内部 Object 惰性持有 WirelessSlaveLink）。 */
-    private final com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink channelLink =
-            new com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink();
+    /**
+     * 无线从端链路持有者。
+     * <p>
+     * ⚠ 必须「惰性 new」——不能写成 {@code = new ChannelLink()} 字段初始化：
+     * BE 构造会立刻初始化 ChannelLink 类，JVM 随之校验它的方法体，而
+     * {@code ChannelLink.update()} 里要把 GenericNodeEndpointImpl 传给
+     * {@code WirelessSlaveLink.<init>(IWirelessEndpoint)}，校验就得解析 IWirelessEndpoint →
+     * 玩家没装 extendedae_plus 时当场 {@code NoClassDefFoundError: IWirelessEndpoint}。
+     * <p>
+     * 2026-10-13 实机崩溃（发布版 v1.3.0，栈顶正是本行的字段初始化：
+     * {@code InfiniteInterfaceBE.<init>(InfiniteInterfaceBE.java:1069)}）。
+     * 已用最小 JVM 探针复现（内联初始化崩／守卫内首次使用才 new 不崩）。
+     */
+    private com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink channelLink;
 
     private void updateChannelLink() {
+        if (!com.ae2addon.compat.ExtendedAEPlusCompat.isLoaded()) {
+            return; // 未装 extendedae_plus：连 ChannelLink 类都不加载（见字段注释）
+        }
+        if (channelLink == null) {
+            channelLink = new com.ae2addon.compat.ExtendedAEPlusCompat.ChannelLink();
+        }
         var card = com.ae2addon.compat.ExtendedAEPlusCompat.channelCard();
         net.minecraft.world.item.ItemStack cardStack = net.minecraft.world.item.ItemStack.EMPTY;
         if (card != null) {
@@ -1212,6 +1230,9 @@ public class InfiniteInterfaceBE extends AENetworkBlockEntity
     }
 
     private void disconnectChannelLink() {
+        if (channelLink == null) {
+            return; // 从未建立（未装 extendedae_plus / 未插过卡）
+        }
         channelLink.unload();
     }
 
